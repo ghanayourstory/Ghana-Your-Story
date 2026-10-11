@@ -174,3 +174,26 @@ test("every NPC's routine points at real places in their own town", async () => 
     assert.equal(DISTRICTS[pl.district].city, DISTRICTS[n.district].city, `${n.id} at ${b.place}`);
   }
 });
+
+test("catalogues are consistent: dealers, stores, farms, courses, plots and rentals", async () => {
+  const { DEALER_STOCK, ITEMS, STORE_STOCK, PLACE_STOCK, FARMLANDS, CROPS, COURSES, VEHICLES } = await import("../shared/life.ts");
+  const { PLOTS, RENTALS, DESIGNS, BUSINESSES } = await import("../shared/economy.ts");
+  const { PLACE_BY_ID } = await import("../shared/world.ts");
+  for (const [pid, vs] of Object.entries(DEALER_STOCK)) {
+    assert.equal(PLACE_BY_ID[pid]?.kind, "dealer", `${pid} is not a dealer`);
+    for (const v of vs) assert.ok(VEHICLES[v], `${pid}: ${v}`);
+  }
+  for (const list of [...Object.values(STORE_STOCK), ...Object.values(PLACE_STOCK)]) for (const i of list) assert.ok(ITEMS[i], i);
+  for (const pid of Object.keys(PLACE_STOCK)) assert.ok(PLACE_BY_ID[pid], pid);
+  for (const f of Object.values(FARMLANDS)) { assert.ok(DISTRICTS[f.district], f.id); for (const c of f.crops) assert.ok(CROPS[c], c); }
+  for (const c of Object.values(COURSES)) for (const pl of c.places) assert.ok(PLACE_BY_ID[pl], `${c.id}: ${pl}`);
+  for (const p of Object.values(PLOTS)) { assert.ok(DISTRICTS[p.district], p.id); for (const d of p.allowed) assert.ok(DESIGNS[d], d); }
+  for (const r of Object.values(RENTALS)) assert.ok(DISTRICTS[r.district], r.id);
+  for (const b of Object.values(BUSINESSES)) assert.ok(DISTRICTS[b.district], b.id);
+  // Every playable town has somewhere to sleep.
+  for (const d of Object.keys(DISTRICTS)) {
+    const city = DISTRICTS[d].city;
+    if (city === "accra") continue;
+    assert.ok(Object.values(PLACE_BY_ID).some((p) => p.district === d && p.services.includes("lodge")), `no lodge in ${d}`);
+  }
+});
