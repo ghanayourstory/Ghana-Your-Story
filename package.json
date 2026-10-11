@@ -1,0 +1,33 @@
+{
+  "name": "sika-city",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Sika City — a 3D life simulator set in Accra, Ghana.",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node --disable-warning=ExperimentalWarning server/index.ts",
+    "dev:client": "vite",
+    "build": "vite build",
+    "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning server/index.ts",
+    "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.16.5",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@types/three": "^0.170.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.8.3",
+    "vite": "^5.4.19"
+  }
+}
