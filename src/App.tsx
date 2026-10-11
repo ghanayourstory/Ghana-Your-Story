@@ -6,6 +6,7 @@ import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
 import { Phone } from "./ui/phone.tsx";
 import { World, type Nearby, type Quality } from "./world/World.ts";
+import { loadHumans } from "./world/humans.ts";
 import type { GameState } from "../server/engine.ts";
 import type { PersonLook } from "./world/people.ts";
 import type { DistrictId } from "../shared/world.ts";
@@ -18,7 +19,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
 
   const start = useCallback(async () => {
-    const backend = await pickBackend();
+    const [backend] = await Promise.all([pickBackend(), loadHumans()]);
     if (getToken()) {
       try {
         const res = await backend.request<{ state: GameState }>("GET", "/api/state");

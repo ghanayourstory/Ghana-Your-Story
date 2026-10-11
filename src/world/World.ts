@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
-import { animatePerson, buildPerson, type PersonLook, type Rig } from "./people.ts";
+import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildInterior, buildSite } from "./construction.ts";
 import { buildVehicle } from "./vehicles.ts";
 import { CityAudio } from "./audio.ts";
@@ -38,7 +38,7 @@ export class World {
   audio = new CityAudio();
   district: DistrictScene | null = null;
   life: CityLife | null = null;
-  player: Rig | null = null;
+  player: Person | null = null;
   private lookKey = "";
   pos = new THREE.Vector3();
   vel = new THREE.Vector3();
@@ -79,6 +79,7 @@ export class World {
 
   constructor(private canvas: HTMLCanvasElement, private cb: WorldCallbacks, quality: Quality) {
     this.quality = quality;
+    setHumanMode(quality === "high" ? "all" : quality === "medium" ? "key" : "off");
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality !== "low", powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === "high" ? 2 : quality === "medium" ? 1.5 : 1));
     this.renderer.shadowMap.enabled = quality !== "low";
@@ -107,6 +108,7 @@ export class World {
 
   setQuality(q: Quality) {
     this.quality = q;
+    setHumanMode(q === "high" ? "all" : q === "medium" ? "key" : "off");
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q === "high" ? 2 : q === "medium" ? 1.5 : 1));
     this.renderer.shadowMap.enabled = q !== "low";
     this.resize();
@@ -146,7 +148,7 @@ export class World {
     if (lk !== this.lookKey) {
       this.lookKey = lk;
       const old = this.player;
-      this.player = buildPerson(look);
+      this.player = buildPerson(look, { key: true });
       if (old) old.root.parent?.remove(old.root);
       (this.inside ? this.interiorScene : this.scene).add(this.player.root);
     }

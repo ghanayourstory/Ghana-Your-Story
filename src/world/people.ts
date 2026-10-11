@@ -2,6 +2,12 @@
 import * as THREE from "three";
 import { fabric } from "./textures.ts";
 import { mulberry32 } from "../../shared/rng.ts";
+import { animateHuman, buildHuman, humansReady, type HumanRig } from "./humans.ts";
+
+export type Person = Rig | HumanRig;
+/** Which people use the realistic skinned bodies: everyone, only key people, or nobody (old phones). */
+let humanMode: "all" | "key" | "off" = "all";
+export const setHumanMode = (m: typeof humanMode) => { humanMode = m; };
 
 export type HairStyle = "low" | "afro" | "braids" | "bun" | "wrap" | "cap" | "locs";
 export type Pattern = "plain" | "kente" | "wax" | "stripe";
@@ -87,7 +93,32 @@ export interface Rig {
   carry: boolean;
 }
 
-export function buildPerson(look: PersonLook): Rig {
+export function buildPerson(look: PersonLook, opts: { key?: boolean } = {}): Person {
+  if (humansReady() && (humanMode === "all" || (humanMode === "key" && opts.key))) {
+    const h = buildHuman(look);
+    if (h) {
+      if (look.carry === "tray") h.bones.head.add(trayMesh(look, 0.19));
+      if (!opts.key) h.mesh.castShadow = humanMode === "all";
+      return h;
+    }
+  }
+  return buildSimplePerson(look);
+}
+
+function trayMesh(look: PersonLook, y: number) {
+  const tray = new THREE.Group();
+  tray.position.y = y;
+  tray.add(part(geo.cyl, plainMat("#c0c4c8", 0.35, 0.8), 0.28, 0.06, 0.28, 0, 0, 0));
+  const rnd = mulberry32(look.shirt.charCodeAt(2) * 31);
+  const goods = ["#e04a2f", "#f2b705", "#3c8d2f", "#f7f3e8", "#8b4a2b"];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2;
+    tray.add(part(geo.sphere, plainMat(goods[Math.floor(rnd() * goods.length)], 0.6), 0.06, 0.05, 0.06, Math.cos(a) * 0.16, 0.06, Math.sin(a) * 0.16));
+  }
+  return tray;
+}
+
+function buildSimplePerson(look: PersonLook): Rig {
   const s = look.height / 1.75;
   const b = look.build;
   const root = new THREE.Group();
@@ -246,7 +277,8 @@ export function buildPerson(look: PersonLook): Rig {
 }
 
 /** Advance the procedural animation. speed in m/s. */
-export function animatePerson(r: Rig, dt: number, speed: number) {
+export function animatePerson(r: Person, dt: number, speed: number) {
+  if ("real" in r) return animateHuman(r, dt, speed);
   r.speed += (speed - r.speed) * Math.min(1, dt * 8);
   const v = r.speed;
   const walking = v > 0.15;

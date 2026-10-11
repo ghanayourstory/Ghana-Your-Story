@@ -3,7 +3,7 @@
 // characters who follow their daily routines.
 import * as THREE from "three";
 import { buildVehicle, setVehicleLights, spinWheels, type VehicleKind, type VehicleRig } from "./vehicles.ts";
-import { animatePerson, buildPerson, randomLook, type Rig } from "./people.ts";
+import { animatePerson, buildPerson, randomLook, type Person } from "./people.ts";
 import { CROSS_HALF, EXTENT_X, ROAD_HALF, WALK_IN, WALK_OUT, type DistrictScene } from "./district.ts";
 import { DISTRICTS, PLACE_BY_ID, isRushHour } from "../../shared/world.ts";
 import { CROWD_SHOUTS, NPCS, npcLocation, type Npc } from "../../shared/people.ts";
@@ -32,7 +32,7 @@ interface Lane {
 }
 
 interface Walker {
-  rig: Rig;
+  rig: Person;
   z: number;
   x: number;
   dir: number;
@@ -47,7 +47,7 @@ interface Walker {
 
 export interface NpcActor {
   npc: Npc;
-  rig: Rig;
+  rig: Person;
   placeId: string;
   home: THREE.Vector3;
   label: THREE.Sprite;
@@ -110,7 +110,7 @@ export class CityLife {
     for (let i = 0; i < nWalk; i++) {
       const sw = this.d.sidewalks[i % this.d.sidewalks.length];
       const vendor = i % 9 === 0 && !night;
-      const rig = buildPerson(randomLook(Math.floor(this.rnd() * 1e9), { carry: vendor }));
+      const rig = buildPerson(randomLook(Math.floor(this.rnd() * 1e9), { carry: vendor }), { key: i < 18 });
       const w: Walker = {
         rig, z: sw.z + (this.rnd() - 0.5) * 2, x: sw.x0 + this.rnd() * (sw.x1 - sw.x0), dir: this.rnd() < 0.5 ? 1 : -1,
         speed: vendor ? 0.9 : 1.05 + this.rnd() * 0.5, pause: 0, vendor, beach: false, target: null, bubble: null, bubbleT: this.rnd() * 20,
@@ -174,7 +174,7 @@ export class CityLife {
       let a = this.npcs.get(npc.id);
       if (!a || a.placeId !== where) {
         if (a) this.group.remove(a.rig.root, a.label);
-        const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: npc.id === "esi" || npc.id === "nii" ? "wax" : npc.id === "selasi" ? "kente" : "plain" });
+        const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: npc.id === "esi" || npc.id === "nii" ? "wax" : npc.id === "selasi" ? "kente" : "plain" }, { key: true });
         const off = (NPCS.indexOf(npc) % 3 - 1) * 1.6;
         const home = door.clone().add(new THREE.Vector3(off + 1.2, 0.16, door.z > 0 ? -0.6 : 0.6));
         rig.root.position.copy(home);
