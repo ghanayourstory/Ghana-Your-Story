@@ -55,6 +55,11 @@ export class World {
   private minuteAt = performance.now();
   private weather: Weather = "sunny";
   private rings: THREE.Mesh[] = [];
+  private jumpY = 0;
+  private jumpYPrev = 0;
+  private vy = 0;
+  private boom = 13;
+  private siteBox: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
   /** A fixed pool of street-light point lights that follows the player (cheap on phones). */
   private lampPool: THREE.PointLight[] = [];
   private ringMat: THREE.MeshBasicMaterial;
@@ -185,6 +190,7 @@ export class World {
     this.life.onHonk = (p) => this.audio.horn(p.distanceTo(this.pos));
     this.life.populate(gd.hour, gd.weekdayIndex);
     this.scene.add(this.life.group);
+    this.audio.setSpots(d.soundSpots);
     this.lastNpcHour = -1;
     for (const it of d.interactables) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(it.radius * 0.55, it.radius * 0.68, 40), this.ringMat);
@@ -217,6 +223,8 @@ export class World {
     this.site = buildSite({ owned: !!owned, owner: s.player.name, design: building?.design, quality: building?.quality, stagesDone: building?.status === "complete" || building?.status === "upgrading" ? Math.max(4, stagesDone) : stagesDone, totalStages: building?.plan.length ?? 4, building: building?.status === "building" }, side);
     this.site.position.copy(d.plotSpot);
     this.scene.add(this.site);
+    // Once construction starts the site is solid.
+    this.siteBox = building ? { minX: d.plotSpot.x - 7.5, maxX: d.plotSpot.x + 7.5, minZ: d.plotSpot.z - 6.5, maxZ: d.plotSpot.z + 6.5 } : null;
   }
 
   private updateParked(s: GameState) {
@@ -301,6 +309,10 @@ export class World {
     const down = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
       this.keys.add(e.key.toLowerCase());
+      if (e.key === " ") {
+        e.preventDefault();
+        this.jump();
+      }
       this.audio.start();
     };
     const up = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
@@ -354,9 +366,33 @@ export class World {
   private collides(p: THREE.Vector3, r: number) {
     if (this.inside) return false;
     for (const c of this.district?.colliders ?? []) {
+      if (c.kind === "gutter") continue;
       if (p.x + r > c.minX && p.x - r < c.maxX && p.z + r > c.minZ && p.z - r < c.maxZ) return true;
     }
     return false;
+  }
+
+  /** Is something taller than the camera point in the way (for the camera boom)? */
+  private occludes(p: THREE.Vector3) {
+    for (const c of this.district?.colliders ?? []) {
+      if (c.h > p.y && p.x > c.minX && p.x < c.maxX && p.z > c.minZ && p.z < c.maxZ) return true;
+    }
+    return false;
+  }
+
+  jump() {
+    if (this.inside || this.jumpY > 0.02 || this.frozen) return;
+    this.vy = 3.4; // about 0.6 m clearance: enough to clear a gutter
+  }
+
+  private pushOutBox(p: THREE.Vector3, r: number, minX: number, maxX: number, minZ: number, maxZ: number) {
+    if (p.x + r <= minX || p.x - r >= maxX || p.z + r <= minZ || p.z - r >= maxZ) return;
+    const pushL = p.x + r - minX, pushR = maxX - (p.x - r), pushD = p.z + r - minZ, pushU = maxZ - (p.z - r);
+    const m = Math.min(pushL, pushR, pushD, pushU);
+    if (m === pushL) p.x -= pushL;
+    else if (m === pushR) p.x += pushR;
+    else if (m === pushD) p.z -= pushD;
+    else p.z += pushU;
   }
 
   private resolve(p: THREE.Vector3, r: number) {
@@ -366,15 +402,38 @@ export class World {
       p.z = THREE.MathUtils.clamp(p.z, -D / 2 + 0.4, D / 2 + 1.2);
       return;
     }
+    const airborne = this.jumpY > 0.18;
     for (const c of this.district?.colliders ?? []) {
-      if (p.x + r <= c.minX || p.x - r >= c.maxX || p.z + r <= c.minZ || p.z - r >= c.maxZ) continue;
-      const pushL = p.x + r - c.minX, pushR = c.maxX - (p.x - r), pushD = p.z + r - c.minZ, pushU = c.maxZ - (p.z - r);
-      const m = Math.min(pushL, pushR, pushD, pushU);
-      if (m === pushL) p.x -= pushL;
-      else if (m === pushR) p.x += pushR;
-      else if (m === pushD) p.z -= pushD;
-      else p.z += pushU;
+      if (c.kind === "gutter" && airborne) continue; // jumping clears the drain
+      this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
     }
+    // Vehicles (moving and parked): oriented boxes.
+    for (const v of this.life?.solidVehicles() ?? []) {
+      const g = v.group;
+      const yaw = g.rotation.y;
+      const cos = Math.cos(yaw), sin = Math.sin(yaw);
+      // Into the car's frame (car length runs along its local z).
+      const dx = p.x - g.position.x, dz = p.z - g.position.z;
+      const lx = dx * cos - dz * sin, lz = dx * sin + dz * cos;
+      const hw = v.width / 2 + r, hl = v.length / 2 + r;
+      if (Math.abs(lx) >= hw || Math.abs(lz) >= hl) continue;
+      let nx = lx, nz = lz;
+      if (hw - Math.abs(lx) < hl - Math.abs(lz)) nx = Math.sign(lx || 1) * hw;
+      else nz = Math.sign(lz || 1) * hl;
+      p.x = g.position.x + nx * cos + nz * sin;
+      p.z = g.position.z - nx * sin + nz * cos;
+    }
+    // People: nobody walks through anybody.
+    for (const o of this.life?.peoplePositions() ?? []) {
+      const dx = p.x - o.x, dz = p.z - o.z;
+      const d = Math.hypot(dx, dz), min = r + 0.28;
+      if (d > 0.0001 && d < min) {
+        p.x = o.x + (dx / d) * min;
+        p.z = o.z + (dz / d) * min;
+      }
+    }
+    // The building site, once walls are up.
+    if (this.siteBox) this.pushOutBox(p, r, this.siteBox.minX, this.siteBox.maxX, this.siteBox.minZ, this.siteBox.maxZ);
   }
 
   private groundY(p: THREE.Vector3) {
@@ -425,12 +484,25 @@ export class World {
       this.vel.multiplyScalar(Math.max(0, 1 - dt * 12));
     }
     this.pos.addScaledVector(this.vel, dt);
-    this.resolve(this.pos, 0.38);
+    this.resolve(this.pos, 0.32);
+    // Jumping.
+    this.vy -= 9.8 * dt;
+    this.jumpY = Math.max(0, this.jumpY + this.vy * dt);
+    if (this.jumpY === 0) this.vy = 0;
     const gy = this.groundY(this.pos);
     if (this.player) {
-      this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y, gy, Math.min(1, dt * 14)), this.pos.z);
+      this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y - this.jumpYPrev, gy, Math.min(1, dt * 14)) + this.jumpY, this.pos.z);
+      this.jumpYPrev = this.jumpY;
       this.player.root.rotation.y = this.yaw;
-      animatePerson(this.player, dt, this.vel.length());
+      animatePerson(this.player, dt, this.jumpY > 0 ? 0 : this.vel.length());
+      // Tuck the legs while airborne.
+      if (this.jumpY > 0.02 && "real" in this.player) {
+        const b = this.player.bones;
+        for (const sd of ["L", "R"]) {
+          b[`upperleg01.${sd}`].rotation.x = -0.6;
+          b[`lowerleg01.${sd}`].rotation.x = 1.0;
+        }
+      }
     }
 
     // Camera.
@@ -439,17 +511,22 @@ export class World {
     const cp = this.inside ? Math.max(this.camPitch, 0.9) : this.camPitch;
     const off = new THREE.Vector3(Math.sin(this.camYaw) * Math.cos(cp), Math.sin(cp), Math.cos(this.camYaw) * Math.cos(cp)).multiplyScalar(cd);
     const head = this.camTarget.clone().add(new THREE.Vector3(0, 1.2, 0));
+    // Pull the camera in only for things genuinely taller than it, and ease the
+    // distance so it never snaps or jitters.
+    let want = 1;
     if (!this.inside) {
-      // Shorten the boom if it passes through a building or tree trunk below roof height.
-      const steps = 24;
-      for (let i = 1; i <= steps; i++) {
+      const steps = 20;
+      for (let i = 2; i <= steps; i++) {
         const p = head.clone().addScaledVector(off, i / steps);
-        if (p.y < 9 && this.collides(p, 0.2) && Math.abs(p.z) > 9.5) {
-          off.multiplyScalar(Math.max(0.25, (i - 1.5) / steps));
+        if (this.occludes(p)) {
+          want = Math.max(0.35, (i - 1) / steps);
           break;
         }
       }
     }
+    const target = off.length() * want;
+    this.boom += (target - this.boom) * Math.min(1, dt * (target < this.boom ? 6 : 2));
+    off.setLength(this.boom);
     this.camera.position.copy(head).add(off);
     this.camera.lookAt(this.camTarget.x, this.camTarget.y + 1.3, this.camTarget.z);
 
@@ -479,15 +556,15 @@ export class World {
       }
       const pulse = 0.55 + Math.sin(t * 3) * 0.25;
       this.ringMat.opacity = pulse;
-      // Audio mix from surroundings.
+      // Audio: the listener is the camera-facing player; beds follow the place and the hour.
       const dist = DISTRICTS[this.district.id];
-      const nearMusic = [...this.district.placeDoors].filter(([id]) => PLACE_BY_ID[id].kind === "nightlife").reduce((m, [, p]) => Math.max(m, 1 - p.distanceTo(this.pos) / 40), 0);
-      const musicOn = hour >= 17 || hour < 3 || this.district.id === "labadi";
-      this.audio.update(dt, {
+      const busy = hour >= 6 && hour < 20 ? 1 : hour >= 20 && hour < 23 ? 0.5 : 0.15;
+      this.audio.update(dt, { x: this.pos.x, z: this.pos.z, yaw: this.camYaw + Math.PI }, {
         traffic: dist.traffic * (night > 0.6 ? 0.4 : 1) * (1 - THREE.MathUtils.clamp((Math.abs(this.pos.z) - 12) / 40, 0, 0.8)),
         waves: this.district.shoreZ ? THREE.MathUtils.clamp(1 - (this.district.shoreZ - this.pos.z) / 50, 0.15, 1) : 0,
         rain: this.weather === "rain" ? 0.7 : this.weather === "storm" ? 1 : 0,
-        music: musicOn ? Math.max(0, nearMusic) : 0,
+        crowd: dist.crowd * busy,
+        hour,
       }, t);
     }
 

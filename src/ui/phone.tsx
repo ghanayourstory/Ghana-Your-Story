@@ -680,6 +680,35 @@ function BetApp() {
   );
 }
 
+function SoundSettings() {
+  const [mix, setMix] = useState(() => readMix());
+  const update = (p: Partial<typeof mix>) => {
+    const next = { ...mix, ...p };
+    setMix(next);
+    try { localStorage.setItem("sika.mix", JSON.stringify(next)); } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent("sika-mix", { detail: next }));
+  };
+  return (
+    <div className="card col" style={{ marginTop: 10 }}>
+      <b>Sound</b>
+      <div className="row small"><span className="muted" style={{ width: 70 }}>Volume</span><input type="range" min={0} max={1} step={0.05} value={mix.master} onChange={(e) => update({ master: Number(e.target.value) })} className="grow" /></div>
+      <div className="seg">
+        <button className={mix.market ? "on" : ""} onClick={() => update({ market: !mix.market })}>Market noise {mix.market ? "on" : "off"}</button>
+        <button className={mix.music ? "on" : ""} onClick={() => update({ music: !mix.music })}>Shop music {mix.music ? "on" : "off"}</button>
+        <button className={mix.traffic ? "on" : ""} onClick={() => update({ traffic: !mix.traffic })}>Traffic {mix.traffic ? "on" : "off"}</button>
+      </div>
+    </div>
+  );
+}
+
+export function readMix() {
+  try {
+    const m = JSON.parse(localStorage.getItem("sika.mix") ?? "null");
+    if (m) return m as { master: number; market: boolean; music: boolean; traffic: boolean };
+  } catch { /* ignore */ }
+  return { master: 0.8, market: true, music: true, traffic: true };
+}
+
 function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality: (q: GfxQuality) => void }) {
   const { state, backend, act, busy, logout } = useGame();
   const [grant, setGrant] = useState("5000");
@@ -692,6 +721,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
         <div className="seg">{(["low", "medium", "high"] as const).map((q) => <button key={q} className={quality === q ? "on" : ""} onClick={() => setQuality(q)}>{q}</button>)}</div>
         <div className="tiny muted">Low turns off shadows for older phones.</div>
       </div>
+      <SoundSettings />
       <div className="card col" style={{ marginTop: 10 }}>
         <b>Save</b>
         <div className="tiny muted">{backend.mode === "server" ? "Your progress is saved on the game server after every action." : "Offline demo: your progress is saved in this browser. The full game uses an authoritative server."}</div>

@@ -4,7 +4,7 @@ import { getToken, pickBackend, setToken, type Backend } from "./net/backend.ts"
 import { CharacterCreate } from "./ui/CharacterCreate.tsx";
 import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
-import { Phone } from "./ui/phone.tsx";
+import { Phone, readMix } from "./ui/phone.tsx";
 import { World, type Nearby, type Quality } from "./world/World.ts";
 import { loadHumans } from "./world/humans.ts";
 import type { GameState } from "../server/engine.ts";
@@ -114,8 +114,14 @@ function Game() {
       onTaxiArrived: () => setPanel({ kind: "travel", ctx: "taxi" }),
     }, quality);
     w.audio.muted = muted;
+    w.audio.settings = readMix();
+    const onMix = (e: Event) => w.audio.setMix((e as CustomEvent).detail);
+    window.addEventListener("sika-mix", onMix);
     setWorld(w);
-    return () => w.dispose();
+    return () => {
+      window.removeEventListener("sika-mix", onMix);
+      w.dispose();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -221,7 +227,7 @@ function Game() {
             <div className="brand" style={{ marginBottom: 10 }}><div className="coin" style={{ width: 40, height: 40, fontSize: 20 }}>₵</div><div className="wordmark" style={{ fontSize: 28 }}>Sika<span>City</span></div></div>
             <p style={{ marginTop: 0 }}>Akwaaba, <b>{state?.player.name}</b>. You've just stepped off a trotro at Kaneshie with a rented room at Tetteh House and not much else.</p>
             <div className="col small">
-              <div>🕹️ <b>Move</b> with WASD / arrow keys (hold Shift to run) or the joystick. Drag to turn the camera, scroll to zoom.</div>
+              <div>🕹️ <b>Move</b> with WASD / arrow keys (hold Shift to run, <b>Space</b> to jump gutters) or the joystick. Drag to turn the camera, scroll to zoom.</div>
               <div>🟡 Walk into <b>yellow rings</b> to enter places, then press <b>E</b>. Walk up to people to talk.</div>
               <div>💼 First money: <b>Kaneshie Market</b> or the <b>trotro station</b> hire anyone. Eat, sleep, repeat — then build.</div>
               <div>📱 Your <b>phone</b> (P) has your bank, jobs, businesses, property, people and football.</div>

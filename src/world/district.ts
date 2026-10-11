@@ -7,6 +7,7 @@ import * as T from "./textures.ts";
 import { DISTRICTS, PLACES, placesIn, type DistrictId, type Place } from "../../shared/world.ts";
 import { mulberry32 } from "../../shared/rng.ts";
 import { createOcean } from "./ocean.ts";
+import type { Genre, SoundSpot } from "./audio.ts";
 
 export const ROAD_HALF = 6;
 export const WALK_IN = 6.8;
@@ -21,6 +22,10 @@ export interface Collider {
   maxX: number;
   minZ: number;
   maxZ: number;
+  /** Height in metres (the camera only avoids things taller than itself). */
+  h: number;
+  /** Gutters block walking but can be jumped over. */
+  kind?: "solid" | "gutter";
 }
 
 export interface Interactable {
@@ -50,6 +55,8 @@ export interface DistrictScene {
   shoreZ: number | null;
   placeDoors: Map<string, THREE.Vector3>;
   homeLabel: THREE.Sprite;
+  /** Where the noise comes from: markets and shop speakers. */
+  soundSpots: SoundSpot[];
   dispose: () => void;
 }
 
@@ -114,6 +121,9 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   const lampSpots: THREE.Vector3[] = [];
   const stalls: THREE.Vector3[] = [];
   const placeDoors = new Map<string, THREE.Vector3>();
+  const soundSpots: SoundSpot[] = [];
+  const music = (x: number, z: number, genre: Genre, loud = 1, hours: [number, number] = [8, 22]) => soundSpots.push({ id: `m${soundSpots.length}`, kind: "music", x, z, genre, loud, hours });
+  const marketNoise = (x: number, z: number, loud = 1, hours: [number, number] = [5, 20]) => soundSpots.push({ id: `k${soundSpots.length}`, kind: "market", x, z, loud, hours });
   const disposables: { dispose(): void }[] = [];
   const coastal = d.style === "coastal";
   const upscale = d.style === "suburban" || d.style === "luxury";
@@ -193,7 +203,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   };
 
   const box = (m: THREE.Material, x: number, y: number, z: number, w: number, h: number, dd: number, ry = 0) => batch.add(G.box, m, [x, y, z], [0, ry, 0], [w, h, dd]);
-  const collide = (x: number, z: number, w: number, dd: number) => colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - dd / 2, maxZ: z + dd / 2 });
+  const collide = (x: number, z: number, w: number, dd: number, h = 2.5) => colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - dd / 2, maxZ: z + dd / 2, h });
 
   // -------------------------------------------------------------------------
   // Ground, roads, gutters, pavements
@@ -245,10 +255,20 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       box(M.curb, cx, 0.12, side * (ROAD_HALF + 0.12), len, 0.24, 0.24);
       // Black-and-yellow painted curb stones.
       for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.245, side * (ROAD_HALF + 0.12), 1, 0.01, 0.25);
-      batch.add(G.plane, M.gutter, [cx, -0.25, side * (ROAD_HALF + 0.55)], [-Math.PI / 2, 0, 0], [len, 0.55, 1]);
-      box(M.gutterWall, cx, -0.05, side * (ROAD_HALF + 0.86), len, 0.5, 0.12);
-      // Occasional concrete slabs bridging the gutter.
-      for (let x = x0 + 4; x < x1 - 2; x += 9 + rnd() * 8) box(M.concrete, x, 0.15, side * (ROAD_HALF + 0.55), 1.6, 0.12, 0.85);
+      batch.add(G.plane, M.gutter, [cx, -0.55, side * (ROAD_HALF + 0.55)], [-Math.PI / 2, 0, 0], [len, 0.6, 1]);
+      box(M.gutterWall, cx, -0.2, side * (ROAD_HALF + 0.24), len, 0.7, 0.04);
+      box(M.gutterWall, cx, -0.2, side * (ROAD_HALF + 0.86), len, 0.75, 0.12);
+      // Concrete slabs bridging the gutter; between them it's an open drain you jump across.
+      const slabs: number[] = [];
+      for (let x = x0 + 4; x < x1 - 2; x += 9 + rnd() * 8) {
+        box(M.concrete, x, 0.15, side * (ROAD_HALF + 0.55), 1.6, 0.12, 0.85);
+        slabs.push(x);
+      }
+      let gx = x0;
+      for (const sx of [...slabs, x1 + 0.8]) {
+        if (sx - 0.8 > gx) colliders.push({ minX: gx, maxX: sx - 0.8, minZ: Math.min(side * (ROAD_HALF + 0.25), side * (ROAD_HALF + 0.85)), maxZ: Math.max(side * (ROAD_HALF + 0.25), side * (ROAD_HALF + 0.85)), h: 0, kind: "gutter" });
+        gx = sx + 0.8;
+      }
       batch.add(tiledPlane(len, WALK_OUT - WALK_IN, 3), M.pavers, [cx, 0.16, side * ((WALK_IN + WALK_OUT) / 2)], [-Math.PI / 2, 0, 0]);
       box(M.curb, cx, 0.08, side * (WALK_OUT + 0.08), len, 0.16, 0.16);
     }
@@ -324,6 +344,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       box(M.roofClean, x, 2.65, z + side * 0.4, 4.2, 0.08, 1.9);
       box(signMat(p.sign, "#F2B705", "#111"), x, 2.85, z - side * 0.5, 3.6, 0.5, 0.06);
       box(M.wood, x, 0.5, z + side * 0.7, 3.2, 0.08, 0.45);
+      collide(x, z + side * 0.85, 3.8, 0.9, 2.7);
       const ip = new THREE.Vector3(x, 0, z - side * 0.6);
       interactables.push({ id: p.id, kind: "stop", placeId: p.id, pos: ip, radius: 2.6, label: p.name });
       placeDoors.set(p.id, ip);
@@ -347,6 +368,11 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     buildPlace(p, cx, cz, w, depth, h, faceDir);
     const door = new THREE.Vector3(cx, 0, front + faceDir * 1.4);
     placeDoors.set(p.id, door);
+    if (p.kind === "nightlife") music(cx, front, "afrobeats", 1.6, [p.open[0], p.open[1]]);
+    else if (p.kind === "church") music(cx, front, "gospel", 1.1, [6, 21]);
+    else if (p.kind === "food") music(cx, front, rnd() < 0.6 ? "highlife" : "gospel", 0.8, [p.open[0], p.open[1]]);
+    else if (p.kind === "shop") music(cx, front, "afrobeats", 0.8, [p.open[0], p.open[1]]);
+    else if (p.kind === "market") marketNoise(cx, front + faceDir * 2, 1.4, [p.open[0], p.open[1]]);
     interactables.push({ id: p.id, kind: "place", placeId: p.id, pos: door, radius: 2.4, label: p.name });
     labelSprite(p.name, ICON[p.kind] ?? "📍", Math.min(h, 9) + 1.4, cx, front + faceDir * 0.6);
   }
@@ -388,7 +414,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       batch.add(G.plane, colorMat("#F2B705", 0.8), [cx + w / 2 - 0.4, h + 5.0, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#1F7A4D", 0.8), [cx + w / 2 - 0.4, h + 4.6, cz], [0, 0, 0], [1.1, 0.4, 1]);
       box(signMat("OSU CASTLE", "#F4F1E6", "#3a2a1f", "FORT CHRISTIANSBORG • 1661"), cx, 3.9, front + faceDir * 0.06, 6, 1.1, 0.08);
-      collide(cx, cz, w + 3, depth);
+      collide(cx, cz, w + 3, depth, h * 1.3);
       return;
     }
     if (p.kind === "beach") {
@@ -397,6 +423,8 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       // Lifeguard tower.
       for (const [dx, dz] of [[-0.8, -0.8], [0.8, -0.8], [-0.8, 0.8], [0.8, 0.8]]) box(M.wood, cx + 6 + dx, 1.2, cz + 2 + dz, 0.12, 2.4, 0.12);
       box(M.wood, cx + 6, 2.45, cz + 2, 2, 0.12, 2);
+      collide(cx + 6, cz + 2, 2, 2, 3.5);
+      collide(cx, cz, 0.4, 0.4, 3.2);
       box(colorMat("#C8452C"), cx + 6, 3.5, cz + 2, 2.1, 0.1, 2.1);
       return;
     }
@@ -411,7 +439,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
         const tx = cx + (rnd() - 0.5) * w * 1.6, tz = front + faceDir * (3 + rnd() * 5);
         plasticSet(tx, tz);
       }
-      collide(cx, cz, w * 0.8, depth * 0.6);
+      collide(cx, cz, w * 0.8, depth * 0.6, h);
       return;
     }
     if (p.id === "kaneshie_market") {
@@ -424,7 +452,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
         const sx = cx - w / 2 + 3 + i * ((w - 6) / 5);
         stall(sx, front + faceDir * 3.4, true);
       }
-      collide(cx, cz, w, depth);
+      collide(cx, cz, w, depth, h);
       return;
     }
     // Generic place building, styled by district.
@@ -464,7 +492,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       plasticSet(cx + w / 2 - 1.5, front + faceDir * 2.6);
     }
     acUnits(cx, cz, w, depth, h, faceDir);
-    collide(cx, cz, w, depth);
+    collide(cx, cz, w, depth, h);
   }
 
   // -------------------------------------------------------------------------
@@ -503,6 +531,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     }
   }
   function plasticSet(x: number, z: number) {
+    collide(x, z + 0.2, 2.2, 1.9, 0.9);
     const m = rnd() < 0.5 ? M.chairRed : M.chairBlue;
     box(colorMat("#f3f1ea", 0.5), x, 0.72, z, 0.9, 0.05, 0.9);
     batch.add(G.cyl8, colorMat("#f3f1ea", 0.5), [x, 0.36, z], [0, 0, 0], [0.06, 0.72, 0.06]);
@@ -527,6 +556,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     }
     if (withUmbrella) umbrella(x, z, 2.4, 1.5);
     stalls.push(new THREE.Vector3(x, 0, z + (z > 0 ? -1.1 : 1.1)));
+    if (!soundSpots.some((sp) => sp.kind === "market" && Math.hypot(sp.x - x, sp.z - z) < 18)) marketNoise(x, z, 0.8);
     collide(x, z, 1.9, 1.1);
   }
   function kiosk(x: number, z: number, side: number) {
@@ -586,7 +616,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     // Wall coping and the ubiquitous razor wire.
     box(M.concrete, (x0 + x1) / 2, h + 0.06, z, len, 0.12, 0.35);
     if (d.style !== "luxury") box(M.darkMetal, (x0 + x1) / 2, h + 0.35, z, len, 0.3, 0.05);
-    colliders.push({ minX: x0, maxX: x1, minZ: z - 0.2, maxZ: z + 0.2 });
+    colliders.push({ minX: x0, maxX: x1, minZ: z - 0.2, maxZ: z + 0.2, h: h + 0.4 });
   }
   function villa(cx: number, cz: number, w: number, depth: number, storeys: number, color: string, side: number) {
     const h = storeys * 3.2;
@@ -595,7 +625,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     batch.add(new THREE.ConeGeometry(1, 1, 4), colorMat(d.palette.roofs[Math.floor(rnd() * d.palette.roofs.length)], 0.6), [cx, h + 1.1, cz], [0, Math.PI / 4, 0], [w * 0.78, 2.2, depth * 0.78]);
     box(M.white, cx, 3.2, cz - side * (depth / 2 + 1.2), w * 0.5, 0.2, 2.4); // balcony
     for (const s of [-1, 1]) box(M.white, cx + s * w * 0.22, 1.6, cz - side * (depth / 2 + 2.2), 0.3, 3.2, 0.3);
-    collide(cx, cz, w, depth);
+    collide(cx, cz, w, depth, h + 2);
   }
   function filler(x: number, side: number, w: number) {
     const depth = 8 + rnd() * 6;
@@ -625,7 +655,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       batch.add(facadeBox(w - 0.6, 7, depth, 3), wm, [x, 3.5, cz]); // corrugated tiles are single
       roofPitched(x, cz, w - 0.6, depth, 7, false);
       box(M.shutter, x, 2.2, front - side * 0.03, Math.min(6, w - 2), 4.4, 0.06);
-      collide(x, cz, w - 0.6, depth);
+      collide(x, cz, w - 0.6, depth, 8);
       return;
     }
     batch.add(facadeBox(w - 0.6, h, depth), facadeMat(color, glassy ? "glass" : style === "corporate" ? "modern" : "louvre"), [x, h / 2, cz]);
@@ -642,6 +672,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
         const ux = x - (w - 0.6) / 2 + ((u + 0.5) * (w - 0.6)) / units;
         const uw = (w - 0.6) / units - 0.6;
         const open = rnd() < 0.7;
+        if (open && rnd() < 0.3) music(ux, front, (["highlife", "gospel", "afrobeats", "afrobeats"] as Genre[])[Math.floor(rnd() * 4)], 0.7);
         box(open ? colorMat("#1a1714", 0.9) : M.shutter, ux, 1.25, front - side * 0.02, uw - 0.4, 2.5, 0.05);
         if (open) box(M.shutter, ux, 2.7, front - side * 0.03, uw - 0.4, 0.4, 0.06);
         const name = SIGN_NAMES[Math.floor(rnd() * SIGN_NAMES.length)];
@@ -652,7 +683,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       }
     }
     acUnits(x, cz, w - 0.6, depth, h, -side);
-    collide(x, cz, w - 0.6, depth);
+    collide(x, cz, w - 0.6, depth, h + 0.6);
   }
 
   // Fill the frontage with buildings.
@@ -676,7 +707,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       batch.add(facadeBox(w, h, dd), facadeMat(d.palette.walls[Math.floor(rnd() * d.palette.walls.length)], d.style === "corporate" && h > 9 ? "glass" : upscale ? "modern" : "louvre"), [bx, h / 2, z]);
       if (h <= 6 && !upscale) roofPitched(bx, z, w, dd, h, true);
       else parapet(bx, z, w, dd, h);
-      collide(bx, z, w, dd);
+      collide(bx, z, w, dd, h);
     }
   }
 
@@ -690,7 +721,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       batch.add(facadeBox(12, 6, 10), facadeMat("#E8D5B5", "louvre"), [home.x, 3, homeZ]);
       roofPitched(home.x, homeZ, 12, 10, 6, false);
       box(colorMat("#5b3a29", 0.7), home.x, 1.2, homeZ - home.side * 5.02, 1.2, 2.4, 0.06);
-      collide(home.x, homeZ, 12, 10);
+      collide(home.x, homeZ, 12, 10, 8);
     }
   }
   const homeDoor = id === "kaneshie" ? placeDoors.get("tetteh_compound")!.clone() : new THREE.Vector3(home.x, 0, home.side * (BUILD_LINE - 1.2));
@@ -703,6 +734,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   // Survey pegs and a sign: "THIS LAND IS NOT FOR SALE" is the Accra classic; ours says it IS for sale.
   box(M.wood, plot.x - 3, 1.2, plot.side * (BUILD_LINE + 0.5), 0.12, 2.4, 0.12);
   box(signMat("LAND FOR SALE", "#ffffff", "#C8452C", "BOATENG REALTY"), plot.x - 3, 2.3, plot.side * (BUILD_LINE + 0.45), 2.6, 0.9, 0.06);
+  collide(plot.x - 3, plot.side * (BUILD_LINE + 0.5), 0.4, 0.4, 2.5);
 
   // -------------------------------------------------------------------------
   // Street furniture: poles with sagging wires, lamps, trees, kiosks, stalls.
@@ -788,12 +820,13 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       batch.add(G.cone, c1, [x + Math.sin(0.2) * 4.6, 0.45, z + Math.cos(0.2) * 4.6], [Math.PI / 2, 0, 0], [0.65, 1.4, 0.35]);
       batch.add(G.cyl8, M.wood, [x, 2, z - 3], [0, 0, 0], [0.04, 3, 0.04]);
       batch.add(G.plane, colorMat(cols[(i + 2) % 4], 0.7), [x + 0.45, 3.2, z - 3], [0, Math.PI / 2, 0], [0.9, 0.55, 1]);
-      colliders.push({ minX: x - 0.8, maxX: x + 0.8, minZ: z - 4, maxZ: z + 4 });
+      colliders.push({ minX: x - 0.8, maxX: x + 0.8, minZ: z - 4, maxZ: z + 4, h: 1 });
     }
     // Drum circle: stools in a ring.
     for (let i = 0; i < 6; i++) {
       const a = (i / 6) * Math.PI * 2;
       batch.add(G.cyl, colorMat("#6b3f2a", 0.7), [16 + Math.cos(a) * 2.2, 0.4, 28 + Math.sin(a) * 2.2], [0, 0, 0], [0.3, 0.8, 0.3]);
+      collide(16 + Math.cos(a) * 2.2, 28 + Math.sin(a) * 2.2, 0.6, 0.6, 0.8);
     }
   }
   if (d.style === "luxury") {
@@ -815,10 +848,10 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   disposables.push(...statics.children.map((c) => (c as THREE.Mesh).geometry));
 
   // Bounds: invisible walls at the edge of the playable area.
-  colliders.push({ minX: -EXTENT_X - 30, maxX: -EXTENT_X + 1, minZ: -EXTENT_Z - 30, maxZ: EXTENT_Z + 30 });
-  colliders.push({ minX: EXTENT_X - 1, maxX: EXTENT_X + 30, minZ: -EXTENT_Z - 30, maxZ: EXTENT_Z + 30 });
-  colliders.push({ minX: -EXTENT_X - 30, maxX: EXTENT_X + 30, minZ: -EXTENT_Z - 30, maxZ: -EXTENT_Z + 1 });
-  colliders.push({ minX: -EXTENT_X - 30, maxX: EXTENT_X + 30, minZ: coastal ? shoreZ! + 3 : EXTENT_Z - 1, maxZ: EXTENT_Z + 60 });
+  colliders.push({ minX: -EXTENT_X - 30, maxX: -EXTENT_X + 1, minZ: -EXTENT_Z - 30, maxZ: EXTENT_Z + 30, h: 0 });
+  colliders.push({ minX: EXTENT_X - 1, maxX: EXTENT_X + 30, minZ: -EXTENT_Z - 30, maxZ: EXTENT_Z + 30, h: 0 });
+  colliders.push({ minX: -EXTENT_X - 30, maxX: EXTENT_X + 30, minZ: -EXTENT_Z - 30, maxZ: -EXTENT_Z + 1, h: 0 });
+  colliders.push({ minX: -EXTENT_X - 30, maxX: EXTENT_X + 30, minZ: coastal ? shoreZ! + 3 : EXTENT_Z - 1, maxZ: EXTENT_Z + 60, h: 0 });
 
   const spawnStop = PLACES.find((p) => p.district === id && p.kind === "transport");
   const spawn = spawnStop ? placeDoors.get(spawnStop.id)!.clone() : new THREE.Vector3(-58, 0, 8);
@@ -845,6 +878,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     shoreZ,
     placeDoors,
     homeLabel,
+    soundSpots,
     dispose: () => {
       group.traverse((o) => {
         const m = o as THREE.Mesh;

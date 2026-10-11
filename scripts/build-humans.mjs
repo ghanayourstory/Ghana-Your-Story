@@ -30,7 +30,8 @@ console.log(`base: ${V.length} verts, ${faces.length} body faces`);
 
 function readTarget(name) {
   const d = new Map();
-  for (const line of readFileSync(join(DATA, "targets/macrodetails", name + ".target"), "utf8").split("\n")) {
+  const file = name.includes("/") ? join(DATA, "targets", name + ".target") : join(DATA, "targets/macrodetails", name + ".target");
+  for (const line of readFileSync(file, "utf8").split("\n")) {
     if (!line || line.startsWith("#")) continue;
     const [i, x, y, z] = line.trim().split(/\s+/).map(Number);
     d.set(i, [x, y, z]);
@@ -80,11 +81,77 @@ for (const [bone, list] of Object.entries(wts)) {
 }
 
 // ---------------------------------------------------------------------------
+// Stylised face: Taubin-smooth the head (keeps volume) so realistic creases
+// soften into clean planes. Eyelids stay locked so eyes still sit in their sockets.
+const faceNeighbours = (() => {
+  const nb = Array.from({ length: V.length }, () => new Set());
+  for (const f of faces) for (let k = 0; k < f.length; k++) { const a = f[k][0], b = f[(k + 1) % f.length][0]; nb[a].add(b); nb[b].add(a); }
+  return nb;
+})();
+function smoothFace(P) {
+  const eyeC = ["eye.L", "eye.R"].map((b) => { const idx = sk.joints[sk.bones[b].head]; const c = [0, 0, 0]; for (const i of idx) for (let k = 0; k < 3; k++) c[k] += P[i][k] / idx.length; return c; });
+  const movable = [];
+  for (let i = 0; i < P.length; i++) {
+    const w = (vw[i].get("head") ?? 0) + (vw[i].get("jaw") ?? 0);
+    if (w < 0.7 || !faceNeighbours[i].size) continue;
+    const nearEye = eyeC.some((c) => Math.hypot(P[i][0] - c[0], P[i][1] - c[1], P[i][2] - c[2]) < 0.28);
+    if (!nearEye) movable.push(i);
+  }
+  let Q = P.map((p) => p.slice());
+  const step = (lam) => {
+    const R = Q.map((p) => p.slice());
+    for (const i of movable) {
+      const ns = faceNeighbours[i];
+      const c = [0, 0, 0];
+      for (const j of ns) for (let k = 0; k < 3; k++) c[k] += Q[j][k] / ns.size;
+      for (let k = 0; k < 3; k++) R[i][k] = Q[i][k] + lam * (c[k] - Q[i][k]);
+    }
+    Q = R;
+  };
+  for (let it = 0; it < 10; it++) { step(0.5); step(-0.53); }
+  return Q;
+}
+
+// ---------------------------------------------------------------------------
 // Build one gender.
 
+// Ethnic mix the way MakeHuman's sliders work (weights sum to 1). A single
+// template at 100% is an extreme average; real faces sit between them.
+const ETHNIC = { african: 0.82, caucasian: 0.09, asian: 0.09 };
+// Gentle facial modifiers (MakeHuman targets, weight 0..1) for natural proportions.
+// Stylised direction: bigger eyes, softer brow and jaw, rounder head.
+const FACE = {
+  common: {
+    "chin/chin-prognathism-decr": 0.6,
+    "mouth/mouth-trans-backward": 0.4,
+    "eyebrows/eyebrows-trans-backward": 0.65,
+    "forehead/forehead-trans-forward": 0.35,
+    "forehead/forehead-scale-vert-incr": 0.35,
+    "eyes/l-eye-scale-incr": 0.9,
+    "eyes/r-eye-scale-incr": 0.9,
+    "head/head-oval": 0.35,
+    "head/head-round": 0.3,
+    "cheek/l-cheek-volume-incr": 0.3,
+    "cheek/r-cheek-volume-incr": 0.3,
+  },
+  male: { "chin/chin-bones-incr": 0.2 },
+  female: {
+    "eyes/l-eye-scale-incr": 1.0,
+    "eyes/r-eye-scale-incr": 1.0,
+    "cheek/l-cheek-bones-incr": 0.35,
+    "cheek/r-cheek-bones-incr": 0.35,
+    "chin/chin-width-decr": 0.35,
+    "head/head-oval": 0.55,
+    "mouth/mouth-cupidsbow-incr": 0.4,
+    "eyebrows/eyebrows-angle-up": 0.25,
+  },
+};
+
 function build(gender) {
-  const base0 = apply(V, readTarget(`african-${gender}-young`), 1);
-  const base = apply(base0, readTarget(`universal-${gender}-young-averagemuscle-averageweight`), 1);
+  let base0 = V;
+  for (const [eth, w] of Object.entries(ETHNIC)) base0 = apply(base0, readTarget(`${eth}-${gender}-young`), w);
+  for (const [t, w] of Object.entries({ ...FACE.common, ...FACE[gender] })) base0 = apply(base0, readTarget(t), w);
+  const base = smoothFace(apply(base0, readTarget(`universal-${gender}-young-averagemuscle-averageweight`), 1));
   const variant = (name) => apply(base0, readTarget(`universal-${gender}-young-${name}`), 1);
   const morphs = {
     muscle: variant("maxmuscle-averageweight"),
@@ -198,7 +265,7 @@ function build(gender) {
   // Hairline elevation (degrees above the head centre's horizontal) by azimuth from the face.
   const hairline = (az) => {
     const a = Math.abs(az);
-    const pts = [[0, 27], [25, 25], [50, 17], [75, 4], [95, -4], [120, -20], [150, -36], [180, -42]];
+    const pts = [[0, 30], [20, 29], [40, 24], [60, 14], [80, 3], [100, -6], [125, -22], [150, -36], [180, -42]];
     for (let k = 1; k < pts.length; k++) if (a <= pts[k][0]) return lerp(pts[k - 1][1], pts[k][1], (a - pts[k - 1][0]) / (pts[k][0] - pts[k - 1][0]));
     return -40;
   };
@@ -212,8 +279,10 @@ function build(gender) {
     const dist = Math.hypot(...d);
     const elev = (Math.asin(d[1] / dist) * 180) / Math.PI;
     const az = (Math.atan2(d[0], d[2]) * 180) / Math.PI;
-    const onSkull = 1 - smooth(headR * 1.04, headR * 1.12, dist); // ears stick out: excluded
-    const hair = smooth(hairline(az) - 2.5, hairline(az) + 2.5, elev) * onSkull;
+    // Ears stick out sideways at eye height: excluded. Everything else on the skull can carry hair.
+    const ear = smooth(headR * 1.0, headR * 1.07, dist) * smooth(55, 70, Math.abs(az)) * (1 - smooth(115, 130, Math.abs(az))) * (1 - smooth(10, 18, elev));
+    const onSkull = (1 - smooth(headR * 1.16, headR * 1.25, dist)) * (1 - ear);
+    const hair = smooth(hairline(az) - 3.5, hairline(az) + 3.5, elev) * onSkull;
     // Brows: arched bands above each eye, front only.
     const bx = (Math.abs(p[0]) - (eyeX + 0.004)) / 0.023;
     const archY = eyeY + 0.026 - 0.006 * bx * bx;
@@ -345,6 +414,7 @@ function build(gender) {
     shells,
     hips,
     arm: { shoulder: heads.get("upperarm01.L"), elbow: heads.get("lowerarm01.L"), wrist: heads.get("wrist.L") },
+    leg: { hip: heads.get("upperleg01.L"), knee: heads.get("lowerleg01.L"), foot: heads.get("foot.L") },
   };
 }
 

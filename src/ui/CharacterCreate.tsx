@@ -38,12 +38,12 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
     const cam = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
     cam.position.set(0, 1.3, 5.2);
     cam.lookAt(0, 0.95, 0);
-    scene.add(new THREE.HemisphereLight("#ffe6c4", "#6b3b2a", 1.4));
-    const key = new THREE.DirectionalLight("#fff1d6", 3);
-    key.position.set(2, 4, 3);
+    scene.add(new THREE.HemisphereLight("#fff2e0", "#7a5a48", 2.0));
+    const key = new THREE.DirectionalLight("#fff1d6", 2.4);
+    key.position.set(1.5, 3, 4);
     key.castShadow = true;
     scene.add(key);
-    const rim = new THREE.DirectionalLight("#ffb36b", 2);
+    const rim = new THREE.DirectionalLight("#ffb36b", 1.1);
     rim.position.set(-3, 2, -2);
     scene.add(rim);
     const floor = new THREE.Mesh(new THREE.CircleGeometry(1.2, 40), shadowBlob());
@@ -68,7 +68,7 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
       const dt = clock.getDelta();
       const face = viewRef.current === "face";
       const ht = lookRef.current.height;
-      cam.position.lerp(new THREE.Vector3(0, face ? ht * 0.93 : 1.3, face ? 0.75 : 5.2), Math.min(1, dt * 6));
+      cam.position.lerp(new THREE.Vector3(0, face ? ht * 0.935 : 1.3, face ? 0.9 : 5.2), Math.min(1, dt * 6));
       cam.lookAt(0, face ? ht * 0.925 : 0.95, 0);
       if (face) rig.root.rotation.y = Math.sin(clock.elapsedTime * 0.6) * 0.6;
       else rig.root.rotation.y += dt * 0.5;

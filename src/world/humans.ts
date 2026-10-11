@@ -23,6 +23,7 @@ interface HumanAsset {
   shells: Record<"top" | "shorts" | "shins" | "shoes", ShellAsset>;
   hips: { waistY: number; kneeY: number; hipHalfWidth: number };
   arm: { shoulder: number[]; elbow: number[]; wrist: number[] };
+  leg: { hip: number[]; knee: number[]; foot: number[] };
 }
 
 interface ShellAsset {
@@ -116,8 +117,9 @@ function fabricTex(pattern: string, color: string) {
 
 function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; legs: boolean; feet: boolean }) {
   // Physical material with a soft sheen reads more like skin than plain plastic.
-  const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.62, metalness: 0, sheen: 0.22, sheenRoughness: 0.6, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
-  const skin = new THREE.Color(look.skin);
+  const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.78, metalness: 0, sheen: 0.15, sheenRoughness: 0.9, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
+  // Stylised: a touch lighter and warmer than the swatch so faces read in shade.
+  const skin = new THREE.Color(look.skin).lerp(new THREE.Color("#a8653f"), 0.18);
   const pattern = look.pattern ?? "plain";
   const uniforms = {
     uSkin: { value: skin },
@@ -225,6 +227,8 @@ export interface HumanRig {
   rest: Record<string, THREE.Euler>;
   armDrop: number;
   forearmFix: number;
+  /** The model's rest pose has the feet apart; this brings them under the hips. */
+  legAdduct: number;
   body: THREE.Group;
   walkBlend?: number;
   phase: number;
@@ -234,10 +238,14 @@ export interface HumanRig {
   real: true;
 }
 
-const eyeWhite = new THREE.MeshStandardMaterial({ color: "#efe9df", roughness: 0.15 });
-const iris = new THREE.MeshStandardMaterial({ color: "#2a160c", roughness: 0.1 });
+const eyeWhite = new THREE.MeshStandardMaterial({ color: "#f3eee6", roughness: 0.25 });
+const iris = new THREE.MeshStandardMaterial({ color: "#5a3018", roughness: 0.3 });
+const pupil = new THREE.MeshStandardMaterial({ color: "#0b0705", roughness: 0.2 });
+const glint = new THREE.MeshBasicMaterial({ color: "#ffffff" });
+const pupilGeo = new THREE.CircleGeometry(0.0036, 16);
+const glintGeo = new THREE.CircleGeometry(0.0014, 8);
 const eyeGeo = new THREE.SphereGeometry(0.0118, 16, 12);
-const irisGeo = new THREE.CircleGeometry(0.0062, 16);
+const irisGeo = new THREE.CircleGeometry(0.0074, 24);
 
 export function buildHuman(look: PersonLook): HumanRig | null {
   const t = templates[look.feminine ? "female" : "male"];
@@ -319,18 +327,28 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     const ball = new THREE.Mesh(eyeGeo, eyeWhite);
     ball.position.copy(local(c));
     head.add(ball);
+    // Stylised eye: warm brown iris, dark pupil and a catchlight.
+    const front = local(c).add(new THREE.Vector3(0, 0, 0.0116));
     const ir = new THREE.Mesh(irisGeo, iris);
-    ir.position.copy(local(c)).add(new THREE.Vector3(0, 0, 0.0116));
+    ir.position.copy(front);
     head.add(ir);
+    const pu = new THREE.Mesh(pupilGeo, pupil);
+    pu.position.copy(front).add(new THREE.Vector3(0, 0, 0.0002));
+    head.add(pu);
+    const gl = new THREE.Mesh(glintGeo, glint);
+    gl.position.copy(front).add(new THREE.Vector3(0.0024, 0.0026, 0.0004));
+    head.add(gl);
   }
   addHair(look, head, local(t.headCenter), t.headRadius);
+  head.scale.setScalar(1.13); // stylised proportion: a slightly larger head reads better from the game camera
   const rest = Object.fromEntries(bones.map((b) => [b.name, b.rotation.clone()]));
   // Arms hang from the A-pose: rotate the upper arms down towards the body.
   const ua = a.bones.find((b) => b.name === "upperarm01.L")!.head, la = a.bones.find((b) => b.name === "lowerarm01.L")!.head;
   const armDrop = Math.atan2(la[0] - ua[0], ua[1] - la[1]) - 0.12;
   // The A-pose forearms point forward; this brings them down to hang naturally.
   const forearmFix = Math.atan2(a.arm.wrist[2] - a.arm.elbow[2], a.arm.elbow[1] - a.arm.wrist[1]) - 0.18;
-  return { root, mesh, body, bones: byName, rest, armDrop, forearmFix, phase: Math.random() * 10, speed: 0, talk: 0, carry: look.carry === "tray", real: true };
+  const legAdduct = Math.atan2(a.leg.foot[0] - a.leg.hip[0], a.leg.hip[1] - a.leg.foot[1]) - 0.035;
+  return { root, mesh, body, bones: byName, rest, armDrop, forearmFix, legAdduct, phase: Math.random() * 10, speed: 0, talk: 0, carry: look.carry === "tray", real: true };
 }
 
 const hairMats = new Map<string, THREE.Material>();
@@ -375,7 +393,7 @@ function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: n
     case "braids":
     case "locs": {
       const n = style === "braids" ? 34 : 26;
-      const thick = style === "braids" ? 0.0055 : 0.008;
+      const thick = style === "braids" ? 0.0065 : 0.0085;
       for (let i = 0; i < n; i++) {
         // Spread round the back half of the head, from ear to ear.
         const ang = Math.PI * 0.42 + (i / (n - 1)) * Math.PI * 1.16;
@@ -384,14 +402,15 @@ function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: n
         const strand = new THREE.Group();
         strand.position.copy(start);
         strand.rotation.set(Math.cos(ang) * 0.18, 0, -Math.sin(ang) * 0.18);
-        const segs = style === "braids" ? 10 : 6;
-        for (let k = 0; k < segs; k++) {
-          const seg = new THREE.Mesh(style === "braids" ? new THREE.SphereGeometry(thick * 1.3, 6, 4) : new THREE.CylinderGeometry(thick, thick * 0.9, len / segs, 6), m);
-          seg.position.y = -(k + 0.5) * (len / segs);
-          if (style === "braids") seg.scale.set(1, 2.1, 1);
-          seg.castShadow = true;
-          strand.add(seg);
-        }
+        // Smooth tapered strands (stylised): one capsule each, slightly curved by a second segment.
+        const upper = new THREE.Mesh(new THREE.CapsuleGeometry(thick, len * 0.5, 4, 8), m);
+        upper.position.y = -len * 0.27;
+        upper.castShadow = true;
+        strand.add(upper);
+        const lower = new THREE.Mesh(new THREE.CapsuleGeometry(thick * 0.8, len * 0.45, 4, 8), m);
+        lower.position.set(0, -len * 0.74, Math.cos(ang) * -0.006);
+        lower.castShadow = true;
+        strand.add(lower);
         head.add(strand);
       }
       break;
@@ -470,9 +489,10 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
     const hip = g("hip", tt) * (curve01(stride));
     const knee = g("knee", tt);
     const ankle = g("ankle", tt);
-    set(`upperleg01.${side}`, -hip * D * wb, 0, 0);
+    const ad = side === "L" ? -r.legAdduct : r.legAdduct;
+    set(`upperleg01.${side}`, -hip * D * wb, 0, ad);
     set(`lowerleg01.${side}`, knee * D * wb, 0, 0);
-    set(`foot.${side}`, -ankle * D * wb, 0, 0);
+    set(`foot.${side}`, -ankle * D * wb, 0, -ad);
   };
   legs("R", 0);
   legs("L", 0.5);

@@ -3,6 +3,7 @@
 // characters who follow their daily routines.
 import * as THREE from "three";
 import { buildVehicle, setVehicleLights, spinWheels, type VehicleKind, type VehicleRig } from "./vehicles.ts";
+export type { VehicleRig };
 import { animatePerson, buildPerson, randomLook, type Person } from "./people.ts";
 import { CROSS_HALF, EXTENT_X, ROAD_HALF, WALK_IN, WALK_OUT, type DistrictScene } from "./district.ts";
 import { DISTRICTS, PLACE_BY_ID, isRushHour } from "../../shared/world.ts";
@@ -95,6 +96,7 @@ export class CityLife {
       v.group.position.set(x, 0, (this.rnd() < 0.5 ? 1 : -1) * (ROAD_HALF - 1.1));
       v.group.rotation.y = this.rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
       this.group.add(v.group);
+      this.parked.push(v);
     }
     if (dist.style === "market") {
       for (let i = 0; i < 6; i++) {
@@ -102,6 +104,7 @@ export class CityLife {
         v.group.position.set(22 + i * 2.6, 0, -WALK_OUT - 9);
         v.group.rotation.y = Math.PI;
         this.group.add(v.group);
+        this.parked.push(v);
       }
     }
     // Crowds.
@@ -345,6 +348,20 @@ export class CityLife {
     }
     void t;
     void camera;
+  }
+
+  private parked: VehicleRig[] = [];
+
+  /** Every vehicle the player can bump into. */
+  solidVehicles(): VehicleRig[] {
+    return [...this.cars.map((c) => c.rig), ...this.parked];
+  }
+
+  /** Where people are standing or walking (for collisions). */
+  peoplePositions(): { x: number; z: number }[] {
+    const out = this.walkers.map((w) => ({ x: w.x, z: w.z }));
+    for (const a of this.npcs.values()) out.push({ x: a.rig.root.position.x, z: a.rig.root.position.z });
+    return out;
   }
 
   /** Nearest taxi coming towards the player that could be flagged down. */
