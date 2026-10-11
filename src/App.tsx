@@ -238,10 +238,10 @@ function Game() {
               <div>🌱 <b>Farms</b>, 📸 <b>Vibes</b> social media, new people to meet, and Nima & Jamestown in Accra.</div>
             </div>
             <div className="row" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>
-              <button className="btn primary grow" onClick={() => { closeNews(); setPanel({ kind: "travel", ctx: "phone", scope: "ghana" }); }}>🗺️ Open the Ghana map</button>
-              <button className="btn grow" onClick={() => { closeNews(); setPanel({ kind: "phone", app: "ghana" }); }}>🇬🇭 Explore regions</button>
-              <button className="btn grow" onClick={() => { closeNews(); setPanel({ kind: "phone", app: "vibes" }); }}>📸 Vibes</button>
-              <button className="btn ghost grow" onClick={closeNews}>Later</button>
+              <button className="btn primary" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "travel", ctx: "phone", scope: "ghana" }); }}>🗺️ Ghana map</button>
+              <button className="btn" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "phone", app: "ghana" }); }}>🇬🇭 Regions</button>
+              <button className="btn" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "phone", app: "vibes" }); }}>📸 Vibes</button>
+              <button className="btn ghost" style={{ flex: "1 1 45%" }} onClick={closeNews}>Later</button>
             </div>
           </div>
         </div>
