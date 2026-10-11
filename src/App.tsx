@@ -1,3 +1,4 @@
+import { BUILD_VERSION } from "./version.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GameProvider, useGame } from "./store.tsx";
 import { getToken, pickBackend, setToken, type Backend } from "./net/backend.ts";
@@ -82,7 +83,7 @@ function Splash() {
 type Panel =
   | { kind: "place"; id: string }
   | { kind: "talk"; id: string }
-  | { kind: "travel"; ctx: "stop" | "taxi" | "phone" }
+  | { kind: "travel"; ctx: "stop" | "taxi" | "phone"; scope?: "city" | "ghana" }
   | { kind: "phone"; app?: string }
   | { kind: "event" }
   | { kind: "bed" }
@@ -98,6 +99,8 @@ function Game() {
   const [district, setDistrict] = useState<DistrictId>(state!.player.district);
   const [muted, setMuted] = useState(() => { try { return localStorage.getItem("sika.muted") === "1"; } catch { return false; } });
   const [quality, setQualityState] = useState<Quality>(() => { try { return (localStorage.getItem("sika.quality") as Quality) || (matchMedia("(pointer: coarse)").matches ? "medium" : "high"); } catch { return "high"; } });
+  const [news, setNews] = useState(() => { try { return localStorage.getItem("sika.seen") !== BUILD_VERSION; } catch { return true; } });
+  const closeNews = () => { setNews(false); try { localStorage.setItem("sika.seen", BUILD_VERSION); } catch { /* ignore */ } };
   const [intro, setIntro] = useState(() => { try { return localStorage.getItem("sika.intro") === "1"; } catch { return false; } });
   const lastEvent = useRef<number | null>(null);
   const posRef = useRef({ x: 0, z: 0 });
@@ -217,10 +220,32 @@ function Game() {
       <Toasts />
       {panel?.kind === "place" && <PlaceSheet placeId={panel.id} world={world} onClose={() => setPanel(null)} onTalk={(id) => setPanel({ kind: "talk", id })} onTravel={() => setPanel({ kind: "travel", ctx: "stop" })} onPhone={(app) => setPanel({ kind: "phone", app })} />}
       {panel?.kind === "talk" && <TalkSheet npcId={panel.id} world={world} onClose={() => setPanel(null)} />}
-      {panel?.kind === "travel" && <TravelSheet context={panel.ctx} world={world} onClose={() => setPanel(null)} />}
+      {panel?.kind === "travel" && <TravelSheet context={panel.ctx} initialScope={panel.scope} world={world} onClose={() => setPanel(null)} />}
       {panel?.kind === "phone" && <Phone world={world} initialApp={panel.app} onClose={() => setPanel(null)} onTravel={() => setPanel({ kind: "travel", ctx: "phone" })} quality={quality} setQuality={setQuality} />}
       {panel?.kind === "event" && <EventModal onClose={() => setPanel(null)} />}
       {panel?.kind === "bed" && <HomeSheet world={world} onClose={() => setPanel(null)} />}
+      {news && !intro && (
+        <div className="modal-wrap" onClick={closeNews}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="pill gold">🆕 Update · {BUILD_VERSION}</div>
+            <h2 style={{ margin: "10px 0 4px" }}>Sika City is now all of Ghana 🇬🇭</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>16 regions, 20 playable towns, real roads between them.</p>
+            <div className="col small">
+              <div>🚌 <b>Travel</b> by bus, VIP or flight to Kumasi, Tamale, Kintampo, Wa, Bole, Sawla, Cape Coast, Ho and more.</div>
+              <div>🧭 <b>Day trips:</b> Kintampo Falls, Bui Dam, Mole, Wli, Paga, Kakum. 🥁 <b>Festivals</b> in their real months.</div>
+              <div>🛍️ <b>Shops:</b> Melcom, Accra Mall, phone shops, carpenters. Furnish your room and it shows in 3D.</div>
+              <div>🛺 <b>Vehicles:</b> motorbikes, pragya, taxis on work-and-pay, the V8, a supercar. 🎓 <b>Driving school</b> for your licence.</div>
+              <div>🌱 <b>Farms</b>, 📸 <b>Vibes</b> social media, new people to meet, and Nima & Jamestown in Accra.</div>
+            </div>
+            <div className="row" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>
+              <button className="btn primary grow" onClick={() => { closeNews(); setPanel({ kind: "travel", ctx: "phone", scope: "ghana" }); }}>🗺️ Open the Ghana map</button>
+              <button className="btn grow" onClick={() => { closeNews(); setPanel({ kind: "phone", app: "ghana" }); }}>🇬🇭 Explore regions</button>
+              <button className="btn grow" onClick={() => { closeNews(); setPanel({ kind: "phone", app: "vibes" }); }}>📸 Vibes</button>
+              <button className="btn ghost grow" onClick={closeNews}>Later</button>
+            </div>
+          </div>
+        </div>
+      )}
       {intro && (
         <div className="modal-wrap" onClick={() => { setIntro(false); try { localStorage.removeItem("sika.intro"); } catch { /* ignore */ } }}>
           <div className="modal">
@@ -230,7 +255,8 @@ function Game() {
               <div>🕹️ <b>Move</b> with WASD / arrow keys (hold Shift to run, <b>Space</b> to jump gutters) or the joystick. Drag to turn the camera, scroll to zoom.</div>
               <div>🟡 Walk into <b>yellow rings</b> to enter places, then press <b>E</b>. Walk up to people to talk.</div>
               <div>💼 First money: <b>Kaneshie Market</b> or the <b>trotro station</b> hire anyone. Eat, sleep, repeat — then build.</div>
-              <div>📱 Your <b>phone</b> (P) has your bank, jobs, businesses, property, people and football.</div>
+              <div>📱 Your <b>phone</b> (P) has your bank, jobs, businesses, property, people, farms, Vibes and football.</div>
+              <div>🇬🇭 Lorry stations and the phone's <b>Map</b> take you <b>Across Ghana</b>: Kumasi, Tamale, Kintampo, Wa, Cape Coast…</div>
               <div>⏱️ A game day lasts 24 real minutes. The server keeps your money and your progress.</div>
             </div>
             <button className="btn primary block" style={{ marginTop: 14 }}>Let's go</button>

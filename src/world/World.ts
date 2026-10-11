@@ -6,7 +6,8 @@ import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, type DistrictS
 import { CityLife } from "./life.ts";
 import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildInterior, buildSite } from "./construction.ts";
-import { buildVehicle } from "./vehicles.ts";
+import { buildVehicle, vehicleKindForModel } from "./vehicles.ts";
+import { VEHICLES } from "../../shared/life.ts";
 import { CityAudio } from "./audio.ts";
 import { setMaxAnisotropy } from "./textures.ts";
 import { PLACE_BY_ID, DISTRICTS, type DistrictId } from "../../shared/world.ts";
@@ -235,9 +236,13 @@ export class World {
     this.parkedKey = key;
     if (this.parked) this.scene.remove(this.parked);
     this.parked = new THREE.Group();
+    let x = d.homeDoor.x + 3.4;
     key.split(",").filter(Boolean).forEach((type, i) => {
-      const v = buildVehicle(type === "v8" ? "v8" : type === "crossover" ? "suv" : "sedan", 77 + i);
-      v.group.position.set(d.homeDoor.x + 4 + i * 2.6, 0.16, d.homeDoor.z + Math.sign(d.homeDoor.z) * 0.2);
+      const def = VEHICLES[type];
+      const v = buildVehicle(vehicleKindForModel(def?.model ?? "sedan"), 77 + i);
+      x += v.width / 2 + 0.5;
+      v.group.position.set(x, 0.16, d.homeDoor.z + Math.sign(d.homeDoor.z) * 0.2);
+      x += v.width / 2 + 0.5;
       v.group.rotation.y = Math.sign(d.homeDoor.z) > 0 ? 0 : Math.PI;
       this.parked!.add(v.group);
     });

@@ -2,7 +2,25 @@
 // pull in at stops, taxis you can flag down, crowds, vendors and the named
 // characters who follow their daily routines.
 import * as THREE from "three";
-import { buildVehicle, setVehicleLights, spinWheels, type VehicleKind, type VehicleRig } from "./vehicles.ts";
+import { buildRider, buildVehicle, isSmallVehicle, setVehicleLights, spinWheels, type VehicleKind, type VehicleRig } from "./vehicles.ts";
+
+/** What drives down the street, by kind of place. */
+function trafficKind(style: string, r: number): VehicleKind {
+  const table: [number, VehicleKind][] = (({
+    luxury: [[0.3, "suv"], [0.45, "v8"], [0.58, "saloon"], [0.7, "accordo"], [0.76, "supercar"], [0.8, "phantom"], [0.9, "sedan"], [1, "pickup"]],
+    suburban: [[0.18, "taxi"], [0.3, "trotro"], [0.45, "suv"], [0.55, "accordo"], [0.63, "v8"], [0.7, "saloon"], [0.72, "supercar"], [0.85, "sedan"], [0.92, "compact"], [1, "motorbike"]],
+    savanna: [[0.42, "motorbike"], [0.6, "pragya"], [0.7, "bicycle"], [0.76, "aboboyaa"], [0.84, "taxi"], [0.9, "pickup"], [0.95, "trotro"], [1, "compact"]],
+    town: [[0.2, "taxi"], [0.38, "pragya"], [0.55, "motorbike"], [0.63, "aboboyaa"], [0.73, "trotro"], [0.82, "compact"], [0.9, "pickup"], [1, "sedan"]],
+  } as Record<string, [number, VehicleKind][]>)[style]) ?? [[0.3, "trotro"], [0.56, "taxi"], [0.68, "compact"], [0.78, "sedan"], [0.84, "accordo"], [0.9, "suv"], [0.95, "pickup"], [0.98, "motorbike"], [1, "v8"]];
+  return table.find(([p]) => r < p)?.[1] ?? "sedan";
+}
+
+function parkedKind(style: string, r: number): VehicleKind {
+  if (style === "savanna") return r < 0.5 ? "motorbike" : r < 0.75 ? "pragya" : r < 0.88 ? "bicycle" : "pickup";
+  if (style === "town") return r < 0.3 ? "motorbike" : r < 0.5 ? "taxi" : r < 0.7 ? "compact" : r < 0.85 ? "pragya" : "pickup";
+  if (style === "luxury" || style === "suburban") return r < 0.3 ? "suv" : r < 0.5 ? "accordo" : r < 0.65 ? "saloon" : r < 0.8 ? "v8" : "sedan";
+  return r < 0.35 ? "compact" : r < 0.6 ? "sedan" : r < 0.75 ? "taxi" : r < 0.88 ? "suv" : "accordo";
+}
 export type { VehicleRig };
 import { animatePerson, buildPerson, randomLook, type Person } from "./people.ts";
 import { CROSS_HALF, EXTENT_X, ROAD_HALF, WALK_IN, WALK_OUT, type DistrictScene } from "./district.ts";
@@ -85,14 +103,14 @@ export class CityLife {
     for (let i = 0; i < nCars; i++) {
       const lane = this.lanes[i % this.lanes.length];
       const r = this.rnd();
-      const kind: VehicleKind = dist.style === "luxury" ? (r < 0.4 ? "suv" : r < 0.5 ? "v8" : "sedan") : r < 0.32 ? "trotro" : r < 0.6 ? "taxi" : r < 0.8 ? "sedan" : r < 0.92 ? "suv" : "pickup";
+      const kind = trafficKind(dist.style, r);
       this.addCar(kind, lane, lane.from + (lane.to - lane.from) * (i / nCars + this.rnd() * 0.05));
     }
     // Parked cars along the kerb and trotros at the station.
     for (let i = 0; i < 8; i++) {
       const x = -80 + this.rnd() * 160;
       if (Math.abs(x) < 14) continue;
-      const v = buildVehicle(this.rnd() < 0.5 ? "sedan" : "suv", Math.floor(this.rnd() * 1e6));
+      const v = buildVehicle(parkedKind(dist.style, this.rnd()), Math.floor(this.rnd() * 1e6));
       v.group.position.set(x, 0, (this.rnd() < 0.5 ? 1 : -1) * (ROAD_HALF - 1.1));
       v.group.rotation.y = this.rnd() < 0.5 ? Math.PI / 2 : -Math.PI / 2;
       this.group.add(v.group);
@@ -146,8 +164,15 @@ export class CityLife {
   }
 
   private addCar(kind: VehicleKind, lane: Lane, s: number) {
-    const rig = buildVehicle(kind, Math.floor(this.rnd() * 1e6));
-    const max = kind === "trotro" ? 9 + this.rnd() * 3 : 10 + this.rnd() * 5;
+    const seed = Math.floor(this.rnd() * 1e6);
+    const rig = buildVehicle(kind, seed);
+    if (isSmallVehicle(kind)) {
+      // Someone has to be riding it.
+      const seat = kind === "bicycle" ? [0.86, -0.3] : kind === "motorbike" ? [0.85, -0.25] : [0.85, rig.length / 2 - 0.95];
+      rig.group.add(buildRider(seed, seat[0], seat[1], kind === "bicycle"));
+      if (kind === "pragya" && this.rnd() < 0.7) rig.group.add(buildRider(seed + 1, 0.88, -rig.length / 2 + 0.3, true));
+    }
+    const max = kind === "trotro" ? 9 + this.rnd() * 3 : kind === "bicycle" ? 4 + this.rnd() * 1.5 : kind === "pragya" || kind === "aboboyaa" ? 7 + this.rnd() * 2 : kind === "supercar" ? 13 + this.rnd() * 3 : 10 + this.rnd() * 5;
     const car: Car = { rig, lane, s, speed: max * 0.8, max, stopTimer: 0, hailed: false, honk: 0 };
     this.placeCar(car);
     this.group.add(rig.group);

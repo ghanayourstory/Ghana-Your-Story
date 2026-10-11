@@ -1,3 +1,4 @@
+import { BUILD_VERSION } from "../version.ts";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
@@ -733,7 +734,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
   if (!state) return null;
   return (
     <>
-      <AppHead id="settings" />
+      <AppHead id="settings" sub={`Build ${BUILD_VERSION}`} />
       <div className="card col">
         <b>Graphics</b>
         <div className="seg">{(["low", "medium", "high"] as const).map((q) => <button key={q} className={quality === q ? "on" : ""} onClick={() => setQuality(q)}>{q}</button>)}</div>

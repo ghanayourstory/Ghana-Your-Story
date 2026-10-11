@@ -191,7 +191,7 @@ export function TalkSheet({ npcId, world, onClose }: { npcId: string; world: Wor
   );
 }
 
-export function TravelSheet({ context, world, onClose }: { context: "stop" | "taxi" | "phone"; world: World | null; onClose: () => void }) {
+export function TravelSheet({ context, world, onClose, initialScope }: { context: "stop" | "taxi" | "phone"; world: World | null; onClose: () => void; initialScope?: "city" | "ghana" }) {
   const { state, act, busy } = useGame();
   const minute = useMinute(world);
   const gd = toGameDate(minute);
@@ -202,7 +202,7 @@ export function TravelSheet({ context, world, onClose }: { context: "stop" | "ta
     return m;
   }, [context, hasCar]);
   const [mode, setMode] = useState<TravelMode>(modes[0]);
-  const [scope, setScope] = useState<"city" | "ghana">("city");
+  const [scope, setScope] = useState<"city" | "ghana">(initialScope ?? "city");
   if (!state) return null;
   const here = state.player.district;
   const rainy = state.time.weather === "rain" || state.time.weather === "storm";
