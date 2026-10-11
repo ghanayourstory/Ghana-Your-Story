@@ -68,10 +68,11 @@ function stains(ctx: CanvasRenderingContext2D, w: number, h: number, n: number, 
   }
 }
 
-export function asphalt() {
-  return memo("asphalt", () => {
+/** Road surface. `dusty`: the pale, sun-bleached, sand-blown tarmac of the northern savanna. */
+export function asphalt(dusty = false) {
+  return memo(dusty ? "asphalt:dusty" : "asphalt", () => {
     const [c, ctx] = canvas(1024, 1024);
-    ctx.fillStyle = "#4b4c4e";
+    ctx.fillStyle = dusty ? "#77706a" : "#4b4c4e";
     ctx.fillRect(0, 0, 1024, 1024);
     grain(ctx, 1024, 1024, 0.22, 11);
     const rnd = mulberry32(15);
@@ -83,6 +84,18 @@ export function asphalt() {
     }
     stains(ctx, 1024, 1024, 10, "rgba(25,25,27,0.22)", 90, 12); // oil and patches
     stains(ctx, 1024, 1024, 8, "rgba(140,125,100,0.12)", 120, 13); // laterite dust
+    if (dusty) {
+      stains(ctx, 1024, 1024, 26, "rgba(196,150,100,0.3)", 160, 14); // harmattan dust drifts
+      stains(ctx, 1024, 1024, 12, "rgba(60,56,52,0.25)", 50, 16); // potholes patched with tar
+      // Sand blown in from the shoulders along both edges.
+      for (const [y0, y1] of [[0, 90], [1024, 934]]) {
+        const g = ctx.createLinearGradient(0, y0, 0, y1);
+        g.addColorStop(0, "rgba(190,140,90,0.75)");
+        g.addColorStop(1, "rgba(190,140,90,0)");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, Math.min(y0, y1), 1024, 90);
+      }
+    }
     // Tyre-polished wheel tracks.
     for (const y of [300, 720]) {
       const g = ctx.createLinearGradient(0, y - 70, 0, y + 70);
@@ -109,15 +122,22 @@ export function asphalt() {
   });
 }
 
-export function laterite() {
-  return memo("laterite", () => {
+/**
+ * Bare earth. "red": the default laterite of Accra's verges. "forest": the deep
+ * red earth of the middle belt, with green weeds. "ochre": the dry, dusty
+ * savanna ground of the north. "path": packed footpath dirt.
+ */
+export function laterite(tone: "red" | "forest" | "ochre" | "path" = "red") {
+  return memo(tone === "red" ? "laterite" : `laterite:${tone}`, () => {
     const [c, ctx] = canvas(512, 512);
-    ctx.fillStyle = "#9b6e52";
+    ctx.fillStyle = { red: "#9b6e52", forest: "#9a5634", ochre: "#b98a5c", path: "#a8784f" }[tone];
     ctx.fillRect(0, 0, 512, 512);
-    grain(ctx, 512, 512, 0.25, 21);
+    grain(ctx, 512, 512, tone === "path" ? 0.16 : 0.25, 21);
     stains(ctx, 512, 512, 14, "rgba(110,70,45,0.22)", 60, 22);
-    stains(ctx, 512, 512, 12, "rgba(190,160,120,0.2)", 70, 23);
-    stains(ctx, 512, 512, 6, "rgba(90,100,60,0.18)", 50, 25); // patches of weeds
+    stains(ctx, 512, 512, 12, tone === "ochre" ? "rgba(214,180,130,0.32)" : "rgba(190,160,120,0.2)", 70, 23);
+    if (tone === "forest") stains(ctx, 512, 512, 14, "rgba(70,105,45,0.35)", 60, 26); // weeds and grass
+    else if (tone === "ochre") stains(ctx, 512, 512, 10, "rgba(170,150,80,0.3)", 40, 27); // dry grass
+    else stains(ctx, 512, 512, 6, "rgba(90,100,60,0.18)", 50, 25); // patches of weeds
     const rnd = mulberry32(24);
     for (let i = 0; i < 400; i++) {
       ctx.fillStyle = `rgba(${60 + rnd() * 80},${40 + rnd() * 40},${30 + rnd() * 30},0.6)`;
@@ -203,7 +223,7 @@ export function grass(lush = false) {
  * dirt streaks under the sills. Returns colour map (white-ish, tinted by
  * material colour) and an emissive map of lit windows for night.
  */
-export function facade(kind: "louvre" | "glass" | "modern") {
+export function facade(kind: "louvre" | "glass" | "modern" | "small") {
   const key = `facade:${kind}`;
   if (cache.has(key)) return { map: cache.get(key)!, emissive: cache.get(key + ":e")! };
   const S = 256;
@@ -211,8 +231,44 @@ export function facade(kind: "louvre" | "glass" | "modern") {
   const [e, ectx] = canvas(S * 2, S * 2);
   ectx.fillStyle = "#000";
   ectx.fillRect(0, 0, S * 2, S * 2);
-  const rnd = mulberry32(kind === "glass" ? 71 : kind === "modern" ? 72 : 73);
-  if (kind === "glass") {
+  const rnd = mulberry32(kind === "glass" ? 71 : kind === "modern" ? 72 : kind === "small" ? 75 : 73);
+  if (kind === "small") {
+    // Smooth mud / cement render with small, deep-set windows behind painted
+    // steel shutters: the northern savanna house. Some bays have no window.
+    ctx.fillStyle = "#f2ece2";
+    ctx.fillRect(0, 0, S * 2, S * 2);
+    grain(ctx, S * 2, S * 2, 0.2, 76);
+    stains(ctx, S * 2, S * 2, 10, "rgba(120,80,50,0.16)", 70, 77);
+    for (let ty = 0; ty < 2; ty++)
+      for (let tx = 0; tx < 2; tx++) {
+        const x0 = tx * S, y0 = ty * S;
+        // Rain-washed streaks and red dust splashed up the base.
+        const bg = ctx.createLinearGradient(0, y0 + S - 50, 0, y0 + S);
+        bg.addColorStop(0, "rgba(140,80,45,0)");
+        bg.addColorStop(1, "rgba(140,80,45,0.45)");
+        ctx.fillStyle = bg;
+        ctx.fillRect(x0, y0 + S - 50, S, 50);
+        if (tx === 1 && ty === 0) continue; // blank wall
+        const ww = 58, wh = 62;
+        const wx = x0 + (S - ww) / 2 + (rnd() - 0.5) * 40, wy = y0 + 84;
+        ctx.fillStyle = "rgba(90,70,50,0.35)";
+        ctx.fillRect(wx - 7, wy - 7, ww + 14, wh + 14);
+        ctx.fillStyle = "#2a241f";
+        ctx.fillRect(wx, wy, ww, wh);
+        if (rnd() < 0.4) {
+          ectx.fillStyle = `rgba(255,${180 + rnd() * 40},${100 + rnd() * 50},1)`;
+          ectx.fillRect(wx + 4, wy + 4, ww - 8, wh - 8);
+        }
+        // Painted steel shutters, one half swung open.
+        ctx.fillStyle = ["#2f6f62", "#3b5d8c", "#6b3a2a", "#2f6f62"][Math.floor(rnd() * 4)];
+        ctx.fillRect(wx, wy, ww / 2 - 1, wh);
+        ctx.fillStyle = "rgba(0,0,0,0.25)";
+        for (let y = wy + 6; y < wy + wh; y += 10) ctx.fillRect(wx + 2, y, ww / 2 - 5, 2);
+        // Sill.
+        ctx.fillStyle = "rgba(220,205,180,0.9)";
+        ctx.fillRect(wx - 9, wy + wh + 2, ww + 18, 6);
+      }
+  } else if (kind === "glass") {
     ctx.fillStyle = "#9fb3c2";
     ctx.fillRect(0, 0, S * 2, S * 2);
     for (let ty = 0; ty < 2; ty++)
@@ -368,6 +424,99 @@ export function water() {
       }
     ctx.putImageData(img, 0, 0);
     return toTexture(c, { srgb: false });
+  });
+}
+
+/** Smooth hand-trowelled mud or cement render (tinted by material colour). */
+export function render() {
+  return memo("render", () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = "#f3eee6";
+    ctx.fillRect(0, 0, 256, 256);
+    grain(ctx, 256, 256, 0.18, 121);
+    const rnd = mulberry32(122);
+    // Trowel swirls.
+    ctx.strokeStyle = "rgba(120,90,60,0.08)";
+    ctx.lineWidth = 6;
+    for (let i = 0; i < 40; i++) {
+      ctx.beginPath();
+      ctx.arc(rnd() * 256, rnd() * 256, 10 + rnd() * 26, rnd() * 6, rnd() * 6 + 1.5);
+      ctx.stroke();
+    }
+    stains(ctx, 256, 256, 8, "rgba(110,70,40,0.16)", 50, 123);
+    // Vertical rain streaks.
+    for (let i = 0; i < 14; i++) {
+      const x = rnd() * 256, w = 2 + rnd() * 5;
+      const g = ctx.createLinearGradient(0, 0, 0, 256);
+      g.addColorStop(0, "rgba(90,60,40,0.14)");
+      g.addColorStop(1, "rgba(90,60,40,0)");
+      ctx.fillStyle = g;
+      ctx.fillRect(x, 0, w, 120 + rnd() * 130);
+    }
+    return toTexture(c);
+  });
+}
+
+/** Grass thatch for conical hut roofs: straw strokes running down the cone. */
+export function thatch() {
+  return memo("thatch", () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = "#a88a55";
+    ctx.fillRect(0, 0, 256, 256);
+    const rnd = mulberry32(131);
+    for (let i = 0; i < 2600; i++) {
+      const v = rnd();
+      ctx.strokeStyle = `rgba(${150 + v * 80},${120 + v * 70},${60 + v * 40},${0.5 + rnd() * 0.4})`;
+      ctx.lineWidth = 1 + rnd() * 1.5;
+      const x = rnd() * 256, y = rnd() * 256;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + (rnd() - 0.5) * 6, y + 18 + rnd() * 30);
+      ctx.stroke();
+    }
+    // Tied courses.
+    ctx.fillStyle = "rgba(70,50,30,0.35)";
+    for (let y = 30; y < 256; y += 64) ctx.fillRect(0, y, 256, 5);
+    return toTexture(c);
+  });
+}
+
+/** Woven grass / raffia mat in two colours. */
+export function mat(a = "#d8b878", b = "#8a5a32") {
+  return memo(`mat:${a}:${b}`, () => {
+    const [c, ctx] = canvas(128, 128);
+    ctx.fillStyle = a;
+    ctx.fillRect(0, 0, 128, 128);
+    for (let y = 0; y < 128; y += 8)
+      for (let x = 0; x < 128; x += 8) {
+        ctx.fillStyle = ((x + y) / 8) % 2 ? a : b;
+        if (((x / 8) + (y / 8)) % 4 < 2) ctx.fillRect(x, y + 1, 8, 6);
+        else ctx.fillRect(x + 1, y, 6, 8);
+      }
+    ctx.fillStyle = b;
+    for (let y = 0; y < 128; y += 32) ctx.fillRect(0, y, 128, 3);
+    grain(ctx, 128, 128, 0.2, 141);
+    return toTexture(c);
+  });
+}
+
+/** Bare sandcrete blocks with mortar joints: the eternal unfinished building. */
+export function blocks() {
+  return memo("blocks", () => {
+    const [c, ctx] = canvas(256, 256);
+    ctx.fillStyle = "#8d8a84";
+    ctx.fillRect(0, 0, 256, 256);
+    const rnd = mulberry32(151);
+    const bw = 64, bh = 32; // 45 cm x 22.5 cm at 6 m per 2 tiles... close enough
+    for (let y = 0; y < 256; y += bh)
+      for (let x = (y / bh) % 2 ? -bw / 2 : 0; x < 256; x += bw) {
+        const v = 150 + rnd() * 30;
+        ctx.fillStyle = `rgb(${v},${v - 3},${v - 8})`;
+        ctx.fillRect(x + 2, y + 2, bw - 4, bh - 4);
+      }
+    grain(ctx, 256, 256, 0.25, 152);
+    stains(ctx, 256, 256, 6, "rgba(60,50,40,0.22)", 50, 153);
+    return toTexture(c);
   });
 }
 

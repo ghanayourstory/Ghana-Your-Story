@@ -4,7 +4,7 @@
 import * as THREE from "three";
 import { Batcher, G, facadeBox, tiledPlane } from "./batch.ts";
 import * as T from "./textures.ts";
-import { DISTRICTS, PLACES, placesIn, type DistrictId, type Place } from "../../shared/world.ts";
+import { DISTRICTS, PLACES, placesIn, type DistrictId, type DistrictStyle, type Place } from "../../shared/world.ts";
 import { mulberry32 } from "../../shared/rng.ts";
 import { createOcean } from "./ocean.ts";
 import type { Genre, SoundSpot } from "./audio.ts";
@@ -70,7 +70,7 @@ const SIGN_NAMES = [
 ];
 const SIGN_COLORS: [string, string][] = [["#F2B705", "#1a1a1a"], ["#C8452C", "#ffffff"], ["#1F7A4D", "#ffffff"], ["#2E86AB", "#ffffff"], ["#ffffff", "#C8452C"], ["#111111", "#F2B705"], ["#E35D3A", "#fff6e0"], ["#3A2E6E", "#F2B705"]];
 
-const HOME_SPOT: Record<DistrictId, { x: number; side: 1 | -1 }> = {
+const HOME_SPOT: Record<string, { x: number; side: 1 | -1 }> = {
   kaneshie: { x: -60, side: 1 },
   osu: { x: -80, side: 1 },
   labadi: { x: -82, side: -1 },
@@ -78,7 +78,7 @@ const HOME_SPOT: Record<DistrictId, { x: number; side: 1 | -1 }> = {
   east_legon: { x: -84, side: 1 },
   trasacco: { x: -84, side: -1 },
 };
-const PLOT_SPOT: Record<DistrictId, { x: number; side: 1 | -1 }> = {
+const PLOT_SPOT: Record<string, { x: number; side: 1 | -1 }> = {
   kaneshie: { x: 82, side: -1 },
   osu: { x: 86, side: 1 },
   labadi: { x: 84, side: -1 },
@@ -86,6 +86,32 @@ const PLOT_SPOT: Record<DistrictId, { x: number; side: 1 | -1 }> = {
   east_legon: { x: 84, side: -1 },
   trasacco: { x: 84, side: 1 },
 };
+/**
+ * Regional towns: shared/regional.ts lays places out from x −76 (side −1) and
+ * x −54 (side +1) eastwards, with the lorry stop at x −62, so the home goes at
+ * the far west end and the plot at the far east end of the street.
+ */
+const homeSpotFor = (id: DistrictId, coastal: boolean) => HOME_SPOT[id] ?? { x: -84, side: coastal ? -1 : 1 };
+const plotSpotFor = (id: DistrictId) => PLOT_SPOT[id] ?? { x: 86, side: -1 };
+
+/** Bright paint the middle-belt towns love: lime, sky blue, salmon, MoMo yellow. */
+const TOWN_PAINT = ["#E6C34A", "#3FA7A0", "#D96C4A", "#8DBF6A", "#5E8FC9", "#E79AA5", "#F2EEE4", "#C9B48F", "#9FD0C7", "#E9A23B"];
+/** Fictional phone brands for shop banners. */
+const PHONE_BRANDS: [string, string, string, string][] = [["LUMO", "#E4007C", "#ffffff", "SMARTPHONES"], ["ZIPCELL", "#00A3E0", "#ffffff", "4G • 5G READY"], ["NOVA-K", "#111111", "#7CFC00", "BIG BATTERY"], ["SIKAFONE", "#FFD400", "#111111", "CASH IN • CASH OUT"], ["ORBI", "#6A2CBF", "#ffffff", "CAMERA PHONES"]];
+
+/** A square frustum (tapering pillar) of unit base and height, centred at the origin. */
+const TAPER = (() => {
+  const g = new THREE.CylinderGeometry(0.55 / Math.SQRT2, 1 / Math.SQRT2, 1, 4, 1);
+  g.rotateY(Math.PI / 4);
+  g.computeVertexNormals();
+  return g;
+})();
+/** Conical roof with UVs running down the slope (for thatch). */
+const HUT_ROOF = new THREE.ConeGeometry(1, 1, 18, 1, true);
+/** Hipped roof (square pyramid, rotated to the walls). */
+const HIP = new THREE.ConeGeometry(1, 1, 4);
+/** Baobab trunk: fat, barely tapering. */
+const BAOBAB_TRUNK = new THREE.CylinderGeometry(0.62, 1, 1, 12);
 
 // ---------------------------------------------------------------------------
 // Materials
@@ -127,13 +153,32 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   const disposables: { dispose(): void }[] = [];
   const coastal = d.style === "coastal";
   const upscale = d.style === "suburban" || d.style === "luxury";
+  const savanna = d.style === "savanna";
+  const town = d.style === "town";
+  /** Towns from shared/regional.ts (anything without hand-placed Accra spots). */
+  const regional = !(id in HOME_SPOT);
   const shoreZ = coastal ? 40 : null;
 
   // Shared materials for this district.
   const M = {
-    asphalt: std({ map: T.asphalt(), roughness: 0.92 }),
-    earth: std({ map: upscale ? T.grass(d.style === "luxury") : T.laterite(), roughness: 1 }),
+    asphalt: std({ map: T.asphalt(savanna), roughness: 0.92 }),
+    earth: std({ map: upscale ? T.grass(d.style === "luxury") : savanna ? T.laterite("ochre") : town ? T.laterite("forest") : T.laterite(), roughness: 1 }),
     pavers: std({ map: T.pavers(), roughness: 0.9 }),
+    // Pavements: savanna and middle-belt towns walk on packed earth, not pavers.
+    walk: savanna ? std({ map: T.laterite("path"), color: "#e8d2b0", roughness: 1 }) : town ? std({ map: T.laterite("path"), color: "#d9a58a", roughness: 1 }) : std({ map: T.pavers(), roughness: 0.9 }),
+    dust: std({ map: T.laterite(savanna ? "ochre" : "forest"), color: savanna ? "#f0dcc0" : "#e0b8a0", roughness: 1 }),
+    paint: std({ color: savanna ? "#cfc5ad" : "#f3f1ea", roughness: 0.8 }),
+    thatch: std({ map: T.thatch(), roughness: 1, side: THREE.DoubleSide }),
+    mat: std({ map: T.mat(), roughness: 1, side: THREE.DoubleSide }),
+    blocks: std({ map: T.blocks(), roughness: 1 }),
+    rebar: std({ color: "#5a3a2a", roughness: 0.7, metalness: 0.5 }),
+    toron: std({ color: "#4a3423", roughness: 1 }),
+    dryGrass: std({ color: "#c9ae6a", roughness: 1 }),
+    calabash: std({ color: "#c9a24a", roughness: 0.6 }),
+    baobab: std({ map: T.concrete("#8f8273", 161), roughness: 1 }),
+    darkLeaf: std({ color: "#2f5524", roughness: 0.9 }),
+    savLeaf: std({ color: "#5f7a35", roughness: 0.9 }),
+    plantainLeaf: std({ color: "#6f9e3c", roughness: 0.8, side: THREE.DoubleSide }),
     curb: std({ map: T.concrete("#d9d4c8", 3), roughness: 0.8 }),
     curbPaint: std({ color: "#f2c200", roughness: 0.7 }),
     gutter: std({ color: "#2a2724", roughness: 1 }),
@@ -165,17 +210,19 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   };
   M.asphalt.map!.repeat.set(1, 1);
   const lampMat = std({ color: "#fff6dc", emissive: "#ffd79a", emissiveIntensity: 0 });
-  night.push({ mat: lampMat, on: 3, off: 0 });
+  night.push({ mat: lampMat, on: savanna ? 1.9 : 3, off: 0 });
+  /** Night-glow multiplier: the north is darker after sunset, fewer lit windows and signs. */
+  const glow = savanna ? 0.55 : town ? 0.8 : 1;
 
   const facadeMats = new Map<string, THREE.MeshStandardMaterial>();
-  const facadeMat = (color: string, kind: "louvre" | "glass" | "modern") => {
+  const facadeMat = (color: string, kind: "louvre" | "glass" | "modern" | "small") => {
     const k = `${color}:${kind}`;
     let m = facadeMats.get(k);
     if (!m) {
       const f = T.facade(kind);
       m = std({ color: kind === "glass" ? "#ffffff" : color, map: f.map, emissiveMap: f.emissive, emissive: "#ffffff", emissiveIntensity: 0, roughness: kind === "glass" ? 0.25 : 0.85, metalness: kind === "glass" ? 0.4 : 0 });
       facadeMats.set(k, m);
-      night.push({ mat: m, on: kind === "glass" ? 1.1 : 0.9, off: 0 });
+      night.push({ mat: m, on: (kind === "glass" ? 1.1 : 0.9) * glow, off: 0 });
     }
     return m;
   };
@@ -197,10 +244,24 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       const map = T.signboard(text, bg, fg, { sub });
       m = std({ map, roughness: 0.75, emissiveMap: map, emissive: "#ffffff", emissiveIntensity: 0 });
       signMats.set(k, m);
-      night.push({ mat: m, on: 0.35, off: 0 });
+      night.push({ mat: m, on: 0.35 * glow, off: 0 });
     }
     return m;
   };
+
+  const mudMats = new Map<string, THREE.MeshStandardMaterial>();
+  /** Smooth mud / cement render in a given wash colour. */
+  const mudMat = (c: string) => {
+    let m = mudMats.get(c);
+    if (!m) {
+      m = std({ map: T.render(), color: c, roughness: 0.95 });
+      mudMats.set(c, m);
+    }
+    return m;
+  };
+  const shade = (c: string, k: number) => "#" + new THREE.Color(c).multiplyScalar(k).getHexString();
+  const pick = <V,>(a: V[]) => a[Math.floor(rnd() * a.length)];
+  const wallColor = () => (town && rnd() < 0.6 ? pick(TOWN_PAINT) : pick(d.palette.walls));
 
   const box = (m: THREE.Material, x: number, y: number, z: number, w: number, h: number, dd: number, ry = 0) => batch.add(G.box, m, [x, y, z], [0, ry, 0], [w, h, dd]);
   const collide = (x: number, z: number, w: number, dd: number, h = 2.5) => colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - dd / 2, maxZ: z + dd / 2, h });
@@ -230,14 +291,30 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   group.add(cross);
 
   // Lane markings: double yellow centre, dashed white edges.
-  for (const zz of [-0.12, 0.12]) box(M.yellowLine, 0, 0.035, zz, roadLen, 0.01, 0.1);
-  for (let x = -EXTENT_X - 20; x < EXTENT_X + 20; x += 6) {
-    if (Math.abs(x) < CROSS_HALF + 2) continue;
-    for (const zz of [-ROAD_HALF + 0.4, ROAD_HALF - 0.4]) box(M.white, x, 0.035, zz, 3, 0.01, 0.12);
+  // (Faded and patchy up north.)
+  if (savanna) {
+    for (let x = -EXTENT_X - 20; x < EXTENT_X + 20; x += 7) if (rnd() < 0.75) box(M.paint, x + 1.5, 0.035, 0, 3.2, 0.01, 0.12);
+  } else {
+    for (const zz of [-0.12, 0.12]) box(M.yellowLine, 0, 0.035, zz, roadLen, 0.01, 0.1);
+    for (let x = -EXTENT_X - 20; x < EXTENT_X + 20; x += 6) {
+      if (Math.abs(x) < CROSS_HALF + 2) continue;
+      for (const zz of [-ROAD_HALF + 0.4, ROAD_HALF - 0.4]) box(M.paint, x, 0.035, zz, 3, 0.01, 0.12);
+    }
   }
   // Zebra crossings either side of the junction.
-  for (const sx of [-1, 1]) for (let i = -5; i <= 5; i++) box(M.white, sx * (CROSS_HALF + 2.2), 0.036, i * 1.05, 2.6, 0.01, 0.55);
-  for (const sz of coastal ? [-1] : [-1, 1]) for (let i = -4; i <= 4; i++) box(M.white, i * 1.05, 0.036, sz * (ROAD_HALF + 2.2 + 1.2), 0.55, 0.01, 2.6);
+  for (const sx of [-1, 1]) for (let i = -5; i <= 5; i++) box(M.paint, sx * (CROSS_HALF + 2.2), 0.036, i * 1.05, 2.6, 0.01, 0.55);
+  for (const sz of coastal ? [-1] : [-1, 1]) for (let i = -4; i <= 4; i++) box(M.paint, i * 1.05, 0.036, sz * (ROAD_HALF + 2.2 + 1.2), 0.55, 0.01, 2.6);
+  if (savanna || town) {
+    // Earth blown and washed over the tarmac edges, in uneven drifts.
+    for (const sz of [-1, 1]) {
+      if (coastal && sz === 1) continue;
+      for (let x = -EXTENT_X - 16; x < EXTENT_X + 16; x += 5 + rnd() * 7) {
+        if (Math.abs(x) < CROSS_HALF + 3) continue;
+        const len = 4 + rnd() * 9, wd = 0.5 + rnd() * (savanna ? 1.4 : 0.7);
+        batch.add(tiledPlane(len, wd, 4), M.dust, [x, 0.03, sz * (ROAD_HALF - wd / 2 + 0.05)], [-Math.PI / 2, 0, 0]);
+      }
+    }
+  }
 
   // Open gutters, curbs and pavements along the main road.
   for (const side of [-1, 1] as const) {
@@ -254,7 +331,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       const len = x1 - x0, cx = (x0 + x1) / 2;
       box(M.curb, cx, 0.12, side * (ROAD_HALF + 0.12), len, 0.24, 0.24);
       // Black-and-yellow painted curb stones.
-      for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.245, side * (ROAD_HALF + 0.12), 1, 0.01, 0.25);
+      if (!savanna) for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.245, side * (ROAD_HALF + 0.12), 1, 0.01, 0.25);
       batch.add(G.plane, M.gutter, [cx, -0.55, side * (ROAD_HALF + 0.55)], [-Math.PI / 2, 0, 0], [len, 0.6, 1]);
       box(M.gutterWall, cx, -0.2, side * (ROAD_HALF + 0.24), len, 0.7, 0.04);
       box(M.gutterWall, cx, -0.2, side * (ROAD_HALF + 0.86), len, 0.75, 0.12);
@@ -269,7 +346,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
         if (sx - 0.8 > gx) colliders.push({ minX: gx, maxX: sx - 0.8, minZ: Math.min(side * (ROAD_HALF + 0.25), side * (ROAD_HALF + 0.85)), maxZ: Math.max(side * (ROAD_HALF + 0.25), side * (ROAD_HALF + 0.85)), h: 0, kind: "gutter" });
         gx = sx + 0.8;
       }
-      batch.add(tiledPlane(len, WALK_OUT - WALK_IN, 3), M.pavers, [cx, 0.16, side * ((WALK_IN + WALK_OUT) / 2)], [-Math.PI / 2, 0, 0]);
+      batch.add(tiledPlane(len, WALK_OUT - WALK_IN, 3), M.walk, [cx, 0.16, side * ((WALK_IN + WALK_OUT) / 2)], [-Math.PI / 2, 0, 0]);
       box(M.curb, cx, 0.08, side * (WALK_OUT + 0.08), len, 0.16, 0.16);
     }
   }
@@ -279,7 +356,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       const z0 = half < 0 ? -EXTENT_Z - 20 : WALK_OUT + 0.2;
       const z1 = half < 0 ? -WALK_OUT - 0.2 : EXTENT_Z + 20;
       const len = z1 - z0, cz = (z0 + z1) / 2;
-      batch.add(tiledPlane(3, len, 3), M.pavers, [side * (CROSS_HALF + 1.6), 0.16, cz], [-Math.PI / 2, 0, 0]);
+      batch.add(tiledPlane(3, len, 3), M.walk, [side * (CROSS_HALF + 1.6), 0.16, cz], [-Math.PI / 2, 0, 0]);
       box(M.curb, side * (CROSS_HALF + 0.1), 0.12, cz, 0.2, 0.24, len);
     }
   }
@@ -311,8 +388,8 @@ export function buildDistrict(id: DistrictId): DistrictScene {
   const reserve = (side: number, x0: number, x1: number) => takenX[String(side)].push([x0, x1]);
   const isFree = (side: number, x0: number, x1: number) => takenX[String(side)].every(([a, b]) => x1 < a - 1 || x0 > b + 1) && (x1 < -CROSS_HALF - 3.5 || x0 > CROSS_HALF + 3.5);
 
-  const home = HOME_SPOT[id];
-  const plot = PLOT_SPOT[id];
+  const home = homeSpotFor(id, coastal);
+  const plot = plotSpotFor(id);
   reserve(home.side, home.x - 7, home.x + 7);
   reserve(plot.side, plot.x - 9, plot.x + 9);
 
@@ -328,13 +405,43 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     return s;
   };
 
-  const ICON: Record<string, string> = { food: "🍲", work: "💼", bank: "🏦", gym: "🏋🏾", clinic: "🩺", nightlife: "🎶", beach: "🏖️", market: "🧺", realtor: "🏘️", home: "🏠", church: "⛪", transport: "🚐", landmark: "⭐", shop: "✂️", school: "🎓", dealer: "🚙" };
+  const ICON: Record<string, string> = { food: "🍲", work: "💼", bank: "🏦", gym: "🏋🏾", clinic: "🩺", nightlife: "🎶", beach: "🏖️", market: "🧺", realtor: "🏘️", home: "🏠", church: "⛪", transport: "🚐", landmark: "⭐", shop: "✂️", school: "🎓", dealer: "🚙", mosque: "🕌", lodge: "🛏️", tour: "🧭", furniture: "🛋️", phone: "📱", mall: "🛍️" };
 
   const placeOnBeach = (p: Place) => coastal && p.pos[1] >= 28;
 
+  // Regional towns are laid out automatically, which can drop a building onto
+  // the cross street. Re-pack each side of the street in the same order,
+  // jumping the junction and stopping short of the plot for sale.
+  const packed = new Map<string, { x: number; w: number }>();
+  if (regional) {
+    const JX = CROSS_HALF + 4;
+    for (const sd of [-1, 1]) {
+      const row = placesIn(id).filter((p) => p.kind !== "transport" && !placeOnBeach(p) && Math.sign(p.pos[1]) === sd).sort((a, b) => a.pos[0] - b.pos[0]);
+      if (!row.length) continue;
+      const limit = sd === plot.side ? plot.x - 10 : sd === home.side && home.x > 0 ? home.x - 8 : EXTENT_X - 6;
+      const start = Math.max(row[0].pos[0] - row[0].size[0] / 2, sd === home.side && home.x < 0 ? home.x + 8 : -EXTENT_X + 4);
+      const pack = (scale: number, gap: number) => {
+        const out: [string, number, number][] = [];
+        let cur = start;
+        for (const p of row) {
+          const w = Math.max(6, Math.round(p.size[0] * scale));
+          if (cur < JX && cur + w > -JX) cur = JX;
+          out.push([p.id, cur + w / 2, w]);
+          cur += w + gap;
+        }
+        return { out, end: cur - gap };
+      };
+      let r = pack(1, 2.5);
+      for (let k = 0; r.end > limit && k < 12; k++) r = pack(1 - k * 0.04, k > 3 ? 1.2 : 2);
+      for (const [pid, px, pw] of r.out) packed.set(pid, { x: px, w: pw });
+    }
+  }
+
   for (const p of placesIn(id)) {
-    const [w, depth, h] = p.size;
-    const x = p.pos[0];
+    const pk = packed.get(p.id);
+    const [, depth, h] = p.size;
+    const w = pk?.w ?? p.size[0];
+    const x = pk?.x ?? p.pos[0];
     if (p.kind === "transport") {
       const side = p.pos[1] > 0 ? 1 : -1;
       const z = side * (WALK_IN + 1.6);
@@ -371,8 +478,11 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     if (p.kind === "nightlife") music(cx, front, "afrobeats", 1.6, [p.open[0], p.open[1]]);
     else if (p.kind === "church") music(cx, front, "gospel", 1.1, [6, 21]);
     else if (p.kind === "food") music(cx, front, rnd() < 0.6 ? "highlife" : "gospel", 0.8, [p.open[0], p.open[1]]);
-    else if (p.kind === "shop") music(cx, front, "afrobeats", 0.8, [p.open[0], p.open[1]]);
+    else if (p.kind === "shop" || p.kind === "phone") music(cx, front, "afrobeats", 0.8, [p.open[0], p.open[1]]);
+    else if (p.kind === "mall") music(cx, front, "afrobeats", 0.6, [p.open[0], p.open[1]]);
+    else if (p.kind === "furniture" || p.kind === "lodge" || p.kind === "tour") music(cx, front, rnd() < 0.5 ? "highlife" : "gospel", 0.55, [p.open[0], Math.min(p.open[1], 21)]);
     else if (p.kind === "market") marketNoise(cx, front + faceDir * 2, 1.4, [p.open[0], p.open[1]]);
+    // Mosques: no loudspeaker music. The street's own bustle carries over.
     interactables.push({ id: p.id, kind: "place", placeId: p.id, pos: door, radius: 2.4, label: p.name });
     labelSprite(p.name, ICON[p.kind] ?? "📍", Math.min(h, 9) + 1.4, cx, front + faceDir * 0.6);
   }
@@ -399,7 +509,7 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       collide(cx + 6, cz, 3, 3);
       return;
     }
-    if (p.id === "osu_castle") {
+    if (p.id === "osu_castle" || p.id === "cape_castle_place") {
       // Whitewashed fort: curtain walls with crenellations and corner bastions.
       const m = M.plaster;
       box(m, cx, h / 2, cz, w, h, depth);
@@ -413,7 +523,8 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       batch.add(G.plane, colorMat("#C8452C", 0.8), [cx + w / 2 - 0.4, h + 5.4, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#F2B705", 0.8), [cx + w / 2 - 0.4, h + 5.0, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#1F7A4D", 0.8), [cx + w / 2 - 0.4, h + 4.6, cz], [0, 0, 0], [1.1, 0.4, 1]);
-      box(signMat("OSU CASTLE", "#F4F1E6", "#3a2a1f", "FORT CHRISTIANSBORG • 1661"), cx, 3.9, front + faceDir * 0.06, 6, 1.1, 0.08);
+      const [castleName, castleSub] = p.id === "osu_castle" ? ["OSU CASTLE", "FORT CHRISTIANSBORG • 1661"] : ["CAPE COAST CASTLE", "WORLD HERITAGE SITE • 1653"];
+      box(signMat(castleName, "#F4F1E6", "#3a2a1f", castleSub), cx, 3.9, front + faceDir * 0.06, 6, 1.1, 0.08);
       collide(cx, cz, w + 3, depth, h * 1.3);
       return;
     }
@@ -455,13 +566,32 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       collide(cx, cz, w, depth, h);
       return;
     }
+    if (p.kind === "mosque") {
+      if (savanna) sudanoSahelian(p, cx, cz, w, depth, h, faceDir, true);
+      else modernMosque(p, cx, cz, w, depth, h, faceDir);
+      return;
+    }
+    if (p.kind === "landmark" && savanna) {
+      // Palaces and cultural centres of the north: mud, buttresses and toron.
+      sudanoSahelian(p, cx, cz, w, depth, Math.min(h, 8), faceDir, false);
+      return;
+    }
+    if (p.kind === "mall") return mallBuilding(p, cx, cz, w, depth, h, faceDir);
+    if (p.kind === "phone") return phoneShop(p, cx, cz, w, depth, h, faceDir);
+    if (p.kind === "furniture") return furnitureWorks(p, cx, cz, w, depth, h, faceDir);
+    if (p.kind === "lodge") return guesthouse(p, cx, cz, w, depth, h, faceDir);
+    if (p.kind === "tour") return tourDesk(p, cx, cz, w, depth, h, faceDir);
+    if (p.kind === "market" && (savanna || town)) return openMarket(p, cx, cz, w, depth, faceDir);
     // Generic place building, styled by district.
     const glassy = style === "corporate" || (style === "suburban" && h > 10) || (p.kind === "bank" && h > 12);
-    const m = glassy ? facadeMat("#ffffff", "glass") : facadeMat(p.color, upscale ? "modern" : "louvre");
+    const m = glassy ? facadeMat("#ffffff", "glass") : facadeMat(p.color, upscale ? "modern" : savanna ? "small" : "louvre");
     batch.add(facadeBox(w, h, depth), m, [cx, h / 2, cz]);
     // Parapet / roof.
-    if (style === "coastal" || (style === "market" && h < 5)) {
-      roofPitched(cx, cz, w, depth, h, true);
+    if (savanna && !glassy) {
+      mudParapet(cx, cz, w, depth, h, p.color);
+      box(mudMat(shade(p.color, 0.7)), cx, 0.45, front + faceDir * 0.03, w + 0.04, 0.9, 0.04);
+    } else if (style === "coastal" || (style === "market" && h < 5) || (town && h <= 7.5)) {
+      roofPitched(cx, cz, w, depth, h, true, town ? 0.28 : 0.32, town ? facadeMat(p.color, "louvre") : M.plaster);
     } else {
       parapet(cx, cz, w, depth, h);
       if (!glassy) tank(cx + w / 2 - 1.2, cz - depth / 4, h);
@@ -491,8 +621,9 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       plasticSet(cx - w / 2 + 1.5, front + faceDir * 2.6);
       plasticSet(cx + w / 2 - 1.5, front + faceDir * 2.6);
     }
-    acUnits(cx, cz, w, depth, h, faceDir);
-    collide(cx, cz, w, depth, h);
+    if (!savanna) acUnits(cx, cz, w, depth, h, faceDir);
+    else if (rnd() < 0.5) motorbike(cx + w / 2 - 1.2, front + faceDir * 1.3, 0.2);
+    collide(cx, cz, w, depth, h + (town && h <= 7.5 ? 1.6 : 0));
   }
 
   // -------------------------------------------------------------------------
@@ -505,9 +636,8 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     box(M.concrete, cx + w / 2 - 0.1, h + 0.3, cz, 0.2, 0.6, depth);
     box(M.concrete, cx, h + 0.02, cz, w - 0.2, 0.04, depth - 0.2);
   }
-  function roofPitched(cx: number, cz: number, w: number, depth: number, h: number, rusty: boolean) {
+  function roofPitched(cx: number, cz: number, w: number, depth: number, h: number, rusty: boolean, pitch = 0.32, gable: THREE.Material = M.plaster) {
     const m = rusty ? M.roofRust : M.roofClean;
-    const pitch = 0.32;
     const half = depth / 2 + 0.4;
     const slope = half / Math.cos(pitch);
     batch.add(tiledPlane(w + 0.8, slope, 3), m, [cx, h + Math.sin(pitch) * half * 0.5, cz - half / 2], [-Math.PI / 2 + pitch, 0, 0]);
@@ -517,8 +647,8 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     // Gable ends.
     const tri = new THREE.Shape([new THREE.Vector2(-depth / 2, 0), new THREE.Vector2(depth / 2, 0), new THREE.Vector2(0, Math.tan(pitch) * depth / 2)]);
     const tg = new THREE.ShapeGeometry(tri);
-    batch.add(tg, M.plaster, [cx - w / 2, h, cz], [0, -Math.PI / 2, 0]);
-    batch.add(tg, M.plaster, [cx + w / 2, h, cz], [0, Math.PI / 2, 0]);
+    batch.add(tg, gable, [cx - w / 2, h, cz], [0, -Math.PI / 2, 0]);
+    batch.add(tg, gable, [cx + w / 2, h, cz], [0, Math.PI / 2, 0]);
   }
   function tank(x: number, z: number, h: number) {
     batch.add(G.cyl, M.tank, [x, h + 0.9, z], [0, 0, 0], [0.65, 1.5, 0.65]);
@@ -627,6 +757,737 @@ export function buildDistrict(id: DistrictId): DistrictScene {
     for (const s of [-1, 1]) box(M.white, cx + s * w * 0.22, 1.6, cz - side * (depth / 2 + 2.2), 0.3, 3.2, 0.3);
     collide(cx, cz, w, depth, h + 2);
   }
+  // -------------------------------------------------------------------------
+  // Regional building parts: the savanna north and the middle-belt towns.
+
+  const SAV_SIGNS = [
+    "ALHAMDULILLAH ENTERPRISE", "MASHA ALLAH PROVISIONS", "NAA GBEWAA SPARE PARTS", "BARAKA WELDING WORKS", "INSHA ALLAH TAILORING",
+    "ZONGO BARBERING SALON", "TI ZAA FOOD JOINT", "SUNGMAALE COSMETICS", "AL-HASSAN MOTOR SPARES", "DAGBON PHONES & MOMO",
+    "PAGSUNG SHEA BUTTER", "NASARA BICYCLE REPAIRS", "NEEM TREE CHEMICALS", "SALAMATU FABRICS", "SAVANNA COLD STORE", "NYEBU GRINDING MILL",
+  ];
+  const TOWN_SIGNS = [
+    "ONYAME BEKYERE ENTERPRISE", "ABUSUA YAM DEPOT", "COCOA HOUSE PROVISIONS", "AKWAABA SPOT", "FOREST GATE PHARMACY", "SANKOFA PHOTOS",
+    "GOD FIRST TYRES", "MADAM AKOSUA FABRICS", "NKOSUO HARDWARE", "AWURADE KASA MOTORS", "ODO NI SIKA SALON", "OBRA YE BO AUTO", "EBEN-EZER WELDING",
+  ];
+
+  /** Tapering buttress / pinnacle of base `b`, height `ht`. */
+  function pillar(m: THREE.Material, x: number, z: number, b: number, ht: number, y0 = 0) {
+    batch.add(TAPER, m, [x, y0 + ht / 2, z], [0, 0, 0], [b, ht, b]);
+  }
+  /** Toron: the timber sticks left protruding from Sudano-Sahelian walls as scaffolding for re-plastering. */
+  function toronOn(x: number, z: number, b: number, ht: number, faces: [number, number][], every = 1.2, perRow = 1, y0 = 0) {
+    for (let y = y0 + 1.1; y < y0 + ht - 0.5; y += every) {
+      const hw = (b / 2) * (1 - 0.45 * ((y - y0) / ht));
+      for (const [fx, fz] of faces) {
+        for (let k = 0; k < perRow; k++) {
+          const off = perRow === 1 ? 0 : (k / (perRow - 1) - 0.5) * hw * 1.3;
+          const px = x + fx * (hw + 0.28) + (fz !== 0 ? off : 0);
+          const pz = z + fz * (hw + 0.28) + (fx !== 0 ? off : 0);
+          box(M.toron, px, y, pz, fx ? 0.7 : 0.09, 0.09, fz ? 0.7 : 0.09);
+        }
+      }
+    }
+  }
+  /** A flat mud roof behind a parapet, with corner pinnacles and rain spouts. */
+  function mudParapet(cx: number, cz: number, w: number, depth: number, h: number, color: string, merlons = false) {
+    const m = mudMat(color);
+    const ph = 0.55;
+    box(m, cx, h + ph / 2, cz - depth / 2 + 0.12, w, ph, 0.24);
+    box(m, cx, h + ph / 2, cz + depth / 2 - 0.12, w, ph, 0.24);
+    box(m, cx - w / 2 + 0.12, h + ph / 2, cz, 0.24, ph, depth);
+    box(m, cx + w / 2 - 0.12, h + ph / 2, cz, 0.24, ph, depth);
+    box(mudMat(shade(color, 0.82)), cx, h + 0.02, cz, w - 0.2, 0.04, depth - 0.2);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) batch.add(G.cone, m, [cx + sx * (w / 2 - 0.15), h + ph + 0.2, cz + sz * (depth / 2 - 0.15)], [0, 0, 0], [0.2, 0.4, 0.2]);
+    if (merlons) {
+      for (let i = -w / 2 + 1.2; i < w / 2 - 0.8; i += 1.3) for (const sz of [-1, 1]) batch.add(G.cone, m, [cx + i, h + ph + 0.15, cz + sz * (depth / 2 - 0.12)], [0, 0, 0], [0.14, 0.32, 0.14]);
+    }
+    // Spouts throw the rain clear of the walls.
+    for (let i = -w / 2 + 1.5; i < w / 2 - 1; i += 3 + rnd() * 2) for (const sz of [-1, 1]) box(M.toron, cx + i, h + 0.12, cz + sz * (depth / 2 + 0.25), 0.12, 0.12, 0.6);
+  }
+  /** Painted plastic ablution kettles lined up by a mosque wall. */
+  function kettles(x0: number, z: number, n: number) {
+    const cols = ["#2E86AB", "#C8452C", "#1F7A4D", "#F2B705", "#6A2CBF", "#E35D3A"];
+    for (let i = 0; i < n; i++) {
+      const x = x0 + i * 0.4;
+      const m = colorMat(cols[i % cols.length], 0.45);
+      batch.add(G.sphere, m, [x, 0.17, z], [0, 0, 0], [0.13, 0.15, 0.13]);
+      batch.add(G.cyl8, m, [x + 0.12, 0.22, z], [0, 0, 0.9], [0.025, 0.16, 0.025]);
+    }
+  }
+  function archedDoor(x: number, z: number, faceDir: number, wd: number, ht: number, m: THREE.Material = colorMat("#2a1d14", 0.9)) {
+    box(m, x, ht / 2, z + faceDir * 0.03, wd, ht, 0.06);
+    batch.add(G.cyl, m, [x, ht, z + faceDir * 0.03], [Math.PI / 2, 0, 0], [wd / 2, 0.06, wd / 2]);
+  }
+
+  /**
+   * Sudano-Sahelian mud architecture (Larabanga, Bole, Wa Naa's palace):
+   * buttressed walls rising into pinnacles, timber toron, ostrich-egg finials
+   * and, for a mosque, a tall tapering minaret tower that marks the town.
+   */
+  function sudanoSahelian(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number, mosque: boolean) {
+    const front = cz + faceDir * (depth / 2);
+    const wash = mosque ? (rnd() < 0.55 ? "#F1E9DA" : "#D9B98A") : p.color;
+    const body = mudMat(wash), trim = mudMat(shade(wash, 0.72));
+    const egg = colorMat("#f7f3ea", 0.4);
+    const wallH = mosque ? Math.max(5, h * 0.6) : Math.max(4.5, h * 0.8);
+    batch.add(facadeBox(w - 0.4, wallH, depth - 0.4), body, [cx, wallH / 2, cz]);
+    box(trim, cx, 0.45, cz, w - 0.2, 0.9, depth - 0.2); // plinth splashed with red earth
+    mudParapet(cx, cz, w - 0.4, depth - 0.4, wallH, wash, true);
+    const towerX = cx - w * 0.27;
+    // Buttresses along the front, rising above the parapet as pinnacles.
+    const nb = Math.max(3, Math.round(w / 2.2));
+    for (let i = 0; i <= nb; i++) {
+      const bx = cx - w / 2 + 0.3 + (i / nb) * (w - 0.6);
+      if (Math.abs(bx - cx) < 1.4) continue; // the entrance
+      if (mosque && Math.abs(bx - towerX) < 2.2) continue; // the minaret
+      const bz = front - faceDir * 0.1;
+      const bh = wallH + 1.4 + (i % 2) * 0.5;
+      pillar(body, bx, bz, 0.8, bh);
+      batch.add(G.cone, body, [bx, bh + 0.15, bz], [0, 0, 0], [0.2, 0.4, 0.2]);
+      batch.add(G.sphere, egg, [bx, bh + 0.42, bz], [0, 0, 0], [0.08, 0.11, 0.08]);
+      toronOn(bx, bz, 0.8, bh, [[0, faceDir]], 1.3);
+    }
+    // Side buttresses.
+    const ns = Math.max(2, Math.round(depth / 3));
+    for (const sx of [-1, 1]) {
+      for (let k = 1; k < ns; k++) {
+        const bz = front - faceDir * ((k / ns) * depth);
+        pillar(body, cx + sx * (w / 2 - 0.15), bz, 0.7, wallH + 1.1);
+        batch.add(G.cone, body, [cx + sx * (w / 2 - 0.15), wallH + 1.25, bz], [0, 0, 0], [0.18, 0.35, 0.18]);
+        toronOn(cx + sx * (w / 2 - 0.15), bz, 0.7, wallH + 1.1, [[sx, 0]], 1.4);
+      }
+    }
+    // Corner towers.
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const tx = cx + sx * (w / 2 - 0.4), tz = cz + sz * (depth / 2 - 0.4);
+        const th = wallH + 2.4;
+        pillar(body, tx, tz, 1.5, th);
+        batch.add(G.cone, body, [tx, th + 0.2, tz], [0, 0, 0], [0.32, 0.6, 0.32]);
+        batch.add(G.sphere, egg, [tx, th + 0.58, tz], [0, 0, 0], [0.1, 0.14, 0.1]);
+        toronOn(tx, tz, 1.5, th, [[sx, 0], [0, sz]], 1.2);
+        collide(tx, tz, 1.5, 1.5, th);
+      }
+    }
+    if (mosque) {
+      // The minaret: a tall tapering tower bristling with toron, visible from the whole street.
+      const tb = Math.min(4.2, Math.max(3, w * 0.28));
+      const th = Math.max(h + 6, 15);
+      const tz = front - faceDir * (tb / 2 - 0.6);
+      pillar(body, towerX, tz, tb, th);
+      // Stepped crown with a cluster of pinnacles.
+      const topW = tb * 0.55;
+      for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        batch.add(G.cone, body, [towerX + dx * topW * 0.32, th + 0.45, tz + dz * topW * 0.32], [0, 0, 0], [0.22, 0.9, 0.22]);
+      }
+      batch.add(G.cone, body, [towerX, th + 0.8, tz], [0, 0, 0], [0.4, 1.6, 0.4]);
+      batch.add(G.sphere, egg, [towerX, th + 1.7, tz], [0, 0, 0], [0.13, 0.18, 0.13]);
+      toronOn(towerX, tz, tb, th, [[1, 0], [-1, 0], [0, 1], [0, -1]], 1.05, 3);
+      // Little dark openings up the tower.
+      for (let y = wallH + 1.5; y < th - 2; y += 2.6) box(colorMat("#2a1d14", 0.9), towerX, y, tz + faceDir * ((tb / 2) * (1 - 0.45 * (y / th)) + 0.02), 0.35, 0.6, 0.06);
+      collide(towerX, tz, tb, tb, th);
+      // Mihrab tower at the back.
+      const mz = cz - faceDir * (depth / 2 - 0.6);
+      pillar(body, cx + w * 0.1, mz, 2.6, wallH + 4.5);
+      batch.add(G.cone, body, [cx + w * 0.1, wallH + 4.8, mz], [0, 0, 0], [0.3, 0.8, 0.3]);
+      batch.add(G.sphere, egg, [cx + w * 0.1, wallH + 5.25, mz], [0, 0, 0], [0.1, 0.14, 0.1]);
+      toronOn(cx + w * 0.1, mz, 2.6, wallH + 4.5, [[1, 0], [-1, 0], [0, -faceDir]], 1.2, 2);
+      collide(cx + w * 0.1, mz, 2.6, 2.6, wallH + 4.5);
+      kettles(cx + 1.6, front + faceDir * 0.45, 6);
+    }
+    archedDoor(cx, front - faceDir * 0.15, faceDir, 1.7, 2.5);
+    // Small, deep window slits.
+    for (const sx of [-1, 1]) {
+      for (let k = 0; k < 2; k++) box(colorMat("#2a1d14", 0.9), cx + sx * (2.3 + k * 1.9), wallH * 0.6, front - faceDir * 0.17, 0.3, 0.8, 0.06);
+    }
+    // A modest painted board by the entrance.
+    const [signText, sub] = p.sign.split(" • ");
+    const sw = Math.min(4.2, w * 0.36);
+    box(signMat(signText, mosque ? "#1F5E3B" : "#5b3a29", "#fff6e0", sub), cx + w * 0.24, 3.1, front + faceDir * 0.35, sw, sw / 5.3, 0.06);
+    collide(cx, cz, w, depth, wallH + 1.4);
+  }
+
+  /** A modern zongo mosque: white walls, green dome and twin minarets. */
+  function modernMosque(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const hh = Math.max(6, h * 0.72);
+    const green = colorMat("#1F7A4D", 0.35, 0.3);
+    batch.add(facadeBox(w, hh, depth), facadeMat(p.color, "modern"), [cx, hh / 2, cz]);
+    parapet(cx, cz, w, depth, hh);
+    const r = Math.min(w, depth) * 0.3;
+    batch.add(G.cyl, M.white, [cx, hh + 0.6, cz], [0, 0, 0], [r, 1.2, r]);
+    batch.add(G.sphere, green, [cx, hh + 1.2, cz], [0, 0, 0], [r, r * 0.95, r]);
+    batch.add(G.cyl8, colorMat("#d4af37", 0.3, 0.8), [cx, hh + 1.2 + r + 0.5, cz], [0, 0, 0], [0.05, 1, 0.05]);
+    batch.add(G.sphere, colorMat("#d4af37", 0.3, 0.8), [cx, hh + 1.2 + r + 1.05, cz], [0, 0, 0], [0.16, 0.16, 0.16]);
+    for (const sx of [-1, 1]) {
+      const mx = cx + sx * (w / 2 - 0.9), mz = front - faceDir * 0.9;
+      const mh = hh + 8;
+      batch.add(G.cyl, M.white, [mx, mh / 2, mz], [0, 0, 0], [0.62, mh, 0.62]);
+      batch.add(G.cyl, green, [mx, mh * 0.78, mz], [0, 0, 0], [0.95, 0.25, 0.95]);
+      batch.add(G.cyl, M.white, [mx, mh * 0.78 + 0.5, mz], [0, 0, 0], [0.92, 0.06, 0.92]);
+      batch.add(G.cone, green, [mx, mh + 0.9, mz], [0, 0, 0], [0.66, 1.8, 0.66]);
+      collide(mx, mz, 1.4, 1.4, mh);
+    }
+    archedDoor(cx, front, faceDir, 2, 2.8, colorMat("#3a2a1f", 0.7));
+    box(green, cx, 3.1, front + faceDir * 0.05, 2.6, 0.12, 0.12);
+    for (const sx of [-1, 1]) for (let k = 1; k <= 2; k++) archedDoor(cx + sx * (k * w * 0.18 + 0.6), front, faceDir, 0.9, 1.6 + hh * 0.2, M.glass);
+    const [signText, sub] = p.sign.split(" • ");
+    const sw = Math.min(w * 0.55, 8);
+    box(signMat(signText, "#1F5E3B", "#ffffff", sub), cx, Math.min(hh - 0.8, 4.3), front + faceDir * 0.07, sw, Math.min(1, sw / 5.3), 0.08);
+    kettles(cx + 1.8, front + faceDir * 0.45, 6);
+    collide(cx, cz, w, depth, hh + 2);
+  }
+
+  /** A shopping mall: glass core, clad wings, a roof-line brand band and a canopy. */
+  function mallBuilding(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const H = Math.max(8, h);
+    const wing = Math.min(4, w * 0.18);
+    batch.add(facadeBox(w - 2 * wing, H, depth), facadeMat("#ffffff", "glass"), [cx, H / 2, cz]);
+    const clad = std({ map: T.concrete(p.color, 171), roughness: 0.5 });
+    for (const sx of [-1, 1]) {
+      batch.add(facadeBox(wing, H + 1, depth + 0.4), clad, [cx + sx * (w / 2 - wing / 2), (H + 1) / 2, cz]);
+      // Vertical accent fins.
+      for (let k = 0; k < 3; k++) box(colorMat("#B3123A", 0.4), cx + sx * (w / 2 - wing / 2) + (k - 1) * wing * 0.28, (H + 1) / 2, front + faceDir * 0.25, 0.12, H + 1, 0.12);
+    }
+    box(colorMat("#2b2d30", 0.5, 0.3), cx, H + 0.25, cz, w - 2 * wing + 0.2, 0.5, depth + 0.4);
+    const [signText, sub] = p.sign.split(" • ");
+    const sw = Math.min(w - 2 * wing - 1, 14);
+    box(signMat(signText, "#B3123A", "#ffffff", sub), cx, H - 1.2, front + faceDir * 0.1, sw, Math.min(1.9, sw / 5.3), 0.1);
+    const strip = std({ color: "#ffffff", emissive: "#9fe8ff", emissiveIntensity: 0 });
+    night.push({ mat: strip, on: 2 * glow, off: 0 });
+    box(strip, cx, H - 2.3, front + faceDir * 0.12, w - 2 * wing, 0.1, 0.1);
+    // Entrance canopy on slim columns, sliding doors beneath.
+    const cw = Math.min(10, w * 0.5);
+    box(M.white, cx, 4.2, front + faceDir * 1.4, cw, 0.3, 2.8);
+    for (const sx of [-1, 1]) {
+      batch.add(G.cyl8, M.metal, [cx + sx * (cw / 2 - 0.3), 2.1, front + faceDir * 2.5], [0, 0, 0], [0.16, 4.2, 0.16]);
+      collide(cx + sx * (cw / 2 - 0.3), front + faceDir * 2.5, 0.4, 0.4, 4.3);
+    }
+    box(colorMat("#1b2730", 0.1, 0.5), cx, 1.45, front + faceDir * 0.04, 4.2, 2.9, 0.06);
+    box(M.metal, cx, 1.45, front + faceDir * 0.06, 0.06, 2.9, 0.06);
+    // Bollards and planters along the frontage.
+    for (let bx = cx - w / 2 + 1; bx <= cx + w / 2 - 1; bx += 2.4) {
+      if (Math.abs(bx - cx) < cw / 2 + 0.4) continue;
+      if (rnd() < 0.5) {
+        box(M.concrete, bx, 0.4, front + faceDir * 0.6, 1.2, 0.8, 0.8);
+        batch.add(G.ico, M.leaf2, [bx, 1.0, front + faceDir * 0.6], [0, rnd() * 3, 0], [0.6, 0.5, 0.6]);
+        collide(bx, front + faceDir * 0.6, 1.2, 0.8, 1.2);
+      } else {
+        batch.add(G.cyl8, M.darkMetal, [bx, 0.45, front + faceDir * 0.6], [0, 0, 0], [0.11, 0.9, 0.11]);
+        collide(bx, front + faceDir * 0.6, 0.25, 0.25, 0.9);
+      }
+    }
+    collide(cx, cz, w, depth, H + 0.6);
+  }
+
+  /** A phone shop: bright paint, glazed front, brand banners and feather flags. */
+  function phoneShop(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const H = Math.max(3.6, h);
+    const hash = [...p.id].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+    const brand = (k: number) => PHONE_BRANDS[(hash + k) % PHONE_BRANDS.length];
+    const body = brand(0)[1] === "#111111" ? "#F2F2F2" : brand(0)[1];
+    batch.add(facadeBox(w, H, depth), facadeMat(body, savanna ? "small" : "modern"), [cx, H / 2, cz]);
+    if (savanna) mudParapet(cx, cz, w, depth, H, "#E3CBA4");
+    else parapet(cx, cz, w, depth, H);
+    box(M.glass, cx, 1.45, front + faceDir * 0.02, w - 1.2, 2.5, 0.06);
+    box(M.metal, cx, 1.45, front + faceDir * 0.04, 0.06, 2.5, 0.06);
+    const [signText, sub] = p.sign.split(" • ");
+    const sh = Math.min(1.1, (w - 0.4) / 5.3);
+    const signY = Math.max(3.25, H - 0.5);
+    box(signMat(signText, "#FFD400", "#111111", sub ?? "PHONES • ACCESSORIES • REPAIRS"), cx, signY, front + faceDir * 0.08, w - 0.4, sh, 0.08);
+    if (signY + sh / 2 > H) for (const sx of [-1, 1]) box(M.darkMetal, cx + sx * (w / 2 - 0.5), (H + signY) / 2, front + faceDir * 0.03, 0.08, signY - H + 0.4, 0.08);
+    const neon = std({ color: "#7ff9ff", emissive: "#3ff0ff", emissiveIntensity: 0 });
+    night.push({ mat: neon, on: 2.4 * glow, off: 0.1 });
+    box(neon, cx, signY - sh / 2 - 0.1, front + faceDir * 0.1, w - 0.6, 0.07, 0.07);
+    // Two brand boards over the glass.
+    for (const sx of [-1, 1]) {
+      const [b, bg, fg, tag] = brand(sx < 0 ? 1 : 2);
+      box(signMat(b, bg, fg, tag), cx + sx * (w / 4 - 0.05), 2.85, front + faceDir * 0.08, w / 2 - 0.6, 0.42, 0.06);
+    }
+    // Feather flags at the kerb of the forecourt.
+    for (const sx of [-1, 1]) {
+      const [b, bg, fg] = brand(sx < 0 ? 3 : 4);
+      const fx = cx + sx * (w / 2 - 0.35), fz = front + faceDir * 0.6;
+      batch.add(G.cyl8, M.metal, [fx, 1.5, fz], [0, 0, 0], [0.025, 3, 0.025]);
+      batch.add(G.plane, signMat(b, bg, fg), [fx - sx * 0.3, 1.75, fz], [0, faceDir > 0 ? 0 : Math.PI, Math.PI / 2], [2.4, 0.55, 1]);
+      collide(fx, fz, 0.2, 0.2, 3);
+    }
+    // Glass display counter outside, and a MoMo table under a yellow umbrella.
+    const dx = cx - Math.min(2.2, w * 0.27);
+    box(M.darkMetal, dx, 0.4, front + faceDir * 0.55, 1.5, 0.8, 0.55);
+    box(M.glass, dx, 1.0, front + faceDir * 0.55, 1.5, 0.4, 0.55);
+    for (let k = 0; k < 4; k++) box(M.black, dx - 0.55 + k * 0.36, 0.84, front + faceDir * 0.55, 0.16, 0.02, 0.3);
+    collide(dx, front + faceDir * 0.55, 1.6, 0.6, 1.2);
+    const ux = cx + Math.min(2.2, w * 0.27);
+    box(colorMat("#FFD400", 0.6), ux, 0.75, front + faceDir * 0.75, 0.9, 0.06, 0.6);
+    box(colorMat("#FFD400", 0.6), ux, 0.38, front + faceDir * 0.75, 0.8, 0.72, 0.04);
+    batch.add(G.cyl8, M.metal, [ux, 1.15, front + faceDir * 0.75], [0, 0, 0], [0.03, 2.3, 0.03]);
+    batch.add(G.cone, colorMat("#FFD400", 0.8), [ux, 2.45, front + faceDir * 0.75], [0, 0, 0], [1.2, 0.45, 1.2]);
+    collide(ux, front + faceDir * 0.75, 1, 0.7, 0.9);
+    collide(cx, cz, w, depth, H + 0.6);
+  }
+
+  // Furniture pieces for the showroom forecourt (built facing the road, fd).
+  function sofa(x: number, z: number, fd: number, color: string) {
+    const m = colorMat(color, 0.9);
+    box(M.wood, x, 0.12, z, 2, 0.24, 0.85);
+    box(m, x, 0.37, z + fd * 0.05, 1.7, 0.24, 0.75);
+    box(m, x, 0.72, z - fd * 0.33, 2, 0.62, 0.2);
+    for (const sx of [-1, 1]) box(m, x + sx * 0.92, 0.52, z, 0.18, 0.42, 0.85);
+    collide(x, z, 2.1, 0.9, 1);
+  }
+  function bed(x: number, z: number, fd: number) {
+    box(M.wood, x, 0.27, z, 1.5, 0.22, 2);
+    box(colorMat(pick(["#efe9f4", "#e8f0f4", "#f4ece0"]), 0.95), x, 0.47, z + fd * 0.04, 1.4, 0.2, 1.84);
+    box(M.wood, x, 0.8, z - fd * 0.97, 1.6, 1.2, 0.08);
+    for (const sx of [-1, 1]) box(M.wood, x + sx * 0.72, 0.15, z + fd * 0.95, 0.08, 0.3, 0.08);
+    collide(x, z, 1.6, 2.1, 1.3);
+  }
+  function wardrobe(x: number, z: number, fd: number) {
+    const m = colorMat(pick(["#7a4a2b", "#9a6a43", "#5e3a22"]), 0.75);
+    box(m, x, 1.05, z, 1.2, 2.1, 0.6);
+    box(M.black, x, 1.05, z + fd * 0.305, 0.02, 1.9, 0.01);
+    box(M.glass, x + 0.3, 1.25, z + fd * 0.305, 0.38, 1.2, 0.01);
+    for (const sx of [-1, 1]) box(colorMat("#d4af37", 0.3, 0.8), x + sx * 0.08, 1.05, z + fd * 0.32, 0.03, 0.18, 0.03);
+    collide(x, z, 1.25, 0.65, 2.1);
+  }
+  /** Carpenters' workshop: open shed with planks and a workbench, showpieces out front. */
+  function furnitureWorks(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const H = Math.max(3.4, Math.min(h, 4.5));
+    const shedD = Math.max(4, depth - 3.2);
+    const shedCz = cz - faceDir * (depth / 2 - shedD / 2);
+    const shedFront = shedCz + faceDir * (shedD / 2);
+    const back = shedCz - faceDir * (shedD / 2 - 0.12);
+    const wallM = savanna ? mudMat(p.color) : facadeMat(p.color, "louvre");
+    box(wallM, cx, H / 2, back, w, H, 0.25);
+    for (const sx of [-1, 1]) box(wallM, cx + sx * (w / 2 - 0.12), H / 2, shedCz, 0.25, H, shedD);
+    collide(cx, back, w, 0.3, H);
+    for (const sx of [-1, 1]) collide(cx + sx * (w / 2 - 0.12), shedCz, 0.3, shedD, H);
+    for (const sx of [-1, 1]) box(M.wood, cx + sx * (w / 2 - 0.2), H / 2, shedFront, 0.2, H, 0.2);
+    // Lean-to zinc roof, high at the front.
+    batch.add(G.box, M.roofRust, [cx, H + 0.1, shedCz + faceDir * 0.3], [-faceDir * 0.1, 0, 0], [w + 0.6, 0.06, shedD + 1.2]);
+    box(M.concrete, cx, 0.04, cz, w, 0.08, depth);
+    // Sawdust, planks and the workbench in the shade.
+    batch.add(G.plane, colorMat("#d9c08a", 1), [cx + w * 0.15, 0.09, shedCz], [-Math.PI / 2, 0, 0], [w * 0.5, shedD * 0.6, 1]);
+    box(M.wood, cx - w * 0.15, 0.85, shedCz - faceDir * 0.4, 2.4, 0.1, 0.9);
+    for (const sx of [-1, 1]) box(M.wood, cx - w * 0.15 + sx * 1.1, 0.42, shedCz - faceDir * 0.4, 0.1, 0.84, 0.8);
+    for (let k = 0; k < 6; k++) box(colorMat(k % 2 ? "#a8774a" : "#8a5a3b", 0.9), cx + w / 2 - 0.5, 1.4, shedCz - faceDir * (shedD / 2 - 0.6 - k * 0.12), 0.05, 2.8, 0.25);
+    collide(cx - w * 0.15, shedCz - faceDir * 0.4, 2.5, 1, 0.9);
+    // Showpieces on the forecourt, entry clear in the middle.
+    const yz = (shedFront + front) / 2 - faceDir * 0.1;
+    const fabricCols = ["#7a1f2b", "#2f4f6f", "#c49a3a", "#3d5a3a", "#5a3a6a"];
+    sofa(cx - w / 2 + 1.4, yz, faceDir, pick(fabricCols));
+    if (w >= 7.5) bed(cx + w / 2 - 1.3, yz, faceDir);
+    else sofa(cx + w / 2 - 1.4, yz, faceDir, pick(fabricCols));
+    wardrobe(cx - w / 2 + 1.0, shedFront - faceDir * 0.6, faceDir);
+    if (w >= 10) {
+      wardrobe(cx + w / 2 - 1.0, shedFront - faceDir * 0.6, faceDir);
+      sofa(cx - w / 2 + 3.7, yz, faceDir, pick(fabricCols));
+    }
+    const [signText, sub] = p.sign.split(" • ");
+    const sw = Math.min(w * 0.85, 8);
+    box(signMat(signText, "#5b3a29", "#F2B705", sub ?? "BEDS • SOFAS • WARDROBES"), cx, H + 0.8, shedFront + faceDir * 0.12, sw, Math.min(0.95, sw / 5.3), 0.08);
+    for (const sx of [-1, 1]) box(M.wood, cx + sx * (sw / 2 - 0.3), H + 0.4, shedFront + faceDir * 0.08, 0.08, 0.9, 0.08);
+  }
+
+  /** Two-storey guesthouse with a first-floor balcony across the front. */
+  function guesthouse(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const H = Math.max(6.4, h);
+    batch.add(facadeBox(w, H, depth), facadeMat(p.color, savanna ? "small" : "louvre"), [cx, H / 2, cz]);
+    if (savanna) mudParapet(cx, cz, w, depth, H, p.color);
+    else if (town || coastal) batch.add(HIP, M.roofRust, [cx, H + 1, cz], [0, Math.PI / 4, 0], [w * 0.76, 2, depth * 0.76]);
+    else {
+      parapet(cx, cz, w, depth, H);
+      tank(cx + w / 2 - 1.2, cz - faceDir * depth / 4, H);
+    }
+    const bw = w - 1.2, bd = 1.5, by = 3.2;
+    const rail = savanna ? mudMat(shade(p.color, 0.9)) : M.white;
+    box(M.concrete, cx, by, front + faceDir * (bd / 2), bw, 0.2, bd);
+    box(rail, cx, by + 1.0, front + faceDir * (bd - 0.05), bw, 0.08, 0.1);
+    for (let bx = -bw / 2 + 0.1; bx <= bw / 2 - 0.05; bx += 0.32) box(rail, cx + bx, by + 0.55, front + faceDir * (bd - 0.05), 0.07, 0.9, 0.07);
+    for (const sx of [-1, 1]) {
+      box(rail, cx + sx * (bw / 2), by + 1.0, front + faceDir * (bd / 2), 0.08, 0.08, bd);
+      box(rail, cx + sx * (bw / 2 - 0.12), by / 2, front + faceDir * (bd - 0.15), 0.25, by, 0.25);
+      collide(cx + sx * (bw / 2 - 0.12), front + faceDir * (bd - 0.15), 0.3, 0.3, by);
+    }
+    const doors = w >= 10 ? [-1, 0, 1] : [-1, 1];
+    for (const k of doors) box(colorMat("#4a3020", 0.7), cx + k * w * 0.28, by + 1.15, front + faceDir * 0.03, 0.9, 2.0, 0.05);
+    box(colorMat("#5b3a29", 0.7), cx, 1.15, front + faceDir * 0.03, 1.4, 2.3, 0.06);
+    const [signText, sub] = p.sign.split(" • ");
+    const sw = Math.min(bw * 0.75, 6);
+    box(signMat(signText, "#1F4E79", "#ffffff", sub ?? "ROOMS • A/C • HOT WATER"), cx, by + 0.55, front + faceDir * (bd + 0.02), sw, Math.min(0.85, sw / 5.3), 0.05);
+    for (const sx of [-1, 1]) {
+      const px = cx + sx * 1.5, pz = front + faceDir * 0.45;
+      batch.add(G.cyl8, colorMat("#b5562f", 0.9), [px, 0.3, pz], [0, 0, 0], [0.28, 0.6, 0.28]);
+      batch.add(G.ico, M.leaf2, [px, 0.95, pz], [0, rnd() * 3, 0], [0.42, 0.55, 0.42]);
+      collide(px, pz, 0.6, 0.6, 1.1);
+    }
+    if (!savanna) acUnits(cx, cz, w, depth, H, faceDir);
+    collide(cx, cz, w, depth, H + 1);
+  }
+
+  function safari4x4(x: number, z: number, fd: number) {
+    const body = colorMat(savanna ? "#d8cfb8" : "#e9e7e1", 0.5, 0.2);
+    box(body, x, 0.95, z, 1.85, 0.9, 4.4);
+    box(body, x, 1.75, z - fd * 0.35, 1.75, 0.75, 2.9);
+    box(M.glass, x, 1.78, z + fd * 1.11, 1.6, 0.55, 0.04);
+    for (const sx of [-1, 1]) box(M.glass, x + sx * 0.88, 1.78, z - fd * 0.35, 0.02, 0.5, 2.6);
+    box(M.darkMetal, x, 2.2, z - fd * 0.35, 1.7, 0.08, 2.7);
+    box(colorMat("#3a3a3a", 0.6), x, 2.35, z - fd * 0.6, 1.3, 0.25, 1.2); // luggage
+    box(M.darkMetal, x, 0.8, z + fd * 2.25, 1.9, 0.5, 0.12);
+    batch.add(G.cyl, M.black, [x, 1.15, z - fd * 2.3], [Math.PI / 2, 0, 0], [0.38, 0.25, 0.38]);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) batch.add(G.cyl, M.black, [x + sx * 0.88, 0.4, z + sz * 1.4], [0, 0, Math.PI / 2], [0.4, 0.3, 0.4]);
+    collide(x, z, 2, 4.7, 2.4);
+  }
+  function pragya(x: number, z: number, fd: number) {
+    const c = colorMat(pick(["#C8452C", "#2E6FAE", "#F2B705", "#1F7A4D"]), 0.45, 0.2);
+    box(c, x, 1.05, z + fd * 0.95, 1.1, 1.0, 0.9);
+    box(M.glass, x, 1.35, z + fd * 1.41, 0.95, 0.45, 0.03);
+    box(M.darkMetal, x, 1.9, z + fd * 0.1, 1.25, 0.06, 2.6);
+    for (const [sx, sz] of [[-1, -1], [1, -1], [-1, 0.3], [1, 0.3]]) box(M.darkMetal, x + sx * 0.58, 1.25, z + fd * sz, 0.05, 1.3, 0.05);
+    box(colorMat("#2b2b2b", 0.8), x, 0.7, z - fd * 0.4, 1.15, 0.2, 1.4);
+    box(c, x, 0.6, z - fd * 0.4, 1.2, 0.1, 1.5);
+    batch.add(G.cyl, M.black, [x, 0.3, z + fd * 1.3], [0, 0, Math.PI / 2], [0.3, 0.14, 0.3]);
+    for (const sx of [-1, 1]) batch.add(G.cyl, M.black, [x + sx * 0.6, 0.3, z - fd * 0.8], [0, 0, Math.PI / 2], [0.3, 0.14, 0.3]);
+    collide(x, z, 1.4, 2.9, 1.9);
+  }
+  function motorbike(x: number, z: number, ry: number) {
+    const c = colorMat(pick(["#b0161e", "#1d1d1f", "#2E6FAE", "#c9c9c9"]), 0.4, 0.4);
+    const cs = Math.cos(ry), sn = Math.sin(ry);
+    const at = (along: number): [number, number] => [x + cs * along, z - sn * along];
+    for (const a of [-0.65, 0.65]) {
+      const [wx, wz] = at(a);
+      batch.addMatrix(G.cyl, M.black, new THREE.Matrix4().makeTranslation(wx, 0.32, wz).multiply(new THREE.Matrix4().makeRotationY(ry)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2)).multiply(new THREE.Matrix4().makeScale(0.31, 0.1, 0.31)));
+    }
+    const [bx, bz] = at(0);
+    batch.add(G.box, c, [bx, 0.62, bz], [0, ry, 0], [1.0, 0.3, 0.28]);
+    batch.add(G.box, M.black, [at(-0.2)[0], 0.82, at(-0.2)[1]], [0, ry, 0], [0.6, 0.1, 0.26]);
+    const [hx, hz] = at(0.55);
+    batch.add(G.box, M.darkMetal, [hx, 1.0, hz], [0, ry, 0], [0.06, 0.06, 0.7]);
+    batch.add(G.box, M.darkMetal, [hx, 0.7, hz], [0, ry, 0.35], [0.05, 0.6, 0.05]);
+    collide(x, z, 1.2, 1.2, 1.1);
+  }
+  /** Day-trip desk: a kiosk, a signboard of destinations and the trip vehicle. */
+  function tourDesk(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const kw = Math.min(3.6, w * 0.45), kd = 2.8, kh = Math.min(Math.max(2.8, h - 0.4), 3.2);
+    const kz = front - faceDir * (kd / 2 + 0.3);
+    const km = savanna ? mudMat(p.color) : std({ map: T.corrugated(false), color: p.color, roughness: 0.6, metalness: 0.3 });
+    box(km, cx, kh / 2, kz, kw, kh, kd);
+    box(M.roofRust, cx, kh + 0.05, kz + faceDir * 0.35, kw + 0.6, 0.08, kd + 1.1);
+    box(colorMat("#1a1714", 0.9), cx, 1.4, kz + faceDir * (kd / 2 + 0.01), kw - 0.8, 1.0, 0.04);
+    box(M.wood, cx, 0.95, kz + faceDir * (kd / 2 + 0.2), kw - 0.6, 0.06, 0.4);
+    const [signText, sub] = p.sign.split(" • ");
+    box(signMat(signText, "#1F7A4D", "#ffffff", sub ?? "DAY TRIPS • SAFARIS • FESTIVALS"), cx, kh + 0.5, kz + faceDir * (kd / 2 + 0.1), kw + 0.6, Math.min(0.8, (kw + 0.6) / 5.3), 0.06);
+    collide(cx, kz, kw, kd, kh + 0.8);
+    if (w >= 7.5) {
+      // Destination board on posts.
+      const sx = cx - w / 2 + 1.1, sz = front - faceDir * 0.7;
+      box(signMat("DAY TRIPS", "#F2B705", "#111111", savanna ? "SAFARI • MOSQUES • CROCODILES" : "WATERFALLS • MONKEYS • FORESTS"), sx, 2.1, sz, 1.9, 0.9, 0.06);
+      for (const k of [-1, 1]) box(M.wood, sx + k * 0.8, 1.2, sz - faceDir * 0.05, 0.1, 2.4, 0.1);
+      collide(sx, sz, 2, 0.4, 2.6);
+      const vx = cx + w / 2 - 1.25;
+      if (savanna || depth >= 6) safari4x4(vx, front - faceDir * 2.6, faceDir);
+      else pragya(vx, front - faceDir * 1.8, faceDir);
+    }
+  }
+
+  /** Woven mat on the ground with calabashes and baskets of goods; optional grass-mat shade. */
+  function matStall(x: number, z: number, shadeRoof: boolean, y0 = 0.03) {
+    batch.add(G.plane, M.mat, [x, y0 + 0.01, z], [-Math.PI / 2, 0, 0], [1.9, 1.3, 1]);
+    const goods = ["#f3ead8", "#7a4a2b", "#c0392b", "#e2c25a", "#3c6e2f", "#2b2b2b"];
+    for (let i = 0; i < 4; i++) {
+      const gx = x - 0.6 + (i % 2) * 0.55 + (i > 1 ? 0.3 : 0), gz = z - 0.3 + (i > 1 ? 0.55 : 0);
+      batch.add(G.sphere, M.calabash, [gx, y0 + 0.07, gz], [0, 0, 0], [0.28, 0.14, 0.28]);
+      batch.add(G.sphere, colorMat(pick(goods), 0.8), [gx, y0 + 0.14, gz], [0, 0, 0], [0.22, 0.08, 0.22]);
+    }
+    const basket = colorMat("#b8955a", 0.95);
+    batch.add(G.cyl8, basket, [x + 0.65, y0 + 0.18, z - 0.25], [0, 0, 0], [0.24, 0.36, 0.24]);
+    batch.add(G.cyl8, colorMat(pick(["#c0392b", "#1F7A4D", "#2E6FAE"]), 0.9), [x + 0.65, y0 + 0.38, z - 0.25], [0, 0, 0], [0.26, 0.05, 0.26]);
+    box(M.wood, x + 0.65, y0 + 0.15, z + 0.4, 0.4, 0.3, 0.3); // stool
+    if (shadeRoof) {
+      for (const [dx, dz] of [[-1, -0.8], [1, -0.8], [-1, 0.8], [1, 0.8]]) batch.add(G.cyl8, M.wood, [x + dx, y0 + 1.05, z + dz], [0, 0, 0], [0.04, 2.1, 0.04]);
+      batch.add(G.box, M.mat, [x, y0 + 2.15, z], [0.06, 0, 0.04], [2.3, 0.05, 1.9]);
+    }
+    stalls.push(new THREE.Vector3(x, 0, z + (z > 0 ? -1.1 : 1.1)));
+    if (!soundSpots.some((sp) => sp.kind === "market" && Math.hypot(sp.x - x, sp.z - z) < 18)) marketNoise(x, z, 0.7);
+    collide(x, z, 2.1, 1.7, shadeRoof ? 2.2 : 0.5);
+  }
+  /** Open market sheds under rusty zinc, packed with tables (and mats up north). */
+  function openMarket(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const rows = depth >= 12 ? 2 : 1;
+    const shedH = 3.3;
+    const shedD = (depth - 2.2) / rows - 0.8;
+    for (let r = 0; r < rows; r++) {
+      const sz = front - faceDir * (1.6 + shedD / 2 + r * (shedD + 0.8));
+      for (let px = cx - w / 2 + 0.3; px <= cx + w / 2 - 0.2; px += 3) {
+        for (const e of [-1, 1]) box(M.wood, px, shedH / 2, sz + e * (shedD / 2 - 0.1), 0.15, shedH, 0.15);
+      }
+      batch.add(G.box, M.roofRust, [cx, shedH + 0.15, sz], [faceDir * 0.08, 0, 0], [w + 0.4, 0.06, shedD + 0.9]);
+      for (let tx = cx - w / 2 + 1.4; tx < cx + w / 2 - 1; tx += 2.6) {
+        for (const e of [-1, 1]) {
+          const tz = sz + e * Math.min(1.25, shedD / 4);
+          if (savanna && rnd() < 0.5) matStall(tx, tz, false);
+          else stall(tx, tz, false);
+        }
+      }
+      collide(cx, sz, w, shedD, shedH + 0.3);
+    }
+    const wm = savanna ? mudMat(p.color) : M.blocks;
+    box(wm, cx, 0.9, cz - faceDir * (depth / 2 - 0.15), w, 1.8, 0.3);
+    collide(cx, cz - faceDir * (depth / 2 - 0.15), w, 0.3, 1.8);
+    const [signText, sub] = p.sign.split(" • ");
+    const sw = Math.min(w * 0.5, 8);
+    box(signMat(signText, savanna ? "#8C5A3C" : "#C8452C", "#fff6e0", sub), cx, 4.3, front - faceDir * 0.2, sw, Math.min(1.1, sw / 5.3), 0.08);
+    for (const sx of [-1, 1]) {
+      box(M.darkMetal, cx + sx * (sw / 2 - 0.2), 2.2, front - faceDir * 0.25, 0.12, 4.4, 0.12);
+      collide(cx + sx * (sw / 2 - 0.2), front - faceDir * 0.25, 0.3, 0.3, 4.4);
+    }
+    // Sacks and basins at the front, and the plastic chairs of the food sellers.
+    for (const sx of [-1, 1]) {
+      const bx = cx + sx * (w / 2 - 1.6);
+      for (let k = 0; k < 3; k++) batch.add(G.cyl8, colorMat(pick(["#efe7d6", "#d9cfb6", "#b8955a"]), 1), [bx + k * 0.55 - 0.55, 0.4, front - faceDir * 0.6], [0, rnd(), 0], [0.26, 0.8, 0.22]);
+      collide(bx, front - faceDir * 0.6, 1.9, 0.6, 0.85);
+    }
+  }
+
+  /** Round mud hut with a conical thatch roof. */
+  function hut(x: number, z: number, r: number, color: string, side: number) {
+    const wallH = 2.1 + rnd() * 0.3;
+    batch.add(G.cyl, mudMat(color), [x, wallH / 2, z], [0, 0, 0], [r, wallH, r]);
+    if (rnd() < 0.4) {
+      // Painted band, Sirigu style.
+      batch.add(G.cyl, colorMat("#2a1f1a", 0.9), [x, 0.35, z], [0, 0, 0], [r + 0.02, 0.7, r + 0.02]);
+      batch.add(G.cyl, colorMat("#efe7da", 0.9), [x, 0.74, z], [0, 0, 0], [r + 0.025, 0.08, r + 0.025]);
+      batch.add(G.cyl, colorMat("#9a3a22", 0.9), [x, 0.86, z], [0, 0, 0], [r + 0.02, 0.08, r + 0.02]);
+    }
+    box(colorMat("#2a1d14", 0.9), x, 0.8, z - side * (r - 0.02), 0.75, 1.55, 0.12);
+    const rh = 1.5 + r * 0.35;
+    batch.add(HUT_ROOF, M.thatch, [x, wallH + rh / 2 - 0.15, z], [0, rnd() * 3, 0], [r + 0.45, rh, r + 0.45]);
+    batch.add(G.cone, colorMat("#6b5534", 1), [x, wallH + rh - 0.05, z], [0, 0, 0], [0.13, 0.4, 0.13]);
+    collide(x, z, r * 2, r * 2, wallH + rh);
+  }
+  function granary(x: number, z: number, color: string) {
+    for (const [dx, dz] of [[-0.4, -0.3], [0.4, -0.3], [0, 0.45]]) box(colorMat("#7a6a5a", 1), x + dx, 0.2, z + dz, 0.35, 0.4, 0.35);
+    batch.add(G.cyl, mudMat(color), [x, 1.1, z], [0, 0, 0], [0.75, 1.4, 0.75]);
+    batch.add(HUT_ROOF, M.thatch, [x, 2.15, z], [0, 0, 0], [1.0, 0.9, 1.0]);
+    collide(x, z, 1.6, 1.6, 2.6);
+  }
+  /** A family compound: low mud walls around round huts, a granary and a flat-roofed room. */
+  function compound(x: number, side: number, w: number, zFront = side * (BUILD_LINE + 0.4), cd = 10 + rnd() * 4) {
+    const color = pick(d.palette.walls);
+    const m = mudMat(color);
+    const z0 = zFront, z1 = zFront + side * cd;
+    const wh = 1.5 + rnd() * 0.3;
+    const x0 = x - w / 2 + 0.4, x1 = x + w / 2 - 0.4;
+    const gate = x + (rnd() - 0.5) * Math.max(0, w - 6);
+    const seg = (a: number, b: number, zz: number) => {
+      if (b - a < 0.2) return;
+      box(m, (a + b) / 2, wh / 2, zz, b - a, wh, 0.3);
+      colliders.push({ minX: a, maxX: b, minZ: zz - 0.18, maxZ: zz + 0.18, h: wh });
+    };
+    seg(x0, gate - 0.9, z0);
+    seg(gate + 0.9, x1, z0);
+    seg(x0, x1, z1);
+    for (const xx of [x0, x1]) {
+      box(m, xx, wh / 2, (z0 + z1) / 2, 0.3, wh, cd);
+      colliders.push({ minX: xx - 0.18, maxX: xx + 0.18, minZ: Math.min(z0, z1), maxZ: Math.max(z0, z1), h: wh });
+    }
+    // Flat-roofed room along the back wall.
+    const rw = Math.min(w * 0.5, 6), rz = z1 - side * 1.8;
+    const rx = x + (rnd() < 0.5 ? -1 : 1) * (w / 2 - rw / 2 - 0.6);
+    batch.add(facadeBox(rw, 2.8, 3), facadeMat(color, "small"), [rx, 1.4, rz]);
+    mudParapet(rx, rz, rw, 3, 2.8, color);
+    collide(rx, rz, rw, 3, 3.4);
+    // Huts in front of it.
+    const n = Math.max(1, Math.floor((w - 2) / 4.6));
+    for (let i = 0; i < n; i++) {
+      const hx = x0 + (x1 - x0) * ((i + 0.5) / n) + (rnd() - 0.5) * 0.6;
+      const hz = z0 + side * (2.6 + rnd() * Math.max(0, cd - 8.2));
+      if (Math.abs(hx - gate) < 2.2 && Math.abs(hz - z0) < 3) continue;
+      hut(hx, hz, 1.5 + rnd() * 0.5, pick(d.palette.walls), side);
+    }
+    if (rnd() < 0.6) granary(rx - Math.sign(rx - x) * (rw / 2 + 1.4), rz, color);
+    else shea(x0 + 1.2, z1 - side * 1.2, 0.8);
+  }
+
+  // Trees of the north and the middle belt.
+  const up = new THREE.Vector3(0, 1, 0);
+  function limb(m: THREE.Material, from: THREE.Vector3, dir: THREE.Vector3, len: number, r: number, geo: THREE.BufferGeometry = G.cyl8) {
+    const q = new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize());
+    const pos = from.clone().addScaledVector(dir.clone().normalize(), len / 2);
+    batch.addMatrix(geo, m, new THREE.Matrix4().compose(pos, q, new THREE.Vector3(r, len, r)));
+    return from.clone().addScaledVector(dir.clone().normalize(), len);
+  }
+  function baobab(x: number, z: number, s = 1) {
+    const th = (4.6 + rnd() * 1.4) * s;
+    batch.add(BAOBAB_TRUNK, M.baobab, [x, th / 2, z], [0, rnd() * 3, 0], [1.35 * s, th, 1.35 * s]);
+    const n = 6 + Math.floor(rnd() * 3);
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + rnd() * 0.5, tilt = 0.6 + rnd() * 0.5;
+      const dir = new THREE.Vector3(Math.sin(tilt) * Math.cos(a), Math.cos(tilt), Math.sin(tilt) * Math.sin(a));
+      const end = limb(M.baobab, new THREE.Vector3(x, th - 0.4 * s, z), dir, (2.2 + rnd() * 1.6) * s, 0.24 * s);
+      // A twig or two and a thin crown: the dry-season look.
+      const end2 = limb(M.baobab, end, new THREE.Vector3(dir.x, dir.y + 0.8, dir.z), 1.1 * s, 0.09 * s);
+      if (rnd() < 0.65) batch.add(G.ico, M.savLeaf, [end2.x, end2.y + 0.2, end2.z], [rnd(), rnd(), rnd()], [0.9 * s, 0.5 * s, 0.9 * s]);
+    }
+    collide(x, z, 2.5 * s, 2.5 * s, th);
+  }
+  function shea(x: number, z: number, s = 1) {
+    const th = (2.2 + rnd() * 0.6) * s;
+    const top = limb(colorMat("#3e3128", 1), new THREE.Vector3(x, 0, z), new THREE.Vector3((rnd() - 0.5) * 0.2, 1, (rnd() - 0.5) * 0.2), th, 0.2 * s);
+    for (let i = 0; i < 3; i++) {
+      const a = rnd() * Math.PI * 2;
+      const end = limb(colorMat("#3e3128", 1), top, new THREE.Vector3(Math.cos(a), 1.1, Math.sin(a)), 1.4 * s, 0.1 * s);
+      batch.add(G.ico, i % 2 ? M.darkLeaf : M.savLeaf, [end.x, end.y + 0.3 * s, end.z], [rnd(), rnd(), rnd()], [1.4 * s, 0.95 * s, 1.4 * s]);
+    }
+    batch.add(G.ico, M.darkLeaf, [top.x, top.y + 1.3 * s, top.z], [rnd(), rnd(), rnd()], [1.3 * s, 0.9 * s, 1.3 * s]);
+    collide(x, z, 0.5, 0.5, th + 2);
+  }
+  function mango(x: number, z: number, s = 1) {
+    batch.add(G.cyl8, M.trunk, [x, 1.1 * s, z], [0, 0, (rnd() - 0.5) * 0.1], [0.26 * s, 2.2 * s, 0.26 * s]);
+    for (let i = 0; i < 7; i++) {
+      const a = rnd() * Math.PI * 2, r = (0.6 + rnd() * 1.3) * s;
+      batch.add(G.ico, i % 3 ? M.darkLeaf : M.leaf, [x + Math.cos(a) * r, (3.1 + rnd() * 1.4) * s, z + Math.sin(a) * r], [rnd(), rnd(), rnd()], [1.9 * s, 1.5 * s, 1.9 * s]);
+    }
+    collide(x, z, 0.5, 0.5, 5 * s);
+  }
+  function plantain(x: number, z: number) {
+    const n = 2 + Math.floor(rnd() * 2);
+    for (let k = 0; k < n; k++) {
+      const px = x + (rnd() - 0.5) * 1.2, pz = z + (rnd() - 0.5) * 1.2;
+      const sh = 2 + rnd() * 1.2;
+      batch.add(G.cyl8, colorMat("#6d7a3c", 0.9), [px, sh / 2, pz], [0, 0, 0], [0.12, sh, 0.12]);
+      const m = new THREE.Matrix4();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + rnd();
+        m.makeTranslation(px, sh - 0.1, pz)
+          .multiply(new THREE.Matrix4().makeRotationY(a))
+          .multiply(new THREE.Matrix4().makeRotationX(0.35 + rnd() * 0.6))
+          .multiply(new THREE.Matrix4().makeScale(0.8, 1.7 + rnd() * 0.5, 1));
+        batch.addMatrix(FROND, i % 2 ? M.plantainLeaf : M.leaf2, m);
+      }
+      if (rnd() < 0.4) batch.add(G.sphere, colorMat("#5b7f2a", 0.8), [px + 0.2, sh - 0.6, pz], [0, 0, 0], [0.22, 0.38, 0.22]);
+    }
+    collide(x, z, 1.2, 1.2, 3);
+  }
+  function tuft(x: number, z: number, y0 = 0) {
+    for (let k = 0; k < 3; k++) batch.add(G.cone, M.dryGrass, [x + (rnd() - 0.5) * 0.5, y0 + 0.25, z + (rnd() - 0.5) * 0.5], [(rnd() - 0.5) * 0.4, 0, (rnd() - 0.5) * 0.4], [0.16, 0.5 + rnd() * 0.35, 0.16]);
+  }
+
+  /** Savanna street frontage: single-storey render houses and shops, and compounds of huts. */
+  function savannaFiller(x: number, side: number, w: number) {
+    if (w >= 9 && rnd() < 0.3) return compound(x, side, w);
+    const depth = 7 + rnd() * 5;
+    const storeys = rnd() < 0.85 ? 1 : 2;
+    const h = storeys === 1 ? 3.1 + rnd() * 0.4 : 6.2;
+    const cz = side * (BUILD_LINE + depth / 2), front = cz - side * (depth / 2);
+    const color = pick(d.palette.walls);
+    const ww = w - 0.6;
+    batch.add(facadeBox(ww, h, depth), facadeMat(color, "small"), [x, h / 2, cz]);
+    box(mudMat(shade(color, 0.68)), x, 0.4, front - side * 0.03, ww + 0.04, 0.8, 0.04);
+    if (rnd() < 0.65) mudParapet(x, cz, ww, depth, h, color);
+    else roofPitched(x, cz, ww, depth, h, true, 0.1, mudMat(color));
+    if (rnd() < 0.2) tank(x + (rnd() - 0.5) * (ww - 3), cz + side * depth / 4, h + 0.3);
+    if (rnd() < 0.55) {
+      // A little shop: open doorway or shutter, a hand-painted board and a shade.
+      const uw = Math.min(ww - 1.5, 5);
+      const ux = x + (rnd() - 0.5) * (ww - uw - 1);
+      const open = rnd() < 0.7;
+      box(open ? colorMat("#1a1714", 0.9) : M.shutter, ux, 1.15, front - side * 0.02, uw - 0.6, 2.3, 0.05);
+      const [bg, fg] = pick(SIGN_COLORS);
+      box(signMat(pick(SAV_SIGNS), bg, fg, `0${Math.floor(20 + rnd() * 39)} ${Math.floor(100 + rnd() * 899)} ${Math.floor(1000 + rnd() * 8999)}`), ux, Math.min(h - 0.45, 2.75), front - side * 0.06, uw, Math.min(0.75, uw / 5.3), 0.06);
+      if (rnd() < 0.5) {
+        batch.add(G.box, M.mat, [ux, 2.4, front - side * 0.9], [side * 0.12, 0, 0], [uw + 0.6, 0.05, 1.8]);
+        for (const k of [-1, 1]) batch.add(G.cyl8, M.wood, [ux + k * (uw / 2), 1.15, front - side * 1.7], [0, 0, 0], [0.04, 2.3, 0.04]);
+        collide(ux, front - side * 1.7, uw + 0.2, 0.2, 2.3);
+      } else box(M.roofRust, ux, 2.35, front - side * 0.6, uw, 0.05, 1.1);
+      if (open && rnd() < 0.25) music(ux, front, (["highlife", "afrobeats", "afrobeats"] as Genre[])[Math.floor(rnd() * 3)], 0.5, [9, 21]);
+    } else {
+      box(colorMat(pick(["#2f6f62", "#3b5d8c", "#6b3a2a"]), 0.6, 0.3), x + (rnd() - 0.5) * (ww - 3), 1.05, front - side * 0.03, 1.0, 2.1, 0.05);
+      const bx = x + (rnd() - 0.5) * (ww - 3);
+      box(M.wood, bx, 0.45, front - side * 0.45, 2, 0.08, 0.38);
+      collide(bx, front - side * 0.45, 2.1, 0.45, 0.5);
+    }
+    if (rnd() < 0.35) motorbike(x + (rnd() - 0.5) * (ww - 2), front - side * 1.2, rnd() * 0.5 - 0.25);
+    collide(x, cz, ww, depth, h + 0.6);
+  }
+
+  /** The eternal unfinished house: bare blocks, columns and rebar reaching for a second floor. */
+  function unfinished(x: number, side: number, ww: number, depth: number) {
+    const cz = side * (BUILD_LINE + depth / 2), front = cz - side * (depth / 2);
+    const h1 = 3;
+    const upper = rnd() < 0.6;
+    batch.add(facadeBox(ww, h1, depth, 3), M.blocks, [x, h1 / 2, cz]);
+    for (let k = -1; k <= 1; k++) box(colorMat("#1c1a18", 1), x + k * ww * 0.3, k === 0 ? 1.1 : 1.6, front - side * 0.02, k === 0 ? 1.1 : 1.2, k === 0 ? 2.2 : 1.1, 0.04);
+    box(M.concrete, x, h1 + 0.12, cz, ww + 0.1, 0.25, depth + 0.1);
+    const top = upper ? h1 + 3.25 : h1 + 0.25;
+    for (const cxx of [x - ww / 2 + 0.2, x, x + ww / 2 - 0.2]) {
+      for (const czz of [front - side * 0.2, cz + side * (depth / 2 - 0.2)]) {
+        if (upper) box(M.concrete, cxx, h1 + 0.25 + 1.5, czz, 0.3, 3, 0.3);
+        for (const [dx, dz] of [[-0.08, -0.08], [0.08, -0.08], [-0.08, 0.08], [0.08, 0.08]]) box(M.rebar, cxx + dx, top + 0.55, czz + dz, 0.025, 1.1, 0.025);
+      }
+    }
+    if (upper) {
+      box(M.blocks, x - ww / 4, h1 + 0.25 + 0.6, cz + side * (depth / 2 - 0.1), ww / 2, 1.2, 0.2);
+      box(M.concrete, x, h1 + 3.25 + 0.1, front - side * 0.2, ww, 0.2, 0.3);
+    }
+    box(signMat("THIS HOUSE IS NOT FOR SALE", "#8d8a84", "#C8452C", "BEWARE OF FRAUDSTERS"), x, 2.4, front - side * 0.03, Math.min(ww - 1, 4.4), 0.7, 0.03);
+    // A stack of new blocks and a heap of sand by the wall.
+    const sx = x + ww / 2 - 1.1;
+    for (let k = 0; k < 3; k++) box(M.blocks, sx, 0.13 + k * 0.23, front - side * 0.55, 1.4, 0.22, 0.45);
+    batch.add(G.cone, std({ map: T.sand(), roughness: 1 }), [x - ww / 2 + 1.3, 0.35, front - side * 0.8], [0, 0, 0], [1, 0.7, 0.7]);
+    collide(sx, front - side * 0.55, 1.5, 0.5, 0.75);
+    collide(x - ww / 2 + 1.3, front - side * 0.8, 1.8, 1.2, 0.7);
+    collide(x, cz, ww, depth, upper ? h1 + 3.4 : h1 + 1.4);
+  }
+  /** Middle-belt town frontage: colourful 1–2 storey buildings under rusty zinc, and plenty of unfinished ones. */
+  function townFiller(x: number, side: number, w: number) {
+    const depth = 8 + rnd() * 5;
+    const ww = w - 0.6;
+    if (rnd() < 0.2) return unfinished(x, side, ww, depth);
+    const cz = side * (BUILD_LINE + depth / 2), front = cz - side * (depth / 2);
+    const storeys = rnd() < 0.55 ? 1 : 2;
+    const h = storeys * 3.1;
+    const momo = rnd() < 0.1;
+    const color = momo ? "#F2C200" : wallColor();
+    batch.add(facadeBox(ww, h, depth), facadeMat(color, "louvre"), [x, h / 2, cz]);
+    box(colorMat(shade(color, 0.6), 0.9), x, 0.45, front - side * 0.03, ww + 0.04, 0.9, 0.04);
+    if (rnd() < 0.85) roofPitched(x, cz, ww, depth, h, rnd() < 0.85, 0.3, facadeMat(color, "louvre"));
+    else {
+      parapet(x, cz, ww, depth, h);
+      tank(x + (rnd() - 0.5) * (ww - 3), cz + side * depth / 4, h);
+    }
+    if (storeys === 2 && rnd() < 0.5) {
+      // Upstairs verandah with a painted railing.
+      box(M.concrete, x, 3.1, front - side * 0.7, ww - 0.6, 0.18, 1.4);
+      box(colorMat(pick(["#f3f1ea", "#2e6fae", "#1F7A4D"]), 0.7), x, 4.0, front - side * 1.35, ww - 0.6, 0.08, 0.08);
+      for (let k = -ww / 2 + 0.5; k < ww / 2 - 0.3; k += 0.5) box(M.metal, x + k, 3.6, front - side * 1.35, 0.04, 0.8, 0.04);
+    }
+    if (momo) box(signMat("MOBILE MONEY", "#F2C200", "#1a1a1a", "CASH IN • CASH OUT • AIRTIME"), x, h - 0.7, front - side * 0.04, Math.min(ww - 1, 6), Math.min(1, (ww - 1) / 5.3), 0.03);
+    const units = ww > 10.5 ? 2 : 1;
+    for (let u = 0; u < units; u++) {
+      const ux = x - ww / 2 + ((u + 0.5) * ww) / units;
+      const uw = ww / units - 0.6;
+      const open = rnd() < 0.7;
+      if (open && rnd() < 0.3) music(ux, front, (["highlife", "gospel", "afrobeats", "afrobeats"] as Genre[])[Math.floor(rnd() * 4)], 0.7);
+      box(open ? colorMat("#1a1714", 0.9) : M.shutter, ux, 1.2, front - side * 0.02, uw - 0.4, 2.4, 0.05);
+      if (!(momo && units === 1)) {
+        const [bg, fg] = pick(SIGN_COLORS);
+        box(signMat(pick(TOWN_SIGNS), bg, fg, `0${Math.floor(20 + rnd() * 39)} ${Math.floor(100 + rnd() * 899)} ${Math.floor(1000 + rnd() * 8999)}`), ux, 2.95, front - side * 0.06, uw, Math.min(0.75, uw / 5.3), 0.06);
+      }
+      box(M.roofRust, ux, 2.6, front - side * 0.65, uw, 0.05, 1.2);
+      if (open && rnd() < 0.4) plasticSet(ux + (rnd() - 0.5) * 2, front - side * 2.2);
+    }
+    acUnits(x, cz, ww, depth, h, -side);
+    collide(x, cz, ww, depth, h + 1.6);
+  }
+
   function filler(x: number, side: number, w: number) {
     const depth = 8 + rnd() * 6;
     const style = d.style;
@@ -642,7 +1503,9 @@ export function buildDistrict(id: DistrictId): DistrictScene {
       if (style === "luxury") batch.add(tiledPlane(w - 1, 12, 6), M.lush, [x, 0.03, side * (BUILD_LINE + 6.5)], [-Math.PI / 2, 0, 0]);
       return;
     }
-    const storeysByStyle = { urban: [1, 4], market: [1, 3], corporate: [2, 6], coastal: [1, 2], suburban: [2, 2], luxury: [2, 3] }[style];
+    if (savanna) return savannaFiller(x, side, w);
+    if (town) return townFiller(x, side, w);
+    const storeysByStyle = ({ urban: [1, 4], market: [1, 3], corporate: [2, 6], coastal: [1, 2], suburban: [2, 2], luxury: [2, 3], savanna: [1, 1], town: [1, 2] } satisfies Record<DistrictStyle, [number, number]>)[style];
     const storeys = storeysByStyle[0] + Math.floor(rnd() * (storeysByStyle[1] - storeysByStyle[0] + 1));
     const h = storeys * 3;
     const cz = side * (BUILD_LINE + depth / 2);

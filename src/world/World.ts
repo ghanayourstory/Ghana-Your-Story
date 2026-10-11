@@ -247,9 +247,9 @@ export class World {
   // ---------------------------------------------------------------------------
   // Interiors
 
-  enterHome(comfort: number) {
+  enterHome(comfort: number, items: string[] = []) {
     if (this.inside || !this.player) return;
-    this.interior = buildInterior(comfort);
+    this.interior = buildInterior(comfort, items);
     this.interiorScene.add(this.interior.group);
     this.scene.remove(this.player.root);
     this.interiorScene.add(this.player.root);
