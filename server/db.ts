@@ -265,7 +265,8 @@ CREATE TABLE IF NOT EXISTS provider_state (
 `;
 
 export function migrate(db: Db) {
-  db.exec(SCHEMA);
+  // One statement at a time: lighter on small embedded SQLite builds.
+  for (const stmt of SCHEMA.split(";").map((x) => x.trim()).filter(Boolean)) db.exec(stmt);
   db.run("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)", String(SCHEMA_VERSION));
   db.run("INSERT OR IGNORE INTO provider_state (id, status, message, checked_ms) VALUES (1, 'unknown', 'Waiting for match data', 0)");
 }

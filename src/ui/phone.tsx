@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useGame } from "../store.tsx";
-import { AVATAR_COLORS, Bar, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
+import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
 import { toGameDate, formatDuration } from "../../shared/calendar.ts";
 import { BUSINESSES, DESIGNS, PLOTS, QUALITY, QUALITY_ORDER, RENTALS, TBILLS, builtValue, stagePlan, type Quality } from "../../shared/economy.ts";
 import { DISTRICTS, JOBS, PLACE_BY_ID, SERVICES, priceFor, rankPay } from "../../shared/world.ts";
@@ -215,7 +215,7 @@ function HustleApp() {
                 <div className="row" style={{ marginTop: 8 }}>
                   <button className="btn sm green" disabled={busy || b.till <= 0} onClick={() => act({ type: "biz_collect", businessId: b.id })}>Collect</button>
                   {b.upgradeCost !== null && <button className="btn sm primary" disabled={busy || !!b.upgradingUntil} onClick={() => act({ type: "biz_upgrade", businessId: b.id })}>Upgrade · {money(b.upgradeCost, true)}</button>}
-                  <button className="btn sm ghost" disabled={busy} onClick={() => confirm(`Sell your ${t.name}?`) && act({ type: "biz_sell", businessId: b.id })}>Sell</button>
+                  <ConfirmButton className="btn sm ghost" disabled={busy} ask={`Sell for ${money(Math.round(b.value * 0.85), true)}?`} onConfirm={() => act({ type: "biz_sell", businessId: b.id })}>Sell</ConfirmButton>
                 </div>
               </div>
             );
@@ -261,7 +261,7 @@ function WorkApp() {
           <div className="kv"><span>Paid</span><span>{JOBS[job.id].salaried ? "Monthly on the 28th" : "Cash, every shift"}</span></div>
           {state.money.payroll > 0 && <div className="kv"><span>Salary earned this month</span><b className="good">{money(state.money.payroll)}</b></div>}
           {job.nextRankAt && <><div className="tiny muted" style={{ marginTop: 6 }}>Promotion: {job.shifts}/{job.nextRankAt} shifts</div><Bar value={(job.shifts / job.nextRankAt) * 100} color="#7c83ff" /></>}
-          <button className="btn ghost sm" style={{ marginTop: 8 }} disabled={busy} onClick={() => confirm("Quit your job?") && act({ type: "job_quit" })}>Quit</button>
+          <div style={{ marginTop: 8 }}><ConfirmButton className="btn ghost sm" disabled={busy} ask="Quit this job?" onConfirm={() => act({ type: "job_quit" })}>Quit</ConfirmButton></div>
         </div>
       ) : <div className="notice warn">No job yet. Walk into a workplace to apply — Kaneshie Market and the trotro station take anyone.</div>}
       <h3 className="muted small" style={{ marginTop: 14 }}>Your skills</h3>
@@ -561,7 +561,7 @@ function PropertyApp({ minute }: { minute: number }) {
               <div className="tiny muted">{r.blurb}</div>
               {!visited && <div className="tiny bad">Visit {DISTRICTS[r.district].name} first</div>}
             </div>
-            <button className="btn sm primary" disabled={busy || here || !visited} onClick={() => confirm(`Move to ${r.name}? You'll pay ${money(r.rent * Math.max(1, r.deposit) * 100)} advance.`) && act({ type: "rent_move", rentalId: r.id })}>{here ? "Home" : "Move"}</button>
+            {here ? <span className="pill green">Home</span> : <ConfirmButton className="btn sm primary" disabled={busy || !visited} ask={`Pay ${money(r.rent * Math.max(1, r.deposit) * 100, true)}?`} onConfirm={() => act({ type: "rent_move", rentalId: r.id })}>Move</ConfirmButton>}
           </div>
         );
       })}
@@ -697,7 +697,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
         <div className="tiny muted">{backend.mode === "server" ? "Your progress is saved on the game server after every action." : "Offline demo: your progress is saved in this browser. The full game uses an authoritative server."}</div>
         <div className="kv"><span>Character</span><span>{state.player.name}</span></div>
         <div className="kv"><span>Day</span><span>{state.time.day + 1}</span></div>
-        <button className="btn ghost sm" onClick={() => confirm("Start a brand-new life? This browser forgets the current character.") && logout()}>New character</button>
+        <ConfirmButton className="btn ghost sm" ask="Forget this character?" onConfirm={logout}>New character</ConfirmButton>
       </div>
       {state.devTools && (
         <div className="card col" style={{ marginTop: 10 }}>

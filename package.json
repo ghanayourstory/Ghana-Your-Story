@@ -12,6 +12,7 @@
     "dev:server": "node --disable-warning=ExperimentalWarning server/index.ts",
     "dev:client": "vite",
     "build": "vite build",
+    "build:demo": "vite build --mode demo && node scripts/make-artifact.mjs",
     "start": "NODE_ENV=production node --disable-warning=ExperimentalWarning server/index.ts",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.client.json"

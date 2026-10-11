@@ -55,34 +55,25 @@ export function httpBackend(): Backend {
   };
 }
 
-export function workerBackend(): Backend {
-  const worker = new Worker(new URL("./offline.worker.ts", import.meta.url), { type: "module" });
-  let seq = 0;
-  const pending = new Map<number, (v: { status: number; json: unknown }) => void>();
-  worker.onmessage = (e: MessageEvent<{ id: number; status: number; json: unknown }>) => {
-    pending.get(e.data.id)?.(e.data);
-    pending.delete(e.data.id);
-  };
+export function offlineBackend(): Backend {
+  const engine = import("./offline-engine.ts");
   return {
     mode: "offline",
-    request(method, path, body, idemKey) {
-      const id = ++seq;
-      return new Promise((resolve) => {
-        pending.set(id, resolve as (v: { status: number; json: unknown }) => void);
-        worker.postMessage({ id, method, path, body: body ?? null, token: getToken(), idemKey: idemKey ?? null });
-      });
+    async request(method, path, body, idemKey) {
+      const { offlineRequest } = await engine;
+      return offlineRequest({ method, path, body: body ?? null, token: getToken(), idemKey: idemKey ?? null }) as Promise<{ status: number; json: never }>;
     },
   };
 }
 
 /** Prefer the real server; fall back to the offline engine when there isn't one. */
 export async function pickBackend(): Promise<Backend> {
-  if (import.meta.env.VITE_OFFLINE === "1") return workerBackend();
+  if (import.meta.env.VITE_OFFLINE === "1") return offlineBackend();
   try {
     const res = await fetch("/api/health", { signal: AbortSignal.timeout(2500) });
     if (res.ok && (await res.json()).ok) return httpBackend();
   } catch {
     /* no server */
   }
-  return workerBackend();
+  return offlineBackend();
 }

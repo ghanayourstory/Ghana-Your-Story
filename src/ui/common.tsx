@@ -123,3 +123,18 @@ export const AVATAR_COLORS: Record<string, string> = {
 export function initials(name: string) {
   return name.replace(/“.*”\s*/, "").replace(/^(Auntie|Mr\.|Dr\.|Uncle)\s+/, "").split(" ").map((p) => p[0]).slice(0, 2).join("");
 }
+
+/** Two-tap confirmation built into the button (browser confirm() dialogs aren't available everywhere). */
+export function ConfirmButton({ className, disabled, onConfirm, children, ask }: { className?: string; disabled?: boolean; onConfirm: () => void; children: ReactNode; ask: string }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const t = setTimeout(() => setArmed(false), 4000);
+    return () => clearTimeout(t);
+  }, [armed]);
+  return (
+    <button className={`${className ?? "btn sm"} ${armed ? "danger" : ""}`} disabled={disabled} title={ask} onClick={() => (armed ? (setArmed(false), onConfirm()) : setArmed(true))}>
+      {armed ? `${ask} Tap again` : children}
+    </button>
+  );
+}
