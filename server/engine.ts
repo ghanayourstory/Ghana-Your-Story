@@ -950,7 +950,8 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (q.minutes > 240) requireAwake(p, 20, "make that journey");
   const fare = minor(q.fare);
   const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}`, mode === "flight");
-  advance(ctx, p, q.minutes, fb, { quiet: true });
+  // On long journeys you doze in your seat (unless you're the one driving).
+  advance(ctx, p, q.minutes, fb, { quiet: true, sleeping: q.minutes > 240 && mode !== "car" });
   const from = p.district;
   p.district = arrivalDistrict(toCity, mode);
   p.pos_x = -58;

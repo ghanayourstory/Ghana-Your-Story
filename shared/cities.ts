@@ -86,6 +86,6 @@ export function intercityQuote(from: CityId, to: CityId, mode: IntercityMode) {
   const km = mode === "flight" ? Math.round(haversineKm(TOWN_BY_ID[from].at, TOWN_BY_ID[to].at)) : route.km;
   const minutes = Math.round((km / m.speedKmh) * 60) + m.overhead;
   const fare = Math.round(m.base + m.perKm * km);
-  const energy = mode === "flight" ? -8 : -Math.min(45, Math.round(6 + km / 15));
+  const energy = mode === "flight" ? -8 : mode === "car" ? -Math.min(45, Math.round(6 + km / 15)) : -Math.min(20, Math.round(4 + km / 40));
   return { km, minutes, fare, energy, route };
 }
