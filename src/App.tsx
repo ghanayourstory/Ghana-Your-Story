@@ -187,7 +187,7 @@ function Game() {
       case "npc": return setPanel({ kind: "talk", id: nearby.id });
       case "place": return setPanel({ kind: "place", id: nearby.id });
       case "stop": return setPanel({ kind: "travel", ctx: "stop" });
-      case "home": return world.enterHome(state.player.home.comfort);
+      case "home": return world.enterHome(state.player.home.comfort, state.items.map((i) => i.itemId));
       case "plot": return setPanel({ kind: "phone", app: "property" });
       case "taxi":
         if (world.hailTaxi()) toast({ text: "✋ You wave down a taxi. It's pulling over…", changes: [], tone: "info" });

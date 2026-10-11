@@ -164,3 +164,13 @@ test("old saves gain new columns on migrate", () => {
   assert.ok(cols.includes("status") && cols.includes("condition"));
   void MINUTES_PER_DAY;
 });
+
+test("every NPC's routine points at real places in their own town", async () => {
+  const { NPCS } = await import("../shared/people.ts");
+  const { PLACE_BY_ID } = await import("../shared/world.ts");
+  for (const n of NPCS) for (const b of n.schedule) {
+    const pl = PLACE_BY_ID[b.place];
+    assert.ok(pl, `${n.id}: unknown place ${b.place}`);
+    assert.equal(DISTRICTS[pl.district].city, DISTRICTS[n.district].city, `${n.id} at ${b.place}`);
+  }
+});

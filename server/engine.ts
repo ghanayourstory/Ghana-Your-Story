@@ -571,9 +571,18 @@ function monthlyBills(ctx: Ctx, p: PlayerRow, fb: Feedback, monthName: string) {
       }
     }
   }
-  const utilities = minor(p.home_kind === "rental" ? RENTALS[p.home_ref].utilities : 150 * homeComfort(db, p));
-  const bills = utilities + minor(PHONE_DATA_MONTHLY);
-  const ub = chargeFlexible(ctx, p, bills, "bills", `${monthName} utilities & phone data`);
+  const owned = ownedItems(db, p).map((i) => i.item_id);
+  const POWER_DRAW: Record<string, number> = { split_ac: 380, fridge: 90, deep_freezer: 85, smart_tv65: 35, washing_machine: 35, standing_cooker: 0, tv32: 15, ceiling_fan: 20, standing_fan: 12 };
+  let power = owned.reduce((a, i) => a + (POWER_DRAW[i] ?? 0), 0);
+  if (owned.includes("solar_inverter")) power *= 0.35;
+  const baseUtil = p.home_kind === "rental" ? RENTALS[p.home_ref].utilities : 150 * baseComfort(db, p);
+  const utilities = minor(baseUtil * (owned.includes("solar_inverter") ? 0.6 : 1) + power);
+  // Personal vehicles: insurance, roadworthy, servicing.
+  const running = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)
+    .reduce((a, v) => a + Math.max(20, Math.round((VEHICLES[v.type]?.price ?? 0) * 0.0018)), 0);
+  if (running) items.push("vehicle costs");
+  const bills = utilities + minor(PHONE_DATA_MONTHLY) + minor(running);
+  const ub = chargeFlexible(ctx, p, bills, "bills", `${monthName} ECG, water & phone data${running ? ", vehicle insurance & servicing" : ""}`);
   total += bills - ub.unpaid;
   items.push("utilities", "data");
   if (ub.unpaid > 0) {
@@ -828,12 +837,14 @@ function actService(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if ((s.effects.energy ?? 0) < -10) requireAwake(p, Math.min(30, -(s.effects.energy ?? 0)), s.verb.toLowerCase());
   let cost = minor(priceFor(s.cost, place.district));
   if (sid === "clinic" && hasUnlock(p, "adjei_care")) cost = Math.round(cost / 2);
+  if (s.site && hasUnlock(p, "guide_friend")) cost = Math.round(cost / 2);
   const money = chargeStrict(ctx, p, cost, "spend", `${s.name} at ${place.name}`);
   advance(ctx, p, s.minutes, fb, { quiet: true, sleeping: sid === "lodge" });
   applyEffects(p, s.effects, fb, s.site ? `Day trip: ${s.name}` : s.festival ? `🎉 ${s.name}` : `${s.verb} at ${place.name}`, money);
   if (s.site && addToList(p, "discovered", `site:${s.site}`)) {
     applyEffects(p, { social: 4, reputation: 1 }, fb, `📸 First visit to ${s.name}. Added to your travel album.`);
   }
+  if (s.festival && hasUnlock(p, "dery_gyil")) applyEffects(p, { social: 8, reputation: 1 }, fb, "You joined the drummers. Dery's lessons paid off.");
   if (s.festival && addToList(p, "discovered", `fest:${s.festival}`)) {
     applyEffects(p, { social: 4, reputation: 2 }, fb, `First time at ${s.name}. You'll be telling this story for years.`);
   }
@@ -1395,6 +1406,7 @@ function actBizBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (!t) throw new GameError("bad_business", "Unknown business");
   requireVisited(p, t.district);
   if (t.requiresRep && p.reputation < t.requiresRep) throw new GameError("reputation", `The seller wants someone respected. You need ${t.requiresRep} standing.`);
+  if (t.requiresUnlock && !hasUnlock(p, t.requiresUnlock)) throw new GameError("locked", t.requiresUnlock.startsWith("cert_") ? "You need the trade certificate first. Ask at the schools and workshops." : "Not available to you yet.");
   if (ctx.db.get("SELECT 1 FROM businesses WHERE player_id = ? AND type = ?", p.id, t.id)) throw new GameError("already", "You already own one of these");
   const money = chargeStrict(ctx, p, minor(t.price), "business_buy", `Bought ${t.name}`, true);
   const r = ctx.db.run("INSERT INTO businesses (player_id, type, bought_min, last_visit_day) VALUES (?, ?, ?, ?)", p.id, t.id, p.game_min, dayOf(p.game_min));
@@ -1466,7 +1478,8 @@ function actVehicleBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (v.requiresRep && p.reputation < v.requiresRep) throw new GameError("reputation", `The dealer only sells this to established clients (${v.requiresRep} standing).`);
   const count = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM vehicles WHERE player_id = ? AND type = ?", p.id, v.id)!.n;
   if (count >= (v.workPay ? 5 : 1)) throw new GameError("already", v.workPay ? "Five is the most you can manage. Even fleet owners sleep." : "You already own one");
-  const money = chargeStrict(ctx, p, minor(v.price), "vehicle", `Bought ${v.name}`, true);
+  const discount = place.id === "tamale_motors" && hasUnlock(p, "abu_moto") ? 0.85 : 1;
+  const money = chargeStrict(ctx, p, minor(v.price * discount), "vehicle", `Bought ${v.name}${discount < 1 ? " (Alhaji's price)" : ""}`, true);
   ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, v.id, minor(v.price), p.game_min);
   const icon = v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗";
   applyEffects(p, { reputation: v.reputation, social: v.category === "luxury" ? 16 : 8 }, fb, `${icon} You rode the ${v.name} out of ${place.name}.${v.licence && !hasUnlock(p, v.licence) ? " (You'll need a licence before you can drive it.)" : ""}`, money);
@@ -1516,7 +1529,8 @@ function actShopBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const n = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM items WHERE player_id = ? AND item_id = ?", p.id, it.id)!.n;
   if (it.comfort && n >= 1 && it.slot !== "decor") throw new GameError("already", "You already have one at home.");
   if (n >= 3) throw new GameError("already", "You have plenty of those.");
-  const price = minor(priceFor(it.price, place.district));
+  const kenteDeal = place.id === "kejetia_market" && hasUnlock(p, "kente_discount") && it.slot === "craft" ? 0.8 : 1;
+  const price = minor(priceFor(it.price, place.district) * kenteDeal);
   const money = chargeStrict(ctx, p, price, "shopping", `${it.name} from ${place.name}`, price > minor(2_000));
   ctx.db.run("INSERT INTO items (player_id, item_id, price, bought_min) VALUES (?, ?, ?, ?)", p.id, it.id, price, p.game_min);
   advance(ctx, p, 30, fb, { quiet: true });

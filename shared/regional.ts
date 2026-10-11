@@ -47,6 +47,9 @@ export const REGIONAL_SERVICES: Record<string, Service> = {
   lorry_chat: S({ id: "lorry_chat", name: "Chat with drivers at the station", verb: "Chat with drivers", cost: 0, minutes: 30, effects: { social: 6 } }),
   smock_fitting: S({ id: "smock_fitting", name: "Get measured for a smock", verb: "Order a smock", cost: 450, minutes: 60, effects: { social: 6, reputation: 3, charisma: 1 }, note: "Hand-woven strips sewn into a batakari." }),
   kente_viewing: S({ id: "kente_viewing", name: "Watch the kente weavers", verb: "Watch the weavers", cost: 20, minutes: 60, effects: { social: 6, charisma: 1 } }),
+  street_football: S({ id: "street_football", name: "Gutter-to-gutter football", verb: "Play football", cost: 0, minutes: 75, effects: { fitness: 1, social: 12, energy: -16, hunger: -8 }, hours: [15, 19], note: "Two stones for goalposts, one ball, thirty players." }),
+  boxing: S({ id: "boxing", name: "Boxing training", verb: "Train", cost: 20, minutes: 90, effects: { fitness: 2, health: 3, energy: -24, hunger: -12 }, hours: [6, 19], note: "Bukom has produced world champions. The coaches don't let you forget it." }),
+  ga_kenkey: S({ id: "ga_kenkey", name: "Ga kenkey, fried fish & shito", verb: "Eat Ga kenkey", cost: 18, minutes: 20, effects: { hunger: 52, social: 3 }, hours: [7, 22] }),
   seamstress: S({ id: "seamstress", name: "Kaba & slit / shirt from the seamstress", verb: "Sew an outfit", cost: 280, minutes: 60, effects: { social: 6, reputation: 2, charisma: 1 } }),
 };
 
@@ -148,8 +151,8 @@ export interface Festival {
 }
 
 export const FESTIVALS: Festival[] = [
-  { id: "homowo", name: "Homowo", people: "Ga", months: [8], districts: ["osu", "labadi", "kaneshie"], effects: { social: 20, reputation: 2, hunger: 30 }, cost: 30, blurb: "'Hooting at hunger': kpokpoi and palm-nut soup sprinkled through the streets by the chiefs." },
-  { id: "chale_wote", name: "Chale Wote Street Art Festival", people: "Accra", months: [8], districts: ["osu"], effects: { social: 22, charisma: 1 }, cost: 20, blurb: "Jamestown's streets become a gallery, a stage and a block party." },
+  { id: "homowo", name: "Homowo", people: "Ga", months: [8], districts: ["jamestown", "labadi", "osu"], effects: { social: 20, reputation: 2, hunger: 30 }, cost: 30, blurb: "'Hooting at hunger': kpokpoi and palm-nut soup sprinkled through the streets by the chiefs." },
+  { id: "chale_wote", name: "Chale Wote Street Art Festival", people: "Accra", months: [8], districts: ["jamestown"], effects: { social: 22, charisma: 1 }, cost: 20, blurb: "Jamestown's streets become a gallery, a stage and a block party." },
   { id: "detty_december", name: "Detty December", people: "Accra", months: [12], districts: ["osu", "labadi", "east_legon"], effects: { social: 26, energy: -18, charisma: 1 }, cost: 250, blurb: "Concerts, beach raves and the whole diaspora at home." },
   { id: "fetu_afahye", name: "Fetu Afahye", people: "Oguaa (Fante)", months: [9], districts: ["cape_coast"], effects: { social: 22, reputation: 2 }, cost: 30, blurb: "Asafo companies march, the Omanhene rides in a palanquin, and Cape Coast parties for a week." },
   { id: "kundum", name: "Kundum", people: "Ahanta & Nzema", months: [8, 9, 10, 11], districts: ["takoradi"], effects: { social: 18, fitness: 1 }, cost: 20, blurb: "A harvest festival of drumming and all-night dancing to drive away evil spirits." },
@@ -258,14 +261,44 @@ function layout(t: TownSpec): Place[] {
   return out;
 }
 
-const tripsFrom = (d: string) => SITES.filter((s) => s.from.includes(d)).map((s) => `trip_${s.id}`);
-const festsIn = (d: string) => FESTIVALS.filter((f) => f.districts.includes(d)).map((f) => `fest_${f.id}`);
+export const tripsFrom = (d: string) => SITES.filter((s) => s.from.includes(d)).map((s) => `trip_${s.id}`);
+export const festsIn = (d: string) => FESTIVALS.filter((f) => f.districts.includes(d)).map((f) => `fest_${f.id}`);
 
 const station = (id: string, name: string, blurb: string): PlaceSpec => ({ id, name, kind: "transport", services: ["lorry_chat"], blurb });
 const lodge = (id: string, name: string, blurb = "Clean rooms, a ceiling fan and a mosquito net."): PlaceSpec => ({ id, name, kind: "lodge", services: ["lodge"], blurb });
 const tour = (id: string, name: string, district: string, blurb: string): PlaceSpec => ({ id, name, kind: "tour", services: [...tripsFrom(district), ...festsIn(district)], open: [6, 19], blurb });
 
 const TOWNS_SPEC: TownSpec[] = [
+  {
+    id: "nima", city: "accra", name: "Nima", tagline: "The zongo that raised half of Accra", mood: "Dense, loud, devout and generous. Kiosks, mosques, gutter football and the best waakye at dawn.",
+    style: "market", geo: { lat: 5.5833, lon: -0.1963 }, roads: { main: "Nima Highway", cross: "Mamobi Road" }, bearing: 5,
+    costOfLiving: 0.65, crowd: 1, traffic: 0.8, nightlife: 0.35, palette: "city", landmark: "Nima Market",
+    places: [
+      station("nima_station", "Nima Station", "Trotros to Circle, Accra Central and Madina."),
+      { id: "nima_market", name: "Nima Market", kind: "market", services: ["market_haggle", "koko_koose", "tubaani"], blurb: "Dried fish, kola nuts, spices, cloth and secondhand everything." },
+      { id: "nima_mosque", name: "Nima Central Mosque", kind: "mosque", services: ["mosque", "jumah"], open: [4, 22], blurb: "The call to prayer sets the rhythm of the day." },
+      { id: "zongo_waakye", name: "Hajia's Zongo Waakye", kind: "food", services: ["waakye", "tubaani", "koko_koose", "chichinga"], open: [5, 22], blurb: "Waakye in leaves, gari, spaghetti, wele and egg. Queue from 5am." },
+      { id: "nima_pitch", name: "Nima Astro Pitch", kind: "landmark", services: ["street_football"], open: [6, 21], blurb: "Future Black Stars, every afternoon." },
+      { id: "nima_barber", name: "Lion Heart Barbering", kind: "shop", services: ["haircut"], open: [8, 22], blurb: "Fades, line-ups and political arguments." },
+      { id: "mamobi_polyclinic", name: "Mamobi Polyclinic", kind: "clinic", services: ["clinic", "pharmacy"], blurb: "Crowded mornings, caring nurses." },
+      { id: "nima_tailor", name: "Zongo Tailors", kind: "shop", services: ["seamstress"], open: [8, 20], blurb: "Kaftans and jalabiyas sewn by Friday." },
+    ],
+  },
+  {
+    id: "jamestown", city: "accra", name: "Jamestown", tagline: "Old Accra, lighthouse and boxing", mood: "Ga fishing community: canoes, smoke from the fish ovens, boxing gyms and street art.",
+    style: "coastal", geo: { lat: 5.5333, lon: -0.2128 }, roads: { main: "High Street", cross: "Hansen Road" }, bearing: 80,
+    costOfLiving: 0.7, crowd: 0.85, traffic: 0.55, nightlife: 0.45, palette: "coast", landmark: "Jamestown Lighthouse",
+    places: [
+      station("jamestown_stop", "Jamestown Stop", "Trotros to Accra Central and Kaneshie."),
+      { id: "jamestown_lighthouse", name: "Jamestown Lighthouse", kind: "landmark", services: ["view", ...festsIn("jamestown")], open: [8, 18], blurb: "Climb the red-and-white tower for the best view of old Accra.", geo: { lat: 5.5325, lon: -0.212 } },
+      { id: "james_fort", name: "James Fort", kind: "landmark", services: ["view"], open: [9, 17], blurb: "British fort from 1673, later a prison. The waves still hit the walls.", geo: { lat: 5.5318, lon: -0.2105 } },
+      { id: "bukom_gym", name: "Bukom Boxing Gym", kind: "gym", services: ["boxing"], open: [6, 20], blurb: "Ring ropes, punching bags made from sacks, and champions on the walls." },
+      { id: "ga_kenkey_spot", name: "Auntie Naa's Kenkey", kind: "food", services: ["ga_kenkey", "banku", "sobolo"], open: [7, 22], blurb: "Ga kenkey, hot fried fish and pepper ground in an asanka." },
+      { id: "fish_smokers", name: "Fish Smoking Yards", kind: "market", services: ["market_haggle"], blurb: "Women smoke herrings over clay ovens all day." },
+      { id: "ga_mantse", name: "Ga Mantse Palace", kind: "landmark", services: ["view"], open: [9, 17], blurb: "Seat of the Ga paramount chief." },
+      { id: "jamestown_harbour", name: "Jamestown Fishing Harbour", kind: "market", services: ["banku", "view"], blurb: "Painted canoes, nets and the morning catch.", beach: true },
+    ],
+  },
   {
     id: "adum", city: "kumasi", name: "Adum & Kejetia", tagline: "The Garden City's beating heart", mood: "Busy, proud and loud. Kejetia's maze of stalls, kente and fufu bars.",
     style: "market", geo: { lat: 6.6935, lon: -1.6244 }, roads: { main: "Prempeh II Street", cross: "Harper Road" }, bearing: 15,
@@ -571,10 +604,11 @@ const TOWNS_SPEC: TownSpec[] = [
   },
 ];
 
+const NO_REALTOR = new Set(["jamestown"]);
 const BIG_TOWNS = new Set(["adum", "tamale", "takoradi", "sunyani", "ho", "koforidua", "techiman", "bolgatanga", "wa", "kintampo"]);
 for (const t of TOWNS_SPEC) {
   const short = t.name.split(/[ &-]/)[0];
-  t.places.push({ id: `${t.id}_realtor`, name: `${short} Land & Homes`, kind: "realtor", open: [8, 18], size: [9, 8, 5], blurb: "Plots with proper indentures, houses for rent, and a surveyor who answers his phone." });
+  if (!NO_REALTOR.has(t.id)) t.places.push({ id: `${t.id}_realtor`, name: `${short} Land & Homes`, kind: "realtor", open: [8, 18], size: [9, 8, 5], blurb: "Plots with proper indentures, houses for rent, and a surveyor who answers his phone." });
   if (BIG_TOWNS.has(t.id)) t.places.push({ id: `${t.id}_phones`, name: `${short} Phone Centre`, kind: "phone", open: [8, 21], size: [8, 7, 4], blurb: "Phones, chargers, screen guards and someone who can unlock anything." });
 }
 

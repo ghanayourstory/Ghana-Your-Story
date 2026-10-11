@@ -1,11 +1,11 @@
 import { useMemo, useState } from "react";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, EffectsPreview, Sheet, initials, money } from "./common.tsx";
-import { CITIES, CITY_IDS } from "../../shared/cities.ts";
-import { projectKm, haversineKm } from "../../shared/geo.ts";
+import { CITIES } from "../../shared/cities.ts";
+import { projectKm } from "../../shared/geo.ts";
 import { DISTRICTS, districtsIn, JOBS, PLACE_BY_ID, SERVICES, TRAVEL_MODES, isOpenAt, priceFor, rankPay, travelQuote, type DistrictId, type TravelMode } from "../../shared/world.ts";
 import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
-import { VEHICLES } from "../../shared/economy.ts";
+import { CoursesPanel, DealerPanel, HomeGoods, IntercityPanel, StorePanel, placeIsStore, serviceNote } from "./ghana.tsx";
 import { toGameDate } from "../../shared/calendar.ts";
 import type { World } from "../world/World.ts";
 
@@ -50,13 +50,17 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
         const s = SERVICES[sid];
         let cost = priceFor(s.cost, p.district);
         if (sid === "clinic" && state.player.unlocks.includes("adjei_care")) cost = Math.round(cost / 2);
-        const avail = open && (!s.hours || isOpenAt(s.hours, gd.hour));
+        const season = serviceNote(sid, gd.month + 1, gd.day);
+        const dayOk = !s.days || s.days.includes(gd.weekdayIndex);
+        const avail = open && (!s.hours || isOpenAt(s.hours, gd.hour)) && (season?.available ?? true) && dayOk;
         const rep = !s.requiresRep || state.player.reputation >= s.requiresRep;
+        const seen = s.site && state.player.discovered.includes(`site:${s.site}`);
         return (
           <div className="svc" key={sid}>
-            <div className="ic">{SVC_ICON[sid] ?? "•"}</div>
+            <div className="ic">{SVC_ICON[sid] ?? (sid.startsWith("trip_") ? "🧭" : sid.startsWith("fest_") ? "🥁" : "🍽️")}</div>
             <div className="grow">
-              <div className="bold">{s.name}</div>
+              <div className="bold">{seen ? "✅ " : ""}{s.name}</div>
+              {(season || s.note) && <div className="tiny muted">{season?.note ?? s.note}</div>}
               <div className="tiny muted">{cost ? money(cost * 100) : "Free"} · {s.minutes >= 60 ? `${s.minutes / 60}h` : `${s.minutes}m`}{s.hours ? ` · ${s.hours[0]}:00–${s.hours[1] % 24}:00` : ""}{!rep ? ` · needs ${s.requiresRep} standing` : ""}</div>
               <EffectsPreview effects={s.effects} />
             </div>
@@ -83,31 +87,17 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
         <>
           <h3>Land & homes</h3>
           <button className="btn primary block" onClick={() => onPhone("property")}>Browse plots, rentals & construction</button>
+          <button className="btn block" style={{ marginTop: 8 }} onClick={() => onPhone("farm")}>🌱 Farmland</button>
         </>
       )}
-      {p.kind === "dealer" && (
-        <>
-          <h3>On the lot</h3>
-          {Object.values(VEHICLES).map((v) => {
-            const owned = (state.vehicles as { type: string }[]).some((x) => x.type === v.id);
-            return (
-              <div className="svc" key={v.id}>
-                <div className="ic" style={{ background: v.color }}>🚙</div>
-                <div className="grow">
-                  <div className="bold">{v.name}</div>
-                  <div className="tiny muted">{money(v.price * 100)} · +{v.reputation} standing{v.requiresRep ? ` · needs ${v.requiresRep}` : ""}</div>
-                  <div className="tiny muted">{v.blurb}</div>
-                </div>
-                <button className="btn primary sm" disabled={owned || busy} onClick={() => act({ type: "vehicle_buy", vehicleId: v.id })}>{owned ? "Owned" : "Buy"}</button>
-              </div>
-            );
-          })}
-        </>
-      )}
+      {p.kind === "dealer" && <DealerPanel place={p} open={open} />}
+      {placeIsStore(p) && <StorePanel place={p} open={open} />}
+      <CoursesPanel place={p} open={open} />
       {p.kind === "transport" && (
         <>
           <h3>Rides</h3>
           <button className="btn primary block" onClick={onTravel}>🚐 Choose a destination</button>
+          <div className="tiny muted" style={{ marginTop: 6 }}>Long-distance buses to every region leave from lorry stations.</div>
         </>
       )}
 
@@ -205,13 +195,14 @@ export function TravelSheet({ context, world, onClose }: { context: "stop" | "ta
   const { state, act, busy } = useGame();
   const minute = useMinute(world);
   const gd = toGameDate(minute);
-  const hasCar = (state?.vehicles.length ?? 0) > 0;
+  const hasCar = (state?.vehicles as { status: string }[] | undefined)?.some((v) => v.status === "personal") ?? false;
   const modes = useMemo<TravelMode[]>(() => {
     const m: TravelMode[] = context === "stop" ? ["trotro", "taxi", "walk"] : context === "taxi" ? ["taxi"] : ["ride", "walk"];
     if (hasCar && context !== "taxi") m.unshift("car");
     return m;
   }, [context, hasCar]);
   const [mode, setMode] = useState<TravelMode>(modes[0]);
+  const [scope, setScope] = useState<"city" | "ghana">("city");
   if (!state) return null;
   const here = state.player.district;
   const rainy = state.time.weather === "rain" || state.time.weather === "storm";
@@ -221,6 +212,13 @@ export function TravelSheet({ context, world, onClose }: { context: "stop" | "ta
   };
   return (
     <Sheet title={context === "taxi" ? "🚕 Where to, boss?" : context === "stop" ? "🚐 Catch a ride" : "🗺️ Go somewhere"} sub={context === "phone" ? "Ride app works anywhere. Trotros and taxis: find a stop or flag one on the road." : `${DISTRICTS[here].name} · ${gd.clock}${rainy ? " · rain slows traffic" : ""}`} onClose={onClose}>
+      {context !== "taxi" && (
+        <div className="tabs" style={{ marginTop: 12 }}>
+          <button className={scope === "city" ? "on" : ""} onClick={() => setScope("city")}>Around {CITIES[DISTRICTS[here].city].name}</button>
+          <button className={scope === "ghana" ? "on" : ""} onClick={() => setScope("ghana")}>🇬🇭 Across Ghana</button>
+        </div>
+      )}
+      {scope === "ghana" ? <IntercityPanel onDone={onClose} /> : <>
       <div className="seg" style={{ marginTop: 12 }}>
         {modes.map((m) => <button key={m} className={m === mode ? "on" : ""} onClick={() => setMode(m)}>{TRAVEL_MODES[m].name}</button>)}
       </div>
@@ -243,18 +241,8 @@ export function TravelSheet({ context, world, onClose }: { context: "stop" | "ta
           </div>
         );
       })}
-      <h3>Other cities</h3>
-      {CITY_IDS.filter((c) => c !== DISTRICTS[here].city).map((c) => {
-        const city = CITIES[c];
-        const km = Math.round(haversineKm(DISTRICTS[here].geo, city.center) * 1.25);
-        return (
-          <div className="svc" key={c} style={{ opacity: 0.7 }}>
-            <div className="ic">🚌</div>
-            <div className="grow"><div className="bold">{city.name} <span className="tiny muted">· {city.region}</span></div><div className="tiny muted">{km} km by road · {city.tagline}</div></div>
-            <span className="pill">Coming soon</span>
-          </div>
-        );
-      })}
+      {districtsIn(DISTRICTS[here].city).length === 1 && <div className="notice warn" style={{ marginTop: 8 }}>This town is one street. Use “Across Ghana” to travel on.</div>}
+      </>}
     </Sheet>
   );
 }
@@ -321,12 +309,13 @@ export function HomeSheet({ onClose, world }: { onClose: () => void; world: Worl
   if (!state) return null;
   const comfort = state.player.home.comfort;
   return (
-    <Sheet title="🛏️ Your bed" sub={`Home comfort ${comfort}/7 — better homes mean better sleep.`} onClose={onClose}>
+    <Sheet title="🛏️ Your bed" sub={`Home comfort ${comfort} — better homes and furniture mean better sleep.`} onClose={onClose}>
       <div className="col" style={{ marginTop: 12 }}>
         <button className="btn primary block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 8 }); if (r.ok) onClose(); }}>Sleep 8 hours · ⚡ +{52 + comfort * 6}</button>
         <button className="btn block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 2 }); if (r.ok) onClose(); }}>Nap 2 hours · ⚡ +{14 + comfort * 2}</button>
         <button className="btn ghost block" onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
       </div>
+      <HomeGoods />
     </Sheet>
   );
 }

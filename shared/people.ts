@@ -1,6 +1,7 @@
 // The people of Sika City: personalities, goals, daily routines and how they talk.
 import { pick } from "./rng.ts";
 import type { DistrictId } from "./world.ts";
+import { REGIONAL_NPCS } from "./people-regional.ts";
 
 export type Topic = "chat" | "advice" | "compliment" | "gift" | "ask_out" | "favour";
 export type Tier = "stranger" | "acquaintance" | "friend" | "close";
@@ -530,6 +531,7 @@ export const NPCS: Npc[] = [
       memory: ["I remember when {memory}! Hahaha.", "Since {memory}, I knew you were serious."],
     },
   },
+  ...REGIONAL_NPCS,
 ];
 
 export const NPC_BY_ID: Record<string, Npc> = Object.fromEntries(NPCS.map((n) => [n.id, n]));

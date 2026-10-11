@@ -3,14 +3,16 @@ import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
 import { toGameDate, formatDuration } from "../../shared/calendar.ts";
 import { BUSINESSES, DESIGNS, PLOTS, QUALITY, QUALITY_ORDER, RENTALS, TBILLS, builtValue, stagePlan, type Quality } from "../../shared/economy.ts";
+import { CITIES } from "../../shared/cities.ts";
 import { DISTRICTS, JOBS, PLACE_BY_ID, SERVICES, priceFor, rankPay } from "../../shared/world.ts";
 import { GOALS } from "../../shared/progress.ts";
 import { NPC_BY_ID, NPCS } from "../../shared/people.ts";
 import type { World } from "../world/World.ts";
+import { FarmApp, GarageApp, GhanaApp, VibesApp } from "./ghana.tsx";
 import type { GameState } from "../../server/engine.ts";
 import type { Quality as GfxQuality } from "../world/World.ts";
 
-type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings";
+type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage";
 
 const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string }[] = [
   { id: "dream", name: "Dream", icon: "⭐", bg: "linear-gradient(160deg,#ffd34d,#f2a900)" },
@@ -24,6 +26,10 @@ const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string
   { id: "ride", name: "Ride", icon: "🚕", bg: "linear-gradient(160deg,#ffe066,#f2b705)" },
   { id: "chop", name: "Chop", icon: "🍲", bg: "linear-gradient(160deg,#ff8a5c,#d6453a)" },
   { id: "property", name: "Property", icon: "🏘️", bg: "linear-gradient(160deg,#b58cff,#6f42c1)" },
+  { id: "ghana", name: "Ghana", icon: "🇬🇭", bg: "linear-gradient(160deg,#ce1126,#fcd116 55%,#006b3f)" },
+  { id: "vibes", name: "Vibes", icon: "📸", bg: "linear-gradient(160deg,#8e2de2,#f2b705)" },
+  { id: "farm", name: "Farms", icon: "🌱", bg: "linear-gradient(160deg,#8bc34a,#2e7d32)" },
+  { id: "garage", name: "Garage", icon: "🔑", bg: "linear-gradient(160deg,#90a4ae,#37474f)" },
   { id: "settings", name: "Settings", icon: "⚙️", bg: "linear-gradient(160deg,#c7ccd3,#7d858f)" },
 ];
 
@@ -76,6 +82,10 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
             {app === "property" && <PropertyApp minute={minute} />}
             {app === "bet" && <BetApp />}
             {app === "settings" && <SettingsApp quality={quality} setQuality={setQuality} />}
+            {app === "ghana" && <><AppHead id="ghana" sub="Sixteen regions, one country" /><GhanaApp /></>}
+            {app === "vibes" && <><AppHead id="vibes" sub="Post, grow, get paid" /><VibesApp /></>}
+            {app === "farm" && <><AppHead id="farm" sub="Seasons, rain and harvests" /><FarmApp /></>}
+            {app === "garage" && <><AppHead id="garage" sub="Vehicles, licences and your things" /><GarageApp /></>}
           </div>
           <div className="phone-nav">
             <button onClick={() => (app === "home" ? onClose() : setApp("home"))}><span>‹</span>Back</button>
@@ -223,9 +233,10 @@ function HustleApp() {
         </>
       )}
       <h3 className="muted small" style={{ marginTop: 16 }}>For sale</h3>
-      {Object.values(BUSINESSES).filter((t) => !owned.has(t.id)).map((t) => {
+      {Object.values(BUSINESSES).filter((t) => !owned.has(t.id)).sort((a, b) => Number(state.player.visited.includes(b.district)) - Number(state.player.visited.includes(a.district))).map((t) => {
         const visited = state.player.visited.includes(t.district);
         const repOk = !t.requiresRep || state.player.reputation >= t.requiresRep;
+        const unlockOk = !t.requiresUnlock || state.player.unlocks.includes(t.requiresUnlock);
         return (
           <div className="list-item" key={t.id}>
             <div className="grow">
@@ -234,8 +245,9 @@ function HustleApp() {
               <div className="tiny muted">{t.blurb}</div>
               {!visited && <div className="tiny bad">Visit {DISTRICTS[t.district].name} first</div>}
               {!repOk && <div className="tiny bad">Needs {t.requiresRep} standing</div>}
+              {!unlockOk && <div className="tiny bad">Needs a trade certificate ({t.requiresUnlock?.replace("cert_", "")})</div>}
             </div>
-            <button className="btn primary sm" disabled={busy || !visited || !repOk} onClick={() => act({ type: "biz_buy", bizType: t.id })}>{money(t.price * 100, true)}</button>
+            <button className="btn primary sm" disabled={busy || !visited || !repOk || !unlockOk} onClick={() => act({ type: "biz_buy", bizType: t.id })}>{money(t.price * 100, true)}</button>
           </div>
         );
       })}
@@ -496,6 +508,7 @@ function ChopApp() {
 function PropertyApp({ minute }: { minute: number }) {
   const { state, act, busy } = useGame();
   const [tab, setTab] = useState<"mine" | "land" | "rent">("mine");
+  const [city, setCity] = useState<string>(() => (state ? DISTRICTS[state.player.district].city : "accra"));
   const [draft, setDraft] = useState<{ plotId: number; design: string; quality: Quality } | null>(null);
   if (!state) return null;
   const myPlots = state.plots;
@@ -532,7 +545,12 @@ function PropertyApp({ minute }: { minute: number }) {
           })}
         </>
       )}
-      {tab === "land" && Object.values(PLOTS).map((p) => {
+      {(tab === "land" || tab === "rent") && (
+        <select className="input" style={{ marginBottom: 8 }} value={city} onChange={(e) => setCity(e.target.value)}>
+          {[...new Set(Object.values(DISTRICTS).map((d) => d.city))].map((c) => <option key={c} value={c}>{CITIES[c]?.name ?? c}</option>)}
+        </select>
+      )}
+      {tab === "land" && Object.values(PLOTS).filter((p) => DISTRICTS[p.district].city === city).map((p) => {
         const visited = state.player.visited.includes(p.district);
         const repOk = !p.requiresRep || state.player.reputation >= p.requiresRep;
         const unlockOk = !p.requiresUnlock || state.player.unlocks.includes(p.requiresUnlock);
@@ -550,7 +568,7 @@ function PropertyApp({ minute }: { minute: number }) {
           </div>
         );
       })}
-      {tab === "rent" && Object.values(RENTALS).map((r) => {
+      {tab === "rent" && Object.values(RENTALS).filter((r) => DISTRICTS[r.district].city === city).map((r) => {
         const here = state.player.home.kind === "rental" && state.player.home.ref === r.id;
         const visited = state.player.visited.includes(r.district);
         return (

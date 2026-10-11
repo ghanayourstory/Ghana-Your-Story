@@ -169,7 +169,9 @@ export const PLACE_STOCK: Record<string, string[]> = {
   kotokuraba: ["wax_print"],
 };
 export function stockFor(placeId: string, kind: string): string[] {
-  return [...new Set([...(STORE_STOCK[kind] ?? []), ...(PLACE_STOCK[placeId] ?? [])])];
+  // "shop" covers barbers and boutiques too; only Melcom stores carry the household range.
+  const base = kind === "shop" && !placeId.includes("melcom") ? [] : (STORE_STOCK[kind] ?? []);
+  return [...new Set([...base, ...(PLACE_STOCK[placeId] ?? [])])];
 }
 
 /** Home comfort from furnishing: best item per slot, summed, worth up to +3 comfort. */

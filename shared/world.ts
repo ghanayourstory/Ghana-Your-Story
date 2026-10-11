@@ -3,7 +3,7 @@
 // Districts sit at their real coordinates and carry their real road names.
 import { haversineKm, ROAD_FACTOR, type LatLon } from "./geo.ts";
 import type { CityId } from "./cities.ts";
-import { REGIONAL_DISTRICTS, REGIONAL_JOBS, REGIONAL_PLACES, REGIONAL_SERVICES } from "./regional.ts";
+import { REGIONAL_DISTRICTS, REGIONAL_JOBS, REGIONAL_PLACES, REGIONAL_SERVICES, festsIn, tripsFrom } from "./regional.ts";
 
 /** Accra districts are listed here; regional towns are added from regional.ts. */
 export type DistrictId = string;
@@ -332,6 +332,11 @@ export const PLACES: Place[] = [
   P({ id: "valley_gate", district: "trasacco", name: "Valley Gate", kind: "transport", sign: "TRASACCO VALLEY • GATE 1", pos: [-62, 14], size: [8, 5, 4], color: "#B08D57", open: [0, 24], services: [], blurb: "Security will check your name." }),
 ];
 
+// Accra: day trips leave from the trotro stops; festivals happen at the landmarks.
+for (const p of PLACES) {
+  if (p.kind === "transport") p.services.push(...tripsFrom(p.district));
+  if (["black_star_square", "labadi_beach", "legon_lounge"].includes(p.id)) p.services.push(...festsIn(p.district));
+}
 PLACES.push(...REGIONAL_PLACES);
 Object.assign(JOBS, REGIONAL_JOBS);
 

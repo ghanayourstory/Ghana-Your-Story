@@ -1,3 +1,4 @@
+import { REGIONAL_AVATAR_COLORS } from "../../shared/people-regional.ts";
 import { useEffect, useState, type ReactNode } from "react";
 import { formatMoney } from "../../shared/money.ts";
 import { NPC_BY_ID } from "../../shared/people.ts";
@@ -118,6 +119,7 @@ export function clock12(hour: number, min: number) {
 export const AVATAR_COLORS: Record<string, string> = {
   esi: "#E0A526", kobby: "#2E86AB", akosua: "#1F3A5F", selasi: "#E35D3A", nii: "#3E5641",
   tetteh: "#7A6A5A", yaa: "#B03A62", adjei: "#3A4A5A", efua: "#1F7A4D", ebo: "#C8452C",
+  ...REGIONAL_AVATAR_COLORS,
 };
 
 export function initials(name: string) {
