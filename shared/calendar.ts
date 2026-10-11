@@ -108,3 +108,7 @@ export function formatDuration(minutes: number): string {
   }
   return h ? (m ? `${h}h ${m}m` : `${h}h`) : `${m}m`;
 }
+
+/** Akwasidae falls every 42 days, always on a Sunday (day 0 of the game is a Monday). */
+export const AKWASIDAE_OFFSET = 6;
+export const daysToAkwasidae = (day: number) => (((AKWASIDAE_OFFSET - day) % 42) + 42) % 42;

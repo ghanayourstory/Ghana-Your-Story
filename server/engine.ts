@@ -3,12 +3,12 @@
 import { tx, type Db } from "./db.ts";
 import { balance, ensureAccount, GameError, post, recentLedger, type Leg } from "./ledger.ts";
 import {
-  dayOf, monthIndex, MINUTES_PER_DAY, START_MINUTE, TIME_SCALE, toGameDate, weatherAt,
+  AKWASIDAE_OFFSET, dayOf, daysToAkwasidae, monthIndex, MINUTES_PER_DAY, START_MINUTE, TIME_SCALE, toGameDate, weatherAt,
 } from "../shared/calendar.ts";
 import { rand01 } from "../shared/rng.ts";
 import {
   DISTRICTS, JOBS, MAX_RANK, PLACE_BY_ID, RANK_TITLES, SERVICES, SHIFTS_PER_RANK, TRAVEL_MODES,
-  isOpenAt, priceFor, rankPay, travelQuote,
+  districtsIn, isOpenAt, priceFor, rankPay, travelQuote,
   type DistrictId, type EffectKey, type Effects, type TravelMode,
 } from "../shared/world.ts";
 import { NPC_BY_ID, NPCS, lineFor, npcLocation, tierFor, type Topic } from "../shared/people.ts";
@@ -19,6 +19,11 @@ import {
   demandNoise, fxBuy, fxMid, fxSell, levelCosts, levelRevenue, loanLimit, stagePlan, upgradeCost,
   type Quality,
 } from "../shared/economy.ts";
+import { TOWN_BY_ID } from "../shared/ghana.ts";
+import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
+import {
+  COURSES, CROPS, DEALER_STOCK, FARMLANDS, FARM_HARVEST_WINDOW_DAYS, ITEMS, POST_TYPES, furnishingScore, influencerDaily, stockFor,
+} from "../shared/life.ts";
 import { GOALS, LIFE_EVENTS, type ProgressSnapshot } from "../shared/progress.ts";
 import { formatMoney } from "../shared/money.ts";
 
@@ -427,6 +432,7 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   const nowMs = ctx.now();
 
   // Businesses: yesterday's trading lands in each business's till.
+  const promoDay = db.get<{ promo_day: number }>("SELECT promo_day FROM social WHERE player_id = ?", p.id)?.promo_day ?? -1;
   let bizTotal = 0;
   for (const b of db.all<BusinessRow>("SELECT * FROM businesses WHERE player_id = ? AND bought_min < ?", p.id, day * MINUTES_PER_DAY)) {
     const t = BUSINESSES[b.type];
@@ -436,6 +442,8 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
     rev *= demandNoise(b.id, y) * evMult;
     rev *= 1 + clamp(p.reputation, -50, 100) / 400;
     if (t.foodBusiness && hasUnlock(p, "esi_recipe")) rev *= 1.1;
+    if (t.foodBusiness && hasUnlock(p, "cert_catering")) rev *= 1.1;
+    if (promoDay === y) rev *= 1.12;
     const neglected = y - b.last_visit_day > NEGLECT_DAYS;
     if (neglected) rev *= 0.8;
     if (b.upgrading_until !== null) rev *= 0.5;
@@ -450,6 +458,37 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
     if (neglected && rand01(`neglect:${b.id}:${y}`) < 0.3) fb.add(`⚠️ Staff at your ${t.name} say they haven't seen you in a while. Sales are slipping.`, [], "bad");
   }
   if (bizTotal !== 0) fb.add(`🏪 Your businesses made ${formatMoney(bizTotal)} yesterday (in their tills).`, [{ k: "business", d: bizTotal }], bizTotal > 0 ? "good" : "bad");
+
+  // Work-and-pay: drivers pay daily (mostly), vehicles wear out.
+  for (const v of db.all<{ id: number; type: string; condition: number }>("SELECT * FROM vehicles WHERE player_id = ? AND status = 'workpay'", p.id)) {
+    const def = VEHICLES[v.type];
+    const r = rand01(`workpay:${v.id}:${y}`);
+    const cond = Math.max(0, v.condition - (0.6 + r * 0.6));
+    db.run("UPDATE vehicles SET condition = ? WHERE id = ?", cond, v.id);
+    if (ydate.weekdayIndex === 0) continue; // drivers rest (and go to church) on Sunday
+    if (r < 0.07) {
+      fb.add(`🛺 Your ${def.name} driver says the vehicle broke down yesterday. No payment.`, [], "bad");
+      continue;
+    }
+    const pay = Math.round(minor(def.workPay ?? 0) * (0.55 + 0.45 * cond / 100) * (rainy ? 0.85 : 1));
+    post(db, p.id, [{ account: "bank", amount: pay }], { kind: "workpay", memo: `Work-and-pay: ${def.name}`, gameMin: p.game_min, nowMs, idemKey: `workpay:${v.id}:${y}` });
+  }
+
+  // Brand deals once you have an audience.
+  const soc = db.get<{ followers: number }>("SELECT followers FROM social WHERE player_id = ?", p.id);
+  if (soc) {
+    const lost = Math.floor(soc.followers * 0.004);
+    if (lost > 0) db.run("UPDATE social SET followers = followers - ? WHERE player_id = ?", lost, p.id);
+    const deal = influencerDaily(soc.followers);
+    if (deal > 0) post(db, p.id, [{ account: "bank", amount: minor(deal) }], { kind: "influencer", memo: "Brand deals & creator payouts", gameMin: p.game_min, nowMs, idemKey: `influence:${y}` });
+  }
+
+  // Dumsor: the lights go off some nights. Generators and solar save your sleep.
+  if (rand01(`dumsor:${y}`) < 0.18) {
+    const backup = ownedItems(db, p).some((i) => ITEMS[i.item_id]?.slot === "power");
+    if (backup) fb.add("💡 Dumsor last night. Your backup power kept the fan running.", [], "info");
+    else fb.add("🌑 Dumsor last night: no fan, mosquitoes, poor sleep.", applyEffects(p, { energy: -8, health: -1 }, null), "bad");
+  }
 
   // Rental income from buildings you let out.
   for (const b of db.all<BuildingRow & { price: number }>(
@@ -494,10 +533,15 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   rollLifeEvent(ctx, p, day, fb);
 }
 
-function homeComfort(db: Db, p: PlayerRow): number {
+function baseComfort(db: Db, p: PlayerRow): number {
   if (p.home_kind === "rental") return RENTALS[p.home_ref]?.comfort ?? 1;
   const b = db.get<BuildingRow>("SELECT * FROM buildings WHERE id = ?", Number(p.home_ref));
   return b ? DESIGNS[b.design].comfort + QUALITY[b.quality as Quality].comfort : 1;
+}
+
+/** Building comfort plus what you've furnished it with (up to +3). */
+function homeComfort(db: Db, p: PlayerRow): number {
+  return baseComfort(db, p) + furnishingScore(ownedItems(db, p).map((i) => i.item_id)).bonus;
 }
 
 export function homeDistrict(db: Db, p: PlayerRow): DistrictId {
@@ -731,6 +775,17 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "biz_collect": return actBizCollect(ctx, p, a, fb);
     case "biz_sell": return actBizSell(ctx, p, a, fb);
     case "vehicle_buy": return actVehicleBuy(ctx, p, a, fb);
+    case "vehicle_sell": return actVehicleSell(ctx, p, a, fb);
+    case "vehicle_workpay": return actVehicleWorkPay(ctx, p, a, fb);
+    case "shop_buy": return actShopBuy(ctx, p, a, fb);
+    case "item_sell": return actItemSell(ctx, p, a, fb);
+    case "cook": return actCook(ctx, p, fb);
+    case "farm_buy": return actFarmBuy(ctx, p, a, fb);
+    case "farm_plant": return actFarmPlant(ctx, p, a, fb);
+    case "farm_harvest": return actFarmHarvest(ctx, p, a, fb);
+    case "course_enrol": return actCourseEnrol(ctx, p, a, fb);
+    case "course_attend": return actCourseAttend(ctx, p, a, fb);
+    case "social_post": return actSocialPost(ctx, p, a, fb);
     case "event_choose": return actEventChoose(ctx, p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
     case "dev_skip": return actDevSkip(ctx, p, a, fb);
@@ -766,14 +821,31 @@ function actService(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const hour = toGameDate(p.game_min).hour;
   if (s.hours && !isOpenAt(s.hours, hour)) throw new GameError("closed", `${s.name} is only available ${s.hours[0]}:00–${s.hours[1] % 24}:00.`);
   if (s.requiresRep && p.reputation < s.requiresRep) throw new GameError("reputation", `The host looks you up and down. You need ${s.requiresRep} standing to get in.`);
+  const gdNow = toGameDate(p.game_min);
+  if (s.days && !s.days.includes(gdNow.weekdayIndex)) throw new GameError("closed", `${s.name} only happens on ${s.days.map((d) => WEEKDAY_NAMES[d]).join(", ")}.`);
+  if (s.months && !s.months.includes(gdNow.month + 1)) throw new GameError("not_season", `${s.name} isn't on this month. It comes around in ${s.months.map((m) => MONTH_NAMES[m - 1]).join(" / ")}.`);
+  if (s.cycle42 && dayOf(p.game_min) % 42 !== AKWASIDAE_OFFSET) throw new GameError("not_season", `${s.name} is held every sixth Sunday. Next one in ${daysToAkwasidae(dayOf(p.game_min))} days.`);
   if ((s.effects.energy ?? 0) < -10) requireAwake(p, Math.min(30, -(s.effects.energy ?? 0)), s.verb.toLowerCase());
   let cost = minor(priceFor(s.cost, place.district));
   if (sid === "clinic" && hasUnlock(p, "adjei_care")) cost = Math.round(cost / 2);
   const money = chargeStrict(ctx, p, cost, "spend", `${s.name} at ${place.name}`);
-  advance(ctx, p, s.minutes, fb, { quiet: true });
-  applyEffects(p, s.effects, fb, `${s.verb} at ${place.name}`, money);
+  advance(ctx, p, s.minutes, fb, { quiet: true, sleeping: sid === "lodge" });
+  applyEffects(p, s.effects, fb, s.site ? `Day trip: ${s.name}` : s.festival ? `🎉 ${s.name}` : `${s.verb} at ${place.name}`, money);
+  if (s.site && addToList(p, "discovered", `site:${s.site}`)) {
+    applyEffects(p, { social: 4, reputation: 1 }, fb, `📸 First visit to ${s.name}. Added to your travel album.`);
+  }
+  if (s.festival && addToList(p, "discovered", `fest:${s.festival}`)) {
+    applyEffects(p, { social: 4, reputation: 2 }, fb, `First time at ${s.name}. You'll be telling this story for years.`);
+  }
+  if (!s.site && !s.festival && REGIONAL_DISH.has(sid) && addToList(p, "discovered", `dish:${sid}`)) {
+    applyEffects(p, { social: 2 }, fb, `New taste unlocked: ${s.name}.`);
+  }
   return null;
 }
+
+const REGIONAL_DISH = new Set(["tz", "wasawasa", "koko_koose", "tubaani", "pito", "brukina", "chichinga", "guinea_fowl", "abenkwan", "omo_tuo", "ampesi", "mpotompoto", "abunuabunu", "kokonte", "fried_yam", "roasted_plantain", "red_red", "palm_wine", "fante_kenkey", "akyeke", "akple", "abolo", "lake_fish", "waakye", "kelewele", "jollof", "fufu", "banku", "sobolo"]);
+const WEEKDAY_NAMES = ["Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"];
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 /** Chop app: food delivered wherever you are, at a premium, paid by mobile money. */
 export const DELIVERY_MENU = ["waakye", "jollof", "banku", "fufu", "kelewele"] as const;
@@ -806,13 +878,19 @@ function actTravel(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const to = a.to as DistrictId;
   const mode = a.mode as TravelMode;
   if (!(to in DISTRICTS)) throw new GameError("bad_district", "Unknown destination");
+  if (to === p.district) throw new GameError("same_place", "You're already here");
+  if (DISTRICTS[to].city !== DISTRICTS[p.district].city) return actIntercity(ctx, p, a, fb);
   if (!(mode in TRAVEL_MODES)) throw new GameError("bad_mode", "Unknown way to travel");
   if (to === p.district) throw new GameError("same_place", "You're already here");
-  if (DISTRICTS[to].city !== DISTRICTS[p.district].city) throw new GameError("intercity", "Intercity travel opens when more cities do.");
+  if (DISTRICTS[to].city !== DISTRICTS[p.district].city) return actIntercity(ctx, p, a, fb);
   const gd = toGameDate(p.game_min);
   const m = TRAVEL_MODES[mode];
   if (m.hours && !isOpenAt(m.hours, gd.hour)) throw new GameError("no_service", `No ${m.name.toLowerCase()} running at this hour.`);
-  if (mode === "car" && !ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ?", p.id)) throw new GameError("no_car", "You don't own a car yet.");
+  if (mode === "car") {
+    const v = drivable(ctx.db, p);
+    if (!v) throw new GameError("no_car", "You don't own a vehicle you can drive yet (and keep one off work-and-pay).");
+    if (v.licence && !hasUnlock(p, v.licence)) throw new GameError("no_licence", `You need a ${v.licence === "licence_a" ? "motorbike (A)" : "driving (B)"} licence. Driving schools can sort you out.`);
+  }
   const w = weatherAt(p.game_min);
   const q = travelQuote(p.district, to, mode, gd.hour, gd.weekdayIndex, w === "rain" || w === "storm");
   if (mode === "walk" && q.km > 7) throw new GameError("too_far", "That's too far to walk. Take a trotro.");
@@ -833,6 +911,46 @@ function actTravel(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (first) {
     applyEffects(p, { social: 4 }, fb, `First time in ${DISTRICTS[to].name}: ${DISTRICTS[to].tagline}.`);
   }
+  actSync(ctx, p, {} as Action);
+  return null;
+}
+
+/** Where you step off in a city, by how you arrived. */
+export function arrivalDistrict(city: string, mode: IntercityMode): DistrictId {
+  if (city === "accra") return mode === "flight" ? "east_legon" : "kaneshie";
+  return districtsIn(city)[0];
+}
+
+function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const mode = a.mode as IntercityMode;
+  if (!(mode in INTERCITY_MODES)) throw new GameError("bad_mode", "Choose a bus, coach, flight or your own car for long trips.");
+  const fromCity = DISTRICTS[p.district].city;
+  const toCity = DISTRICTS[a.to as DistrictId].city;
+  const q = intercityQuote(fromCity, toCity, mode);
+  if (!q) throw new GameError("no_route", mode === "flight" ? "No flights between those towns. Take the bus." : "No road route found.");
+  const m = INTERCITY_MODES[mode];
+  const gd = toGameDate(p.game_min);
+  if (!isOpenAt(m.hours, gd.hour)) throw new GameError("no_service", `No ${m.name.toLowerCase()} departures at this hour (${m.hours[0]}:00–${m.hours[1]}:00).`);
+  if (mode === "car") {
+    const owned = ctx.db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).map((v) => VEHICLES[v.type]).filter((v) => v && v.longDistance);
+    if (!owned.length) throw new GameError("no_car", "You need a car (or a sturdy motorbike) for that journey.");
+    if (!owned.some((v) => !v.licence || hasUnlock(p, v.licence))) throw new GameError("no_licence", "The police at the barrier will want your licence. Get one at a driving school.");
+  }
+  if (q.minutes > 240) requireAwake(p, 20, "make that journey");
+  const fare = minor(q.fare);
+  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}`, mode === "flight");
+  advance(ctx, p, q.minutes, fb, { quiet: true });
+  const from = p.district;
+  p.district = arrivalDistrict(toCity, mode);
+  p.pos_x = -58;
+  p.pos_z = 6;
+  const via = q.route.roads.length && mode !== "flight" ? ` via ${q.route.roads.slice(0, 2).map((r) => r.split(" (")[0]).join(", ")}` : "";
+  applyEffects(p, { energy: q.energy, social: mode === "bus" ? 4 : 1 }, fb, `${m.name} from ${CITIES[fromCity].name} to ${CITIES[toCity].name}: ${q.km} km, ${Math.floor(q.minutes / 60)}h ${q.minutes % 60}m${via}.`, money);
+  if (addToList(p, "visited", p.district)) {
+    applyEffects(p, { social: 6, reputation: 1 }, fb, `First time in ${CITIES[toCity].name} (${CITIES[toCity].region} Region): ${DISTRICTS[p.district].tagline}.`);
+  }
+  addToList(p, "discovered", `region:${CITIES[toCity].region}`);
+  rememberAcrossDistrict(ctx.db, p, from, `you travelled to ${CITIES[toCity].name}`);
   actSync(ctx, p, {} as Action);
   return null;
 }
@@ -1333,15 +1451,264 @@ function actBizSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   return null;
 }
 
+/** Your best personal vehicle for city driving (not on work-and-pay). */
+function drivable(db: Db, p: PlayerRow) {
+  const vs = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).map((v) => VEHICLES[v.type]).filter((v) => v && v.category !== "bicycle");
+  vs.sort((x, y) => (hasUnlock(p, y.licence ?? "") ? 1 : 0) - (hasUnlock(p, x.licence ?? "") ? 1 : 0) || y.speedKmh - x.speedKmh);
+  return vs[0] ?? null;
+}
+
 function actVehicleBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const v = typeof a.vehicleId === "string" ? VEHICLES[a.vehicleId] : undefined;
   if (!v) throw new GameError("bad_vehicle", "Unknown vehicle");
-  requireVisited(p, "trasacco");
-  if (v.requiresRep && p.reputation < v.requiresRep) throw new GameError("reputation", `Prestige Autos only sells this to established clients (${v.requiresRep} standing).`);
-  if (ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND type = ?", p.id, v.id)) throw new GameError("already", "You already own one");
+  const place = requirePlace(p, a.placeId);
+  if (!(DEALER_STOCK[place.id] ?? []).includes(v.id)) throw new GameError("not_stocked", `${place.name} doesn't sell that.`);
+  if (v.requiresRep && p.reputation < v.requiresRep) throw new GameError("reputation", `The dealer only sells this to established clients (${v.requiresRep} standing).`);
+  const count = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM vehicles WHERE player_id = ? AND type = ?", p.id, v.id)!.n;
+  if (count >= (v.workPay ? 5 : 1)) throw new GameError("already", v.workPay ? "Five is the most you can manage. Even fleet owners sleep." : "You already own one");
   const money = chargeStrict(ctx, p, minor(v.price), "vehicle", `Bought ${v.name}`, true);
   ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, v.id, minor(v.price), p.game_min);
-  applyEffects(p, { reputation: v.reputation, social: 10 }, fb, `🚙 You drove the ${v.name} off the lot. Heads turned.`, money);
+  const icon = v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗";
+  applyEffects(p, { reputation: v.reputation, social: v.category === "luxury" ? 16 : 8 }, fb, `${icon} You rode the ${v.name} out of ${place.name}.${v.licence && !hasUnlock(p, v.licence) ? " (You'll need a licence before you can drive it.)" : ""}`, money);
+  return null;
+}
+
+function ownedVehicle(ctx: Ctx, p: PlayerRow, id: unknown) {
+  const row = ctx.db.get<{ id: number; type: string; price: number; bought_min: number; status: string; condition: number }>("SELECT * FROM vehicles WHERE id = ? AND player_id = ?", Number(id), p.id);
+  if (!row) throw new GameError("bad_vehicle", "You don't own that vehicle");
+  return row;
+}
+const vehicleValue = (v: { price: number; bought_min: number; condition: number }, now: number) => {
+  const months = (now - v.bought_min) / (30 * MINUTES_PER_DAY);
+  return Math.round(v.price * Math.max(0.35, 1 - VEHICLE_DEPRECIATION_PER_MONTH * months) * (0.6 + 0.4 * v.condition / 100));
+};
+
+function actVehicleSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const v = ownedVehicle(ctx, p, a.vehicleRowId);
+  const value = Math.round(vehicleValue(v, p.game_min) * 0.85);
+  ctx.db.run("DELETE FROM vehicles WHERE id = ?", v.id);
+  const money = credit(ctx, p, "bank", value, "vehicle_sale", `Sold ${VEHICLES[v.type].name}`, `vsell:${v.id}`);
+  fb.add(`You sold the ${VEHICLES[v.type].name} for ${formatMoney(value)}.`, money, "info");
+  return null;
+}
+
+function actVehicleWorkPay(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const v = ownedVehicle(ctx, p, a.vehicleRowId);
+  const def = VEHICLES[v.type];
+  if (!def.workPay) throw new GameError("not_commercial", "Nobody does work-and-pay with that.");
+  const on = a.on === true;
+  ctx.db.run("UPDATE vehicles SET status = ? WHERE id = ?", on ? "workpay" : "personal", v.id);
+  fb.add(on ? `🤝 You handed the ${def.name} to a driver on work-and-pay: ${formatMoney(minor(def.workPay))} a day into your account, if all goes well.` : `You took the ${def.name} back from the driver.`, [], "info");
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Shopping, furnishing and cooking
+
+function ownedItems(db: Db, p: PlayerRow) {
+  return db.all<{ id: number; item_id: string; price: number; bought_min: number }>("SELECT * FROM items WHERE player_id = ? ORDER BY id", p.id);
+}
+
+function actShopBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const place = requirePlace(p, a.placeId);
+  const it = typeof a.itemId === "string" ? ITEMS[a.itemId] : undefined;
+  if (!it || !stockFor(place.id, place.kind).includes(it.id)) throw new GameError("not_stocked", `${place.name} doesn't sell that.`);
+  const n = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM items WHERE player_id = ? AND item_id = ?", p.id, it.id)!.n;
+  if (it.comfort && n >= 1 && it.slot !== "decor") throw new GameError("already", "You already have one at home.");
+  if (n >= 3) throw new GameError("already", "You have plenty of those.");
+  const price = minor(priceFor(it.price, place.district));
+  const money = chargeStrict(ctx, p, price, "shopping", `${it.name} from ${place.name}`, price > minor(2_000));
+  ctx.db.run("INSERT INTO items (player_id, item_id, price, bought_min) VALUES (?, ?, ?, ?)", p.id, it.id, price, p.game_min);
+  advance(ctx, p, 30, fb, { quiet: true });
+  const firstOfKind = n === 0;
+  applyEffects(p, firstOfKind ? { social: 2, ...(it.effects ?? {}) } : {}, fb, `🛍️ Bought ${it.name} at ${place.name}.${it.comfort ? " Delivered to your home." : ""}`, money);
+  return null;
+}
+
+function actItemSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const row = ctx.db.get<{ id: number; item_id: string; price: number }>("SELECT * FROM items WHERE id = ? AND player_id = ?", Number(a.itemRowId), p.id);
+  if (!row) throw new GameError("bad_item", "You don't own that");
+  const value = Math.round(row.price * 0.4);
+  ctx.db.run("DELETE FROM items WHERE id = ?", row.id);
+  const money = credit(ctx, p, "cash", value, "item_sale", `Sold ${ITEMS[row.item_id].name} (second-hand)`, `isell:${row.id}`);
+  fb.add(`Sold your ${ITEMS[row.item_id].name} to a second-hand buyer for ${formatMoney(value)}.`, money, "info");
+  return null;
+}
+
+function actCook(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("wrong_place", "You can only cook at home.");
+  const items = ownedItems(ctx.db, p).map((i) => i.item_id);
+  if (!items.some((i) => ITEMS[i]?.slot === "kitchen" && (i === "gas_cooker" || i === "standing_cooker"))) throw new GameError("no_kitchen", "You need a gas cooker. Melcom sells them.");
+  requireAwake(p, 8, "cook");
+  const cost = minor(priceFor(14, p.district));
+  const money = chargeStrict(ctx, p, cost, "spend", "Ingredients from the market");
+  advance(ctx, p, 60, fb, { quiet: true });
+  const fridge = items.some((i) => ITEMS[i]?.slot === "fridge");
+  applyEffects(p, { hunger: fridge ? 60 : 50, health: 2, energy: -4, social: 2 }, fb, fridge ? "Cooked a proper pot of stew. Leftovers in the fridge for tomorrow." : "Cooked jollof at home. Cheaper and tastier than the chop bar.", money);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Farming
+
+interface FarmRow { id: number; farm_type: string; price: number; bought_min: number; crop: string | null; planted_min: number | null; ready_min: number | null; status: string; harvests: number; total_income: number }
+
+function ownedFarm(ctx: Ctx, p: PlayerRow, id: unknown) {
+  const f = ctx.db.get<FarmRow>("SELECT * FROM farms WHERE id = ? AND player_id = ?", Number(id), p.id);
+  if (!f) throw new GameError("bad_farm", "You don't own that farm");
+  return f;
+}
+
+function actFarmBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const land = typeof a.farmId === "string" ? FARMLANDS[a.farmId] : undefined;
+  if (!land) throw new GameError("bad_farm", "Unknown farmland");
+  requireDistrict(p, land.district, `the land office in ${DISTRICTS[land.district].name}`);
+  if (ctx.db.get("SELECT 1 FROM farms WHERE player_id = ? AND farm_type = ?", p.id, land.id)) throw new GameError("already", "You already own this land");
+  const money = chargeStrict(ctx, p, minor(land.price), "land", `Farmland: ${land.name}`, true);
+  ctx.db.run("INSERT INTO farms (player_id, farm_type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, land.id, minor(land.price), p.game_min);
+  rememberAcrossDistrict(ctx.db, p, land.district, "you bought farmland near here");
+  applyEffects(p, { reputation: 2, business: 1 }, fb, `🌱 You bought ${land.acres} acres: ${land.name}. The chief's linguist witnessed the drinks.`, money);
+  return null;
+}
+
+function actFarmPlant(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const f = ownedFarm(ctx, p, a.farmRowId);
+  const land = FARMLANDS[f.farm_type];
+  requireDistrict(p, land.district, land.name);
+  if (f.status !== "fallow") throw new GameError("busy", "The farm already has a crop in.");
+  const crop = typeof a.crop === "string" && land.crops.includes(a.crop) ? CROPS[a.crop] : undefined;
+  if (!crop) throw new GameError("bad_crop", "That crop doesn't suit this land.");
+  const month = toGameDate(p.game_min).month + 1;
+  if (crop.months !== "any" && !crop.months.includes(month)) throw new GameError("season", `Wrong season for ${crop.name}. Plant in ${crop.months.map((m) => MONTH_NAMES[m - 1].slice(0, 3)).join(", ")}.`);
+  requireAwake(p, 25, "work on the farm");
+  const cost = minor(crop.costPerAcre * land.acres);
+  const money = chargeStrict(ctx, p, cost, "farm", `${crop.name}: seed, labour and inputs (${land.acres} acres)`, true);
+  advance(ctx, p, 240, fb, { quiet: true });
+  ctx.db.run("UPDATE farms SET crop = ?, planted_min = ?, ready_min = ?, status = 'growing' WHERE id = ?", crop.id, p.game_min, p.game_min + crop.days * MINUTES_PER_DAY, f.id);
+  applyEffects(p, { energy: -22, hunger: -10, fitness: 1, business: 0.5 }, fb, `🌱 Planted ${crop.name} on ${land.acres} acres. Ready in about ${crop.days} days.`, money);
+  return null;
+}
+
+/** Share of the growing season's days with rain (rain-fed crops need it). */
+function seasonRain(fromMin: number, toMin: number) {
+  const d0 = dayOf(fromMin), d1 = Math.max(d0 + 1, dayOf(toMin));
+  let wet = 0;
+  for (let d = d0; d < d1; d++) if (dayWasRainy(d)) wet++;
+  return wet / (d1 - d0);
+}
+
+export function harvestValue(f: { id: number; farm_type: string; crop: string; planted_min: number; ready_min: number }, p: PlayerRow, now: number) {
+  const land = FARMLANDS[f.farm_type];
+  const crop = CROPS[f.crop];
+  let v = crop.yieldPerAcre * land.acres;
+  if (crop.rainFed) v *= clamp(0.55 + seasonRain(f.planted_min, f.ready_min) * 1.3, 0.55, 1.2);
+  v *= 0.75 + rand01(`harvest:${f.id}:${f.planted_min}`) * 0.5;
+  v *= 1 + Math.min(p.business, 60) / 300;
+  if (hasUnlock(p, "agri")) v *= 1.15;
+  const lateDays = Math.max(0, dayOf(now) - dayOf(f.ready_min) - FARM_HARVEST_WINDOW_DAYS);
+  v *= Math.max(0.4, 1 - lateDays * 0.1);
+  return Math.round(minor(v));
+}
+
+function actFarmHarvest(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const f = ownedFarm(ctx, p, a.farmRowId);
+  const land = FARMLANDS[f.farm_type];
+  requireDistrict(p, land.district, land.name);
+  if (f.status !== "growing" || f.ready_min === null || f.crop === null || f.planted_min === null) throw new GameError("nothing", "Nothing to harvest.");
+  if (p.game_min < f.ready_min) throw new GameError("not_ready", `Not ready yet. Come back ${toGameDate(f.ready_min).label}.`);
+  requireAwake(p, 25, "harvest");
+  const value = harvestValue({ ...f, crop: f.crop, planted_min: f.planted_min, ready_min: f.ready_min }, p, p.game_min);
+  advance(ctx, p, 300, fb, { quiet: true });
+  ctx.db.run("UPDATE farms SET status = 'fallow', crop = NULL, planted_min = NULL, ready_min = NULL, harvests = harvests + 1, total_income = total_income + ? WHERE id = ?", value, f.id);
+  const money = credit(ctx, p, "cash", value, "harvest", `${CROPS[f.crop].name} harvest from ${land.name}`, `harvest:${f.id}:${f.planted_min}`);
+  applyEffects(p, { energy: -24, hunger: -12, fitness: 1, business: 1, reputation: 1 }, fb, `🧺 Harvested ${CROPS[f.crop].name} and sold it to the market queens for ${formatMoney(value)}.`, money);
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Schools
+
+interface CourseRow { course_id: string; sessions: number; status: string; enrolled_min: number; last_session_day: number; completed_min: number | null }
+
+function actCourseEnrol(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const c = typeof a.courseId === "string" ? COURSES[a.courseId] : undefined;
+  if (!c) throw new GameError("bad_course", "Unknown course");
+  const place = requirePlace(p, a.placeId);
+  if (!c.places.includes(place.id)) throw new GameError("not_here", `${place.name} doesn't run that course.`);
+  const row = ctx.db.get<CourseRow>("SELECT * FROM courses WHERE player_id = ? AND course_id = ?", p.id, c.id);
+  if (row) throw new GameError("already", row.status === "done" ? "You already have that certificate." : "You're already enrolled.");
+  const money = chargeStrict(ctx, p, minor(c.fee), "education", `Fees: ${c.name}`, true);
+  ctx.db.run("INSERT INTO courses (player_id, course_id, enrolled_min) VALUES (?, ?, ?)", p.id, c.id, p.game_min);
+  applyEffects(p, { social: 3 }, fb, `🎓 Enrolled: ${c.name}. ${c.sessions} sessions to go (one a day).`, money);
+  return null;
+}
+
+function actCourseAttend(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const c = typeof a.courseId === "string" ? COURSES[a.courseId] : undefined;
+  if (!c) throw new GameError("bad_course", "Unknown course");
+  const place = requirePlace(p, a.placeId);
+  if (!c.places.includes(place.id)) throw new GameError("not_here", `${place.name} doesn't run that course.`);
+  const row = ctx.db.get<CourseRow>("SELECT * FROM courses WHERE player_id = ? AND course_id = ?", p.id, c.id);
+  if (!row || row.status !== "enrolled") throw new GameError("not_enrolled", "Enrol first.");
+  if (row.last_session_day === dayOf(p.game_min)) throw new GameError("tomorrow", "One session a day. Let it sink in.");
+  const hour = toGameDate(p.game_min).hour;
+  if (!isOpenAt(c.hours, hour)) throw new GameError("closed", `Classes run ${c.hours[0]}:00–${c.hours[1]}:00.`);
+  requireAwake(p, 20, "concentrate in class");
+  advance(ctx, p, c.minutes, fb, { quiet: true });
+  const sessions = row.sessions + 1;
+  const done = sessions >= c.sessions;
+  ctx.db.run("UPDATE courses SET sessions = ?, last_session_day = ?, status = ?, completed_min = ? WHERE player_id = ? AND course_id = ?", sessions, dayOf(p.game_min), done ? "done" : "enrolled", done ? p.game_min : null, p.id, c.id);
+  applyEffects(p, { energy: -16, hunger: -8, ...c.perSession }, fb, `📚 ${c.name}: session ${sessions}/${c.sessions}.`);
+  if (done) {
+    if (c.unlock) addToList(p, "unlocks", c.unlock);
+    applyEffects(p, { ...c.onComplete, social: 8 }, fb, `🎓 Certificate earned: ${c.name}!${c.unlock === "licence_b" ? " Your DVLA licence card arrives in the post (eventually)." : ""}`);
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Social media
+
+interface SocialRow { followers: number; posts: number; posts_today: number; last_post_day: number; promo_day: number; feed: string }
+function socialRow(db: Db, p: PlayerRow): SocialRow {
+  db.run("INSERT OR IGNORE INTO social (player_id) VALUES (?)", p.id);
+  return db.get<SocialRow>("SELECT * FROM social WHERE player_id = ?", p.id)!;
+}
+function bestCamera(db: Db, p: PlayerRow) {
+  return Math.max(-1, ...ownedItems(db, p).map((i) => ITEMS[i.item_id]?.camera ?? -1));
+}
+
+function actSocialPost(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const t = POST_TYPES.find((x) => x.id === a.kind);
+  if (!t) throw new GameError("bad_post", "Unknown post type");
+  const cam = bestCamera(ctx.db, p);
+  if (cam < 1) throw new GameError("no_phone", "You need a smartphone to post. Phone shops sell them from GH₵1,400.");
+  const s = socialRow(ctx.db, p);
+  const day = dayOf(p.game_min);
+  const today = s.last_post_day === day ? s.posts_today : 0;
+  if (today >= 3) throw new GameError("too_many", "Three posts a day is enough. Your followers need to miss you.");
+  const disc = list(p.discovered);
+  const items = ownedItems(ctx.db, p).map((i) => ITEMS[i.item_id]);
+  const has = {
+    car: () => ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ?", p.id) !== undefined,
+    home: () => p.home_kind === "owned",
+    trip: () => disc.some((d) => d.startsWith("site:")),
+    fest: () => disc.some((d) => d.startsWith("fest:")),
+    business: () => ctx.db.get("SELECT 1 FROM businesses WHERE player_id = ?", p.id) !== undefined,
+    outfit: () => items.some((i) => i && (i.slot === "clothing" || i.id === "kente_cloth" || i.id === "smock")),
+  };
+  if (t.needs && !has[t.needs]()) throw new GameError("needs", { car: "You need a car to flex.", home: "You need your own house for a house tour.", trip: "Go somewhere first: visit a waterfall, castle or park.", fest: "Attend a festival first.", business: "You need a business to promote.", outfit: "Buy an outfit first: wax print, a smock, kente or sneakers." }[t.needs]);
+  requireAwake(p, 5, "post");
+  advance(ctx, p, 25, fb, { quiet: true });
+  const novelty = (JSON.parse(s.feed) as { kind: string }[]).slice(-3).filter((x) => x.kind === t.id).length;
+  const camMult = [0, 0.6, 1, 1.4, 1.8][cam] ?? 1;
+  const audience = 1 + Math.sqrt(s.followers) / 40;
+  const viral = rand01(`post:${p.id}:${s.posts}`) < 0.06 ? 8 : 1;
+  const gain = Math.round(t.base * camMult * (1 + p.charisma / 40) * audience * (novelty ? 0.45 : 1) * (0.7 + rand01(`postn:${p.id}:${s.posts}`) * 0.6) * viral);
+  const feed = (JSON.parse(s.feed) as { kind: string; day: number; gain: number }[]).concat({ kind: t.id, day, gain }).slice(-20);
+  ctx.db.run("UPDATE social SET followers = followers + ?, posts = posts + 1, posts_today = ?, last_post_day = ?, promo_day = ?, feed = ? WHERE player_id = ?",
+    gain, today + 1, day, t.id === "business" ? day : s.promo_day, JSON.stringify(feed), p.id);
+  applyEffects(p, { social: 3, charisma: 0.3, reputation: s.followers + gain >= 10_000 ? 0.5 : 0.1 }, fb, viral > 1 ? `🔥 Your ${t.name.toLowerCase()} went viral! +${gain.toLocaleString()} followers.` : `📱 Posted a ${t.name.toLowerCase()}: +${gain.toLocaleString()} followers.`, [{ k: "followers", d: gain }]);
   return null;
 }
 
@@ -1365,7 +1732,7 @@ function requireDev(ctx: Ctx, p: PlayerRow) {
 function actDevGrant(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   requireDev(ctx, p);
   const amount = requireAmount(a.amount);
-  if (amount > minor(5_000_000)) throw new GameError("bad_amount", "Too much");
+  if (amount > minor(20_000_000)) throw new GameError("bad_amount", "Too much");
   credit(ctx, p, "bank", amount, "dev_grant", "Developer test grant (test account)");
   fb.add(`[dev] Granted ${formatMoney(amount)} to bank.`, [{ k: "bank", d: amount }], "info");
   return null;
@@ -1406,12 +1773,12 @@ export function netWorth(db: Db, p: PlayerRow) {
     biz += minor(businessValue(BUSINESSES[b.type].price, b.level)) + balance(db, p.id, `biz:${b.id}`);
   }
   let vehicles = 0;
-  for (const v of db.all<{ price: number; bought_min: number }>("SELECT * FROM vehicles WHERE player_id = ?", p.id)) {
-    const months = (p.game_min - v.bought_min) / (30 * MINUTES_PER_DAY);
-    vehicles += Math.round(v.price * Math.max(0.4, 1 - VEHICLE_DEPRECIATION_PER_MONTH * months));
-  }
-  const total = cash + bank + usdInGhs + tbill + land + buildings + biz + vehicles + p.payroll_accrued - loan - p.rent_arrears;
-  return { cash, bank, usd, usdInGhs, tbill, loan, land, buildings, businesses: biz, vehicles, payroll: p.payroll_accrued, arrears: p.rent_arrears, total };
+  for (const v of db.all<{ price: number; bought_min: number; condition: number }>("SELECT * FROM vehicles WHERE player_id = ?", p.id)) vehicles += vehicleValue(v, p.game_min);
+  const goods = db.all<{ price: number }>("SELECT price FROM items WHERE player_id = ?", p.id).reduce((a, i) => a + Math.round(i.price * 0.4), 0);
+  const farms = db.all<{ price: number }>("SELECT price FROM farms WHERE player_id = ?", p.id).reduce((a, f) => a + f.price, 0);
+  land += farms;
+  const total = cash + bank + usdInGhs + tbill + land + buildings + biz + vehicles + goods + p.payroll_accrued - loan - p.rent_arrears;
+  return { cash, bank, usd, usdInGhs, tbill, loan, land, buildings, businesses: biz, vehicles, goods, payroll: p.payroll_accrued, arrears: p.rent_arrears, total };
 }
 
 function snapshot(db: Db, p: PlayerRow): ProgressSnapshot {
@@ -1437,6 +1804,17 @@ function snapshot(db: Db, p: PlayerRow): ProgressSnapshot {
     usdMinor: nw.usd,
     betsWon: p.bets_won,
     maxBusinessLevel: db.get<{ m: number | null }>("SELECT MAX(level) AS m FROM businesses WHERE player_id = ?", p.id)?.m ?? 0,
+    regionsVisited: new Set(list(p.visited).map((d) => (DISTRICTS[d] ? TOWN_BY_ID[DISTRICTS[d].city]?.region : undefined)).filter(Boolean)).size,
+    sitesVisited: list(p.discovered).filter((d) => d.startsWith("site:")).length,
+    dishesTasted: list(p.discovered).filter((d) => d.startsWith("dish:")).length,
+    festivals: list(p.discovered).filter((d) => d.startsWith("fest:")).length,
+    followers: db.get<{ followers: number }>("SELECT followers FROM social WHERE player_id = ?", p.id)?.followers ?? 0,
+    harvests: db.get<{ n: number | null }>("SELECT SUM(harvests) AS n FROM farms WHERE player_id = ?", p.id)?.n ?? 0,
+    certificates: db.get<{ n: number }>("SELECT COUNT(*) AS n FROM courses WHERE player_id = ? AND status = 'done'", p.id)!.n,
+    licensed: hasUnlock(p, "licence_a") || hasUnlock(p, "licence_b"),
+    furnishingPoints: furnishingScore(ownedItems(db, p).map((i) => i.item_id)).points,
+    ownsMansion: !!db.get("SELECT 1 FROM buildings WHERE player_id = ? AND design = 'mansion' AND status IN ('complete','upgrading')", p.id),
+    carCount: db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ?", p.id).filter((v) => ["car", "luxury"].includes(VEHICLES[v.type]?.category)).length,
   };
 }
 
@@ -1533,7 +1911,20 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       upgradeCost: b.level < MAX_BUSINESS_LEVEL ? minor(businessUpgradeCost(BUSINESSES[b.type].price, b.level)) : null,
       value: minor(businessValue(BUSINESSES[b.type].price, b.level)),
     })),
-    vehicles: db.all("SELECT id, type, price, bought_min AS boughtMin FROM vehicles WHERE player_id = ?", p.id),
+    vehicles: db.all<{ id: number; type: string; price: number; bought_min: number; status: string; condition: number }>("SELECT * FROM vehicles WHERE player_id = ?", p.id)
+      .map((v) => ({ id: v.id, type: v.type, price: v.price, boughtMin: v.bought_min, status: v.status, condition: Math.round(v.condition), value: vehicleValue(v, p.game_min) })),
+    items: ownedItems(db, p).map((i) => ({ id: i.id, itemId: i.item_id, price: i.price, boughtMin: i.bought_min })),
+    furnishing: (() => { const f = furnishingScore(ownedItems(db, p).map((i) => i.item_id)); return { ...f, base: baseComfort(db, p) }; })(),
+    farms: db.all<FarmRow>("SELECT * FROM farms WHERE player_id = ?", p.id).map((f) => ({
+      id: f.id, type: f.farm_type, price: f.price, crop: f.crop, plantedMin: f.planted_min, readyMin: f.ready_min, status: f.status, harvests: f.harvests, totalIncome: f.total_income,
+      estimate: f.status === "growing" && f.crop && f.planted_min !== null && f.ready_min !== null ? harvestValue({ ...f, crop: f.crop, planted_min: f.planted_min, ready_min: f.ready_min }, p, Math.max(p.game_min, f.ready_min)) : null,
+    })),
+    courses: db.all<CourseRow>("SELECT * FROM courses WHERE player_id = ?", p.id).map((c) => ({ id: c.course_id, sessions: c.sessions, status: c.status, lastSessionDay: c.last_session_day })),
+    social: (() => {
+      const s = db.get<SocialRow>("SELECT * FROM social WHERE player_id = ?", p.id);
+      const today = dayOf(p.game_min);
+      return { followers: s?.followers ?? 0, posts: s?.posts ?? 0, postsToday: s && s.last_post_day === today ? s.posts_today : 0, feed: s ? JSON.parse(s.feed) as { kind: string; day: number; gain: number }[] : [], camera: bestCamera(db, p), dailyDeal: influencerDaily(s?.followers ?? 0) };
+    })(),
     goals: GOALS.map((g) => ({ id: g.id, done: doneGoals.has(g.id), doneMin: doneGoals.get(g.id) ?? null, progress: g.progress ? g.progress(s) : null })),
     event: pendingEvent && evDef ? { id: pendingEvent.id, eventId: evDef.id, title: evDef.title, text: evDef.text, choices: evDef.choices ?? [] } : null,
     log: db.all<{ id: number; game_min: number; kind: string; text: string; changes: string }>("SELECT * FROM log WHERE player_id = ? ORDER BY id DESC LIMIT 60", p.id)

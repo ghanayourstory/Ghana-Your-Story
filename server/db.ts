@@ -255,6 +255,51 @@ CREATE TABLE IF NOT EXISTS bets (
 );
 CREATE INDEX IF NOT EXISTS bets_pending ON bets (status, fixture_id);
 
+CREATE TABLE IF NOT EXISTS items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  item_id TEXT NOT NULL,
+  price INTEGER NOT NULL,
+  bought_min INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS items_player ON items (player_id);
+
+CREATE TABLE IF NOT EXISTS farms (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  farm_type TEXT NOT NULL,
+  price INTEGER NOT NULL,
+  bought_min INTEGER NOT NULL,
+  crop TEXT,
+  planted_min INTEGER,
+  ready_min INTEGER,
+  status TEXT NOT NULL DEFAULT 'fallow',
+  harvests INTEGER NOT NULL DEFAULT 0,
+  total_income INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (player_id, farm_type)
+);
+
+CREATE TABLE IF NOT EXISTS courses (
+  player_id INTEGER NOT NULL,
+  course_id TEXT NOT NULL,
+  sessions INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'enrolled',
+  enrolled_min INTEGER NOT NULL,
+  last_session_day INTEGER NOT NULL DEFAULT -1,
+  completed_min INTEGER,
+  PRIMARY KEY (player_id, course_id)
+);
+
+CREATE TABLE IF NOT EXISTS social (
+  player_id INTEGER PRIMARY KEY,
+  followers INTEGER NOT NULL DEFAULT 0,
+  posts INTEGER NOT NULL DEFAULT 0,
+  posts_today INTEGER NOT NULL DEFAULT 0,
+  last_post_day INTEGER NOT NULL DEFAULT -1,
+  promo_day INTEGER NOT NULL DEFAULT -1,
+  feed TEXT NOT NULL DEFAULT '[]'
+);
+
 CREATE TABLE IF NOT EXISTS provider_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   status TEXT NOT NULL,
@@ -264,9 +309,19 @@ CREATE TABLE IF NOT EXISTS provider_state (
 );
 `;
 
+/** Columns added after the first release: applied to older saves on load. */
+const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
+  ["vehicles", "status", "TEXT NOT NULL DEFAULT 'personal'"],
+  ["vehicles", "condition", "REAL NOT NULL DEFAULT 100"],
+];
+
 export function migrate(db: Db) {
   // One statement at a time: lighter on small embedded SQLite builds.
   for (const stmt of SCHEMA.split(";").map((x) => x.trim()).filter(Boolean)) db.exec(stmt);
+  for (const [table, column, def] of ADDED_COLUMNS) {
+    const cols = db.all<{ name: string }>(`PRAGMA table_info(${table})`).map((c) => c.name);
+    if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+  }
   db.run("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)", String(SCHEMA_VERSION));
   db.run("INSERT OR IGNORE INTO provider_state (id, status, message, checked_ms) VALUES (1, 'unknown', 'Waiting for match data', 0)");
 }

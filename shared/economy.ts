@@ -26,6 +26,31 @@ export const RENTALS: Record<string, Rental> = {
   legon_apartment: { id: "legon_apartment", district: "east_legon", name: "Furnished 2-bed, East Legon", rent: 7200, deposit: 6, comfort: 4, utilities: 500, requiresRep: 15, blurb: "Pool, gym, and neighbours with drivers." },
 };
 
+const R = (id: string, district: string, name: string, rent: number, deposit: number, comfort: number, blurb: string, requiresRep?: number): Rental =>
+  ({ id, district, name, rent, deposit, comfort, utilities: Math.round(rent * 0.14 + 30), blurb, requiresRep });
+for (const r of [
+  R("kumasi_chamber", "adum", "Chamber & hall, Asafo (Kumasi)", 650, 6, 2, "Shared compound, private rooms, a landlady who knows everyone."),
+  R("ahodwo_apartment", "adum", "2-bed apartment, Ahodwo (Kumasi)", 3_800, 6, 4, "Kumasi's quiet upscale side. Generator and a watchman.", 10),
+  R("tamale_room", "tamale", "Room in a compound house, Lamashegu", 280, 6, 1, "Courtyard life: cooking smoke, children and goats."),
+  R("tamale_house", "tamale", "2-bedroom house, Vittin (Tamale)", 1_500, 6, 3, "Walled, with a neem tree and space for your motorbike."),
+  R("kintampo_room", "kintampo", "Single room, Kintampo", 220, 6, 1, "Near the station. Trucks rumble past all night."),
+  R("techiman_chamber", "techiman", "Chamber & hall, Techiman", 380, 6, 2, "Five minutes' walk from the market."),
+  R("sunyani_flat", "sunyani", "1-bed flat, Sunyani", 1_100, 6, 3, "Clean streets, quiet nights."),
+  R("wa_room", "wa", "Room in a family compound, Wa", 250, 6, 1, "The family adopts you by the second week."),
+  R("bole_room", "bole", "Room near Bole market", 180, 6, 1, "Simple and cool under a thatch overhang."),
+  R("sawla_room", "sawla", "Room at Sawla junction", 150, 6, 1, "You'll know every bus by its horn."),
+  R("damongo_room", "damongo", "Room in Damongo", 200, 6, 1, "Rangers next door."),
+  R("bolga_chamber", "bolgatanga", "Chamber & hall, Bolgatanga", 300, 6, 2, "Thick walls against the heat."),
+  R("nalerigu_room", "nalerigu", "Room in Nalerigu", 160, 6, 1, "Quiet, under the escarpment."),
+  R("cape_flat", "cape_coast", "1-bed flat near the university, Cape Coast", 1_300, 6, 3, "Sea breeze and students."),
+  R("takoradi_apartment", "takoradi", "2-bed apartment, Anaji (Takoradi)", 2_400, 6, 3, "Oil-company neighbours."),
+  R("ho_chamber", "ho", "Chamber & hall, Ho", 600, 6, 2, "View of the mountains."),
+  R("kof_chamber", "koforidua", "Chamber & hall, Koforidua", 650, 6, 2, "Near the bead market."),
+  R("wiawso_room", "sefwi_wiawso", "Room in Sefwi Wiawso", 250, 6, 1, "Forest town quiet."),
+  R("goaso_room", "goaso", "Room in Goaso", 260, 6, 1, "Mining-town prices, farming-town people."),
+  R("dambai_room", "dambai", "Room near the ferry, Dambai", 200, 6, 1, "Lake breeze."),
+]) RENTALS[r.id] = r;
+
 export const STARTER_HOME = "tetteh_room";
 
 // ---------------------------------------------------------------------------
@@ -47,8 +72,34 @@ export const PLOTS: Record<string, Plot> = {
   spintex_plot: { id: "spintex_plot", district: "spintex", name: "Plot in Spintex Community 18", price: 150_000, size: "70×100 ft", allowed: ["chamber_hall", "bungalow", "family_house", "shop_block", "apartments"] },
   labadi_plot: { id: "labadi_plot", district: "labadi", name: "Beachfront plot, La", price: 520_000, size: "80×100 ft", requiresUnlock: "nii_blessing", allowed: ["bungalow", "family_house", "villa", "apartments"] },
   legon_plot: { id: "legon_plot", district: "east_legon", name: "Plot near Legon Boulevard", price: 480_000, size: "70×100 ft", requiresRep: 15, allowed: ["bungalow", "family_house", "villa", "apartments"] },
-  trasacco_plot: { id: "trasacco_plot", district: "trasacco", name: "Valley plot with golf-course view", price: 1_900_000, size: "100×120 ft", requiresRep: 35, allowed: ["family_house", "villa"] },
+  trasacco_plot: { id: "trasacco_plot", district: "trasacco", name: "Valley plot with golf-course view", price: 1_900_000, size: "100×120 ft", requiresRep: 35, allowed: ["family_house", "villa", "mansion"] },
 };
+PLOTS.legon_plot.allowed.push("mansion", "guesthouse");
+PLOTS.spintex_plot.allowed.push("compound_house", "guesthouse");
+PLOTS.kaneshie_plot.allowed.push("compound_house");
+
+const PL = (id: string, district: string, name: string, price: number, size: string, allowed: string[], requiresRep?: number): Plot => ({ id, district, name, price, size, allowed, requiresRep });
+for (const p of [
+  PL("kumasi_plot", "adum", "Plot at Kwadaso, Kumasi", 85_000, "70×100 ft", ["chamber_hall", "bungalow", "family_house", "shop_block", "compound_house"]),
+  PL("ahodwo_plot", "adum", "Plot in Ahodwo, Kumasi", 420_000, "100×100 ft", ["family_house", "villa", "mansion", "apartments", "guesthouse"], 15),
+  PL("tamale_plot", "tamale", "Plot at Kalpohin, Tamale", 28_000, "70×100 ft", ["northern_compound", "chamber_hall", "bungalow", "family_house", "compound_house", "guesthouse", "shop_block"]),
+  PL("kintampo_plot", "kintampo", "Roadside plot on the N10, Kintampo", 15_000, "70×100 ft", ["chamber_hall", "bungalow", "guesthouse", "shop_block", "compound_house"]),
+  PL("techiman_plot", "techiman", "Plot near Techiman market", 30_000, "50×100 ft", ["chamber_hall", "bungalow", "shop_block", "compound_house"]),
+  PL("sunyani_plot", "sunyani", "Plot at Abesim, Sunyani", 45_000, "70×100 ft", ["bungalow", "family_house", "apartments", "shop_block", "guesthouse"]),
+  PL("wa_plot", "wa", "Plot in Wa", 14_000, "70×100 ft", ["northern_compound", "chamber_hall", "bungalow", "guesthouse"]),
+  PL("bole_plot", "bole", "Family land in Bole", 9_000, "100×100 ft", ["northern_compound", "chamber_hall", "bungalow", "shop_block"]),
+  PL("sawla_plot", "sawla", "Plot at Sawla junction", 7_000, "70×100 ft", ["northern_compound", "chamber_hall", "shop_block", "guesthouse"]),
+  PL("damongo_plot", "damongo", "Plot on the Mole road, Damongo", 10_000, "70×100 ft", ["northern_compound", "bungalow", "guesthouse"]),
+  PL("bolga_plot", "bolgatanga", "Plot in Bolgatanga", 13_000, "70×100 ft", ["northern_compound", "chamber_hall", "bungalow", "guesthouse"]),
+  PL("nalerigu_plot", "nalerigu", "Family land, Nalerigu", 7_000, "100×100 ft", ["northern_compound", "chamber_hall"]),
+  PL("cape_plot", "cape_coast", "Plot near the coast road, Cape Coast", 60_000, "70×100 ft", ["bungalow", "family_house", "guesthouse", "apartments"]),
+  PL("takoradi_plot", "takoradi", "Plot at Anaji, Takoradi", 95_000, "70×100 ft", ["bungalow", "family_house", "apartments", "villa", "shop_block", "mansion"]),
+  PL("ho_plot", "ho", "Plot in Ho", 38_000, "70×100 ft", ["chamber_hall", "bungalow", "family_house", "guesthouse"]),
+  PL("kof_plot", "koforidua", "Plot in Koforidua", 48_000, "70×100 ft", ["bungalow", "family_house", "guesthouse"]),
+  PL("wiawso_plot", "sefwi_wiawso", "Plot in Sefwi Wiawso", 18_000, "70×100 ft", ["chamber_hall", "bungalow", "compound_house"]),
+  PL("goaso_plot", "goaso", "Plot in Goaso", 20_000, "70×100 ft", ["chamber_hall", "bungalow", "compound_house"]),
+  PL("dambai_plot", "dambai", "Plot in Dambai", 12_000, "70×100 ft", ["chamber_hall", "bungalow", "guesthouse"]),
+]) PLOTS[p.id] = p;
 
 export interface Design {
   id: string;
@@ -75,6 +126,10 @@ export const DESIGNS: Record<string, Design> = {
   villa: { id: "villa", name: "Luxury villa with pool", baseCost: 1_400_000, stages: [...STD_STAGES([2, 4, 2, 4]), { name: "Pool & landscaping", share: 0, days: 2 }].map((s, i, arr) => ({ ...s, share: i === arr.length - 1 ? 0.12 : s.share * 0.88 })), comfort: 5, rentYield: 0.007, kind: "home" },
   shop_block: { id: "shop_block", name: "Row of 4 shops", baseCost: 120_000, stages: STD_STAGES([1, 1, 1, 1]), comfort: 0, rentYield: 0.014, kind: "commercial" },
   apartments: { id: "apartments", name: "6-unit apartment block", baseCost: 900_000, stages: STD_STAGES([2, 4, 2, 4]), comfort: 3, rentYield: 0.011, kind: "commercial" },
+  northern_compound: { id: "northern_compound", name: "Northern compound (round rooms & courtyard)", baseCost: 45_000, stages: [{ name: "Foundation", share: 0.15, days: 1 }, { name: "Mud & cement walls", share: 0.4, days: 1 }, { name: "Thatch & zinc roofs", share: 0.25, days: 1 }, { name: "Plaster & paint", share: 0.2, days: 1 }], comfort: 2, rentYield: 0.008, kind: "home" },
+  compound_house: { id: "compound_house", name: "Compound house (10 rooms around a courtyard)", baseCost: 260_000, stages: STD_STAGES([1, 2, 1, 2]), comfort: 2, rentYield: 0.013, kind: "commercial" },
+  guesthouse: { id: "guesthouse", name: "12-room guesthouse", baseCost: 650_000, stages: STD_STAGES([2, 3, 2, 3]), comfort: 3, rentYield: 0.013, kind: "commercial" },
+  mansion: { id: "mansion", name: "Mansion (7 bedrooms, pool, gatehouse & boys' quarters)", baseCost: 3_800_000, stages: [...STD_STAGES([3, 5, 3, 5]), { name: "Pool, gardens & gatehouse", share: 0, days: 3 }].map((s, i, arr) => ({ ...s, share: i === arr.length - 1 ? 0.15 : s.share * 0.85 })), comfort: 6, rentYield: 0.0065, kind: "home" },
 };
 
 export type Quality = "basic" | "standard" | "premium";
@@ -136,6 +191,31 @@ export const BUSINESSES: Record<string, BusinessType> = {
   boutique_hotel: { id: "boutique_hotel", name: "Boutique hotel", district: "trasacco", price: 3_200_000, revenue: 34_000, costs: 22_500, outdoor: false, weekend: 1.3, requiresRep: 40, blurb: "Twelve suites for diplomats and returnees." },
 };
 
+const B = (b: BusinessType) => b;
+for (const b of [
+  B({ id: "momo_kiosk", name: "Mobile money kiosk", district: "osu", price: 8_000, revenue: 220, costs: 120, outdoor: true, weekend: 0.9, blurb: "Cash-in, cash-out, airtime. The umbrella is the office." }),
+  B({ id: "phone_shop", name: "Phone shop, Oxford Street", district: "osu", price: 110_000, revenue: 2_100, costs: 1_400, outdoor: false, weekend: 1.3, blurb: "New and tokunbo phones, repairs and accessories." }),
+  B({ id: "real_estate_agency", name: "Real estate agency", district: "east_legon", price: 350_000, revenue: 5_200, costs: 3_500, outdoor: false, weekend: 0.8, requiresRep: 20, blurb: "List, show and sell. Your commission is 5%." }),
+  B({ id: "kejetia_stall", name: "Cloth stall in Kejetia", district: "adum", price: 25_000, revenue: 520, costs: 330, outdoor: false, weekend: 1.3, blurb: "Wax print and kente, folded high." }),
+  B({ id: "kumasi_chop_bar", name: "Chop bar in Adum", district: "adum", price: 55_000, revenue: 1_250, costs: 820, outdoor: false, weekend: 1.2, foodBusiness: true, blurb: "Two fufu pounders, a big pot of light soup." }),
+  B({ id: "fitting_shop", name: "Fitting shop, Suame Magazine", district: "adum", price: 70_000, revenue: 1_500, costs: 980, outdoor: true, weekend: 0.8, requiresUnlock: "cert_mechanic", blurb: "Engines, gearboxes and three apprentices." }),
+  B({ id: "sokoban_workshop", name: "Furniture workshop, Sokoban", district: "adum", price: 85_000, revenue: 1_650, costs: 1_100, outdoor: true, weekend: 0.9, blurb: "Sawdust, varnish and orders from all over Ashanti." }),
+  B({ id: "tamale_provision", name: "Provision shop, Tamale", district: "tamale", price: 18_000, revenue: 380, costs: 240, outdoor: false, weekend: 1.1, blurb: "Sugar, milk, Milo, rice, soap, credit for regulars." }),
+  B({ id: "shea_processing", name: "Shea butter processing centre", district: "tamale", price: 60_000, revenue: 1_200, costs: 780, outdoor: true, weekend: 0.9, blurb: "Twenty women, roasters, a grinding mill and export buyers." }),
+  B({ id: "smock_tailor", name: "Smock tailoring shop, Tamale", district: "tamale", price: 22_000, revenue: 480, costs: 300, outdoor: false, weekend: 1.2, requiresUnlock: "cert_tailoring", blurb: "Woven strips in, finished batakari out." }),
+  B({ id: "kintampo_guesthouse", name: "Roadside guesthouse, Kintampo", district: "kintampo", price: 160_000, revenue: 2_400, costs: 1_550, outdoor: false, weekend: 1.2, blurb: "Drivers and waterfall tourists, every night." }),
+  B({ id: "kintampo_chop", name: "Highway chop bar, Kintampo", district: "kintampo", price: 40_000, revenue: 1_000, costs: 650, outdoor: true, weekend: 1.1, foodBusiness: true, blurb: "Every bus stops. Every driver eats." }),
+  B({ id: "yam_trade", name: "Yam trading, Techiman", district: "techiman", price: 75_000, revenue: 1_700, costs: 1_150, outdoor: true, weekend: 1, blurb: "Buy from the farm gate, sell to the Accra queens." }),
+  B({ id: "cashew_trade", name: "Cashew aggregation, Bole", district: "bole", price: 90_000, revenue: 2_000, costs: 1_350, outdoor: false, weekend: 1, blurb: "Buy from farmers, sell to exporters by the container." }),
+  B({ id: "pito_brewery", name: "Pito brewery, Wa", district: "wa", price: 12_000, revenue: 280, costs: 165, outdoor: true, weekend: 1.4, foodBusiness: true, blurb: "Big clay pots, millet and a loyal evening crowd." }),
+  B({ id: "basket_export", name: "Basket export business, Bolga", district: "bolgatanga", price: 45_000, revenue: 950, costs: 620, outdoor: false, weekend: 1, blurb: "Pay weavers fairly, ship to shops in Europe." }),
+  B({ id: "cape_guesthouse", name: "Beach guesthouse, Cape Coast", district: "cape_coast", price: 240_000, revenue: 3_400, costs: 2_200, outdoor: false, weekend: 1.4, requiresRep: 5, blurb: "Ten rooms facing the sea, full every Easter and December." }),
+  B({ id: "cold_store", name: "Cold store, Takoradi", district: "takoradi", price: 120_000, revenue: 2_300, costs: 1_520, outdoor: false, weekend: 1, blurb: "Frozen mackerel and chicken by the carton." }),
+  B({ id: "akple_joint", name: "Akple joint, Ho", district: "ho", price: 30_000, revenue: 720, costs: 460, outdoor: false, weekend: 1.2, foodBusiness: true, blurb: "Okro soup, crab and loyal customers." }),
+  B({ id: "bead_workshop", name: "Bead workshop, Koforidua", district: "koforidua", price: 20_000, revenue: 450, costs: 280, outdoor: false, weekend: 1, blurb: "Glass, moulds and a kiln." }),
+  B({ id: "chemical_shop", name: "Chemical shop, Sunyani", district: "sunyani", price: 65_000, revenue: 1_300, costs: 850, outdoor: false, weekend: 0.9, blurb: "Licensed over-the-counter medicines and good advice." }),
+]) BUSINESSES[b.id] = b;
+
 export const MAX_BUSINESS_LEVEL = 5;
 export const businessUpgradeCost = (price: number, level: number) => Math.round(price * 0.45 * level);
 export const BUSINESS_UPGRADE_DAYS = 2;
@@ -151,21 +231,7 @@ export const demandNoise = (bizId: number | string, day: number) => 0.85 + rand0
 // ---------------------------------------------------------------------------
 // Vehicles
 
-export interface Vehicle {
-  id: string;
-  name: string;
-  price: number;
-  reputation: number;
-  color: string;
-  blurb: string;
-  requiresRep?: number;
-}
-
-export const VEHICLES: Record<string, Vehicle> = {
-  compact: { id: "compact", name: "Used compact sedan", price: 95_000, reputation: 3, color: "#B9C4CC", blurb: "Home-used, AC works (sometimes)." },
-  crossover: { id: "crossover", name: "Coastline crossover", price: 320_000, reputation: 8, color: "#7A2E2E", blurb: "Comfortable, reliable, respectable." },
-  v8: { id: "v8", name: "Savanna V8 SUV", price: 1_350_000, reputation: 20, color: "#1A1A1A", requiresRep: 25, blurb: "Black, tinted, unmistakable. The dream on four wheels." },
-};
+export { VEHICLES, type Vehicle } from "./life.ts";
 export const VEHICLE_DEPRECIATION_PER_MONTH = 0.012;
 
 // ---------------------------------------------------------------------------

@@ -1,8 +1,11 @@
 // Cities of Ghana. Accra is playable; others are registered at their real
 // locations so the map, intercity travel and future content slot in cleanly.
-import type { LatLon } from "./geo.ts";
+import { haversineKm, type LatLon } from "./geo.ts";
+import { REGIONS, TOWN_BY_ID, routeBetween } from "./ghana.ts";
+import { REGIONAL_DISTRICTS, REGIONAL_PLACES, SITES } from "./regional.ts";
 
-export type CityId = "accra" | "tema" | "kumasi" | "cape_coast" | "takoradi" | "tamale" | "ho";
+/** City ids are town ids from ghana.ts. */
+export type CityId = string;
 
 export interface City {
   id: CityId;
@@ -46,19 +49,43 @@ export const CITIES: Record<CityId, City> = {
       { name: "Kwame Nkrumah Circle", at: { lat: 5.5697, lon: -0.2154 }, icon: "🔄" },
     ],
   },
-  tema: { id: "tema", name: "Tema", region: "Greater Accra", center: { lat: 5.6698, lon: -0.0166 }, playable: false, tagline: "Harbour city, factories and the motorway.", landmarks: [{ name: "Tema Harbour", at: { lat: 5.6346, lon: 0.0119 }, icon: "⚓" }] },
-  kumasi: { id: "kumasi", name: "Kumasi", region: "Ashanti", center: { lat: 6.6885, lon: -1.6244 }, playable: false, tagline: "The Garden City and the heart of Asante.", landmarks: [{ name: "Kejetia Market", at: { lat: 6.6966, lon: -1.6233 }, icon: "🧺" }, { name: "Manhyia Palace", at: { lat: 6.7065, lon: -1.6153 }, icon: "👑" }] },
-  cape_coast: { id: "cape_coast", name: "Cape Coast", region: "Central", center: { lat: 5.1053, lon: -1.2466 }, playable: false, tagline: "Castles, schools and the Atlantic.", landmarks: [{ name: "Cape Coast Castle", at: { lat: 5.1037, lon: -1.2414 }, icon: "🏰" }] },
-  takoradi: { id: "takoradi", name: "Sekondi-Takoradi", region: "Western", center: { lat: 4.8975, lon: -1.7603 }, playable: false, tagline: "Oil City by the sea.", landmarks: [{ name: "Takoradi Market Circle", at: { lat: 4.8968, lon: -1.7556 }, icon: "🧺" }] },
-  tamale: { id: "tamale", name: "Tamale", region: "Northern", center: { lat: 9.4008, lon: -0.8393 }, playable: false, tagline: "Gateway to the north.", landmarks: [{ name: "Tamale Central Market", at: { lat: 9.4034, lon: -0.8424 }, icon: "🧺" }] },
-  ho: { id: "ho", name: "Ho", region: "Volta", center: { lat: 6.6008, lon: 0.4713 }, playable: false, tagline: "Hills, waterfalls and Volta hospitality.", landmarks: [] },
 };
 
 export const CITY_IDS = Object.keys(CITIES) as CityId[];
 
-/** Intercity transport, for when more cities open. Prices in cedis. */
-export const INTERCITY_MODES = {
-  bus: { name: "Intercity bus", perKm: 0.55, base: 25, speedKmh: 55 },
-  vip: { name: "VIP coach", perKm: 0.85, base: 40, speedKmh: 62 },
-  flight: { name: "Domestic flight", perKm: 2.8, base: 650, speedKmh: 420 },
-} as const;
+// Every town with a playable district is a city you can live in.
+for (const d of REGIONAL_DISTRICTS) {
+  if (CITIES[d.city]) continue;
+  const t = TOWN_BY_ID[d.city];
+  CITIES[d.city] = {
+    id: d.city, name: t.name, region: REGIONS[t.region].name, center: t.at, playable: true, tagline: d.tagline,
+    landmarks: [
+      ...REGIONAL_PLACES.filter((p) => p.district === d.id && p.geo).map((p) => ({ name: p.name, at: p.geo!, icon: p.kind === "clinic" ? "🏥" : p.kind === "market" ? "🧺" : p.kind === "school" ? "🎓" : "⭐" })),
+      ...SITES.filter((s) => s.from.includes(d.id)).map((s) => ({ name: s.name, at: s.at, icon: s.kind === "waterfall" ? "💧" : s.kind === "wildlife" ? "🐘" : s.kind === "heritage" ? "🏛️" : s.kind === "beach" ? "🏖️" : s.kind === "dam" ? "⚡" : s.kind === "craft" ? "🧵" : "🌿" })),
+    ],
+  };
+}
+
+/** Intercity transport. Prices in cedis. */
+export type IntercityMode = "bus" | "vip" | "flight" | "car";
+export const INTERCITY_MODES: Record<IntercityMode, { name: string; perKm: number; base: number; speedKmh: number; overhead: number; hours: [number, number]; note: string }> = {
+  bus: { name: "Intercity bus", perKm: 0.48, base: 20, speedKmh: 48, overhead: 60, hours: [4, 22], note: "From the lorry station. Leaves when it's full." },
+  vip: { name: "VIP / STC coach", perKm: 0.72, base: 35, speedKmh: 58, overhead: 45, hours: [5, 23], note: "Air-con, a movie and a reserved seat." },
+  flight: { name: "Domestic flight", perKm: 2.6, base: 600, speedKmh: 420, overhead: 120, hours: [6, 20], note: "Only between towns with airports." },
+  car: { name: "Drive yourself", perKm: 1.1, base: 0, speedKmh: 65, overhead: 0, hours: [0, 24], note: "Fuel only. Mind the potholes and the police barriers." },
+};
+
+/** Towns with commercial airports. */
+export const AIRPORTS = ["accra", "kumasi", "tamale", "takoradi", "wa", "ho", "sunyani"];
+
+export function intercityQuote(from: CityId, to: CityId, mode: IntercityMode) {
+  const route = routeBetween(from, to);
+  if (!route) return null;
+  const m = INTERCITY_MODES[mode];
+  if (mode === "flight" && !(AIRPORTS.includes(from) && AIRPORTS.includes(to))) return null;
+  const km = mode === "flight" ? Math.round(haversineKm(TOWN_BY_ID[from].at, TOWN_BY_ID[to].at)) : route.km;
+  const minutes = Math.round((km / m.speedKmh) * 60) + m.overhead;
+  const fare = Math.round(m.base + m.perKm * km);
+  const energy = mode === "flight" ? -8 : -Math.min(45, Math.round(6 + km / 15));
+  return { km, minutes, fare, energy, route };
+}

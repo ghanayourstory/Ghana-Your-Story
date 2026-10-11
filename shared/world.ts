@@ -3,14 +3,16 @@
 // Districts sit at their real coordinates and carry their real road names.
 import { haversineKm, ROAD_FACTOR, type LatLon } from "./geo.ts";
 import type { CityId } from "./cities.ts";
+import { REGIONAL_DISTRICTS, REGIONAL_JOBS, REGIONAL_PLACES, REGIONAL_SERVICES } from "./regional.ts";
 
-export type DistrictId = "osu" | "labadi" | "kaneshie" | "spintex" | "east_legon" | "trasacco";
+/** Accra districts are listed here; regional towns are added from regional.ts. */
+export type DistrictId = string;
 export type StatKey = "energy" | "hunger" | "health" | "social";
 export type SkillKey = "work" | "fitness" | "charisma" | "business";
 export type EffectKey = StatKey | SkillKey | "reputation";
 export type Effects = Partial<Record<EffectKey, number>>;
 
-export type DistrictStyle = "urban" | "coastal" | "market" | "corporate" | "suburban" | "luxury";
+export type DistrictStyle = "urban" | "coastal" | "market" | "corporate" | "suburban" | "luxury" | "savanna" | "town";
 
 export interface District {
   id: DistrictId;
@@ -147,6 +149,8 @@ export const DISTRICTS: Record<DistrictId, District> = {
   },
 };
 
+for (const d of REGIONAL_DISTRICTS) DISTRICTS[d.id] = d;
+
 export const DISTRICT_IDS = Object.keys(DISTRICTS) as DistrictId[];
 
 // ---------------------------------------------------------------------------
@@ -163,6 +167,16 @@ export interface Service {
   hours?: [number, number]; // when the service is available (24h, end exclusive; may wrap)
   note?: string;
   requiresRep?: number;
+  /** Only on these weekdays (0 = Sunday … 6 = Saturday). */
+  days?: number[];
+  /** Only in these months (1..12). */
+  months?: number[];
+  /** Only on the Akwasidae cycle (every 42 days, a Sunday). */
+  cycle42?: boolean;
+  /** Visiting counts as seeing this excursion site. */
+  site?: string;
+  /** Attending counts as this festival. */
+  festival?: string;
 }
 
 export const SERVICES: Record<string, Service> = {
@@ -190,6 +204,7 @@ export const SERVICES: Record<string, Service> = {
   coworking: { id: "coworking", name: "Co-working day", verb: "Study & network", cost: 90, minutes: 240, effects: { energy: -15, work: 2, social: 6, charisma: 1 }, hours: [8, 20] },
   golf: { id: "golf", name: "Nine holes", verb: "Play golf", cost: 900, minutes: 180, effects: { social: 20, health: 4, reputation: 3, business: 1 }, hours: [6, 18], requiresRep: 30 },
   view: { id: "view", name: "Take in the view", verb: "Look around", cost: 0, minutes: 20, effects: { social: 3, health: 1 } },
+  ...REGIONAL_SERVICES,
 };
 
 // ---------------------------------------------------------------------------
@@ -232,7 +247,7 @@ export const RANK_TITLES = ["Junior", "", "Senior", "Lead", "Head"];
 // ---------------------------------------------------------------------------
 // Places
 
-export type PlaceKind = "food" | "work" | "bank" | "gym" | "clinic" | "nightlife" | "beach" | "market" | "realtor" | "home" | "church" | "transport" | "landmark" | "shop" | "school" | "dealer";
+export type PlaceKind = "food" | "work" | "bank" | "gym" | "clinic" | "nightlife" | "beach" | "market" | "realtor" | "home" | "church" | "transport" | "landmark" | "shop" | "school" | "dealer" | "mosque" | "lodge" | "tour" | "furniture" | "phone" | "mall";
 
 export interface Place {
   id: string;
@@ -267,6 +282,9 @@ export const PLACES: Place[] = [
   P({ id: "black_star_square", district: "osu", name: "Black Star Square", kind: "landmark", sign: "BLACK STAR SQUARE", pos: [70, -26], size: [18, 10, 14], color: "#EDE6D6", open: [0, 24], services: ["view", "jog"], blurb: "Independence Arch and the Black Star Gate, facing the sea.", geo: { lat: 5.5477, lon: -0.1923 } }),
   P({ id: "osu_castle", district: "osu", name: "Osu Castle", kind: "landmark", sign: "OSU CASTLE • FORT CHRISTIANSBORG", pos: [-48, 30], size: [14, 12, 9], color: "#F4F1E6", open: [8, 18], services: ["view"], blurb: "Built in the 1600s, seat of government for decades. The sea crashes below its walls.", geo: { lat: 5.547, lon: -0.18 } }),
 
+  P({ id: "melcom_osu", district: "osu", name: "Melcom Osu", kind: "shop", sign: "MELCOM • OSU", pos: [-24, -16], size: [12, 9, 7], color: "#E8D5B5", open: [8, 21], services: [], blurb: "Mattresses, fans, fridges, generators and back-to-school everything." }),
+  P({ id: "osu_phones", district: "osu", name: "Oxford Street Phones", kind: "phone", sign: "OXFORD ST. PHONES • REPAIRS", pos: [41, 15], size: [8, 7, 4], color: "#7FB7BE", open: [8, 22], services: [], blurb: "New phones, tokunbo phones and a guy who can fix a cracked screen in twenty minutes." }),
+
   // --- Labadi
   P({ id: "sunset_shack", district: "labadi", name: "Sunset Shack", kind: "nightlife", sign: "SUNSET SHACK • BEACH BAR", pos: [-18, 30], size: [12, 8, 4], color: "#E9B872", open: [12, 3], services: ["beach_bar", "banku", "sobolo"], blurb: "Bamboo, reggae, cold drinks, Selasi on the decks." }),
   P({ id: "labadi_beach", district: "labadi", name: "Labadi Beach", kind: "beach", sign: "LABADI BEACH", pos: [16, 34], size: [6, 4, 3], color: "#5FA8A0", open: [6, 22], services: ["swim", "jog", "drum_circle", "view"], blurb: "Horse rides, drummers and the Gulf of Guinea.", geo: { lat: 5.5585, lon: -0.147 } }),
@@ -284,12 +302,19 @@ export const PLACES: Place[] = [
   P({ id: "kaneshie_church", district: "kaneshie", name: "Mount Zion Assembly", kind: "church", sign: "MOUNT ZION ASSEMBLY", pos: [56, 16], size: [12, 14, 8], color: "#EDE6D6", open: [6, 21], services: ["church"], blurb: "Loud praise, warm people." }),
   P({ id: "kaneshie_school", district: "kaneshie", name: "Accra Evening Institute", kind: "school", sign: "ACCRA EVENING INSTITUTE", pos: [36, 16], size: [12, 9, 7], color: "#A9B4A0", open: [16, 22], services: ["course"], blurb: "Accounting, IT and business classes after work." }),
 
+  P({ id: "kaneshie_phones", district: "kaneshie", name: "Kaneshie Phone Market", kind: "phone", sign: "PHONES • ACCESSORIES • MOMO", pos: [-14, 15], size: [8, 7, 4], color: "#8FA8C0", open: [7, 20], services: [], blurb: "Rows of glass counters. Haggle hard." }),
+  P({ id: "kaneshie_carpenters", district: "kaneshie", name: "Carpenters' Row", kind: "furniture", sign: "GOD'S TIME FURNITURE WORKS", pos: [-24, 15], size: [8, 7, 3.6], color: "#C47A5A", open: [7, 18], services: [], blurb: "Beds, wardrobes and sofas built to order in the open air." }),
+  P({ id: "tokunbo_lot", district: "kaneshie", name: "Abossey Okai Tokunbo Lot", kind: "dealer", sign: "TOKUNBO CARS • ABOSSEY OKAI", pos: [55, -18], size: [16, 10, 5], color: "#B8B8AA", open: [8, 18], services: [], blurb: "Home-used cars from Europe and the US, and every spare part in Ghana around the corner." }),
+
   // --- Spintex
   P({ id: "coastline_callcentre", district: "spintex", name: "Coastline Contact Centre", kind: "work", sign: "COASTLINE CONTACT CENTRE", pos: [-28, -18], size: [20, 14, 14], color: "#B9C4CC", open: [7, 21], services: [], blurb: "Six floors of headsets." }),
   P({ id: "kente_labs", district: "spintex", name: "Kente Labs", kind: "work", sign: "KENTE LABS • BUILD AFRICA", pos: [10, -18], size: [18, 12, 12], color: "#8DA9C4", open: [7, 22], services: ["coworking"], blurb: "Glass, standing desks and very good Wi-Fi." }),
   P({ id: "spintex_plaza", district: "spintex", name: "Spintex Plaza", kind: "food", sign: "SPINTEX PLAZA • FOOD COURT", pos: [44, 16], size: [22, 14, 7], color: "#F0EAD6", open: [8, 22], services: ["jollof", "coffee", "sobolo"], blurb: "Supermarket, food court and air conditioning." }),
   P({ id: "spintex_stop", district: "spintex", name: "Spintex Junction", kind: "transport", sign: "SPINTEX JUNCTION", pos: [-62, 14], size: [8, 4, 3], color: "#F2B705", open: [0, 24], services: [], blurb: "Traffic capital of Accra." }),
   P({ id: "spintex_gym", district: "spintex", name: "Iron Works Gym", kind: "gym", sign: "IRON WORKS GYM", pos: [-6, 16], size: [10, 9, 5], color: "#D7C4A3", open: [5, 22], services: ["gym"], blurb: "No mirrors, just iron." }),
+
+  P({ id: "accra_mall", district: "spintex", name: "Accra Mall", kind: "mall", sign: "ACCRA MALL • TETTEH QUARSHIE", pos: [50, -20], size: [26, 16, 10], color: "#F0EAD6", open: [9, 22], services: ["coffee", "jollof"], blurb: "Phones, appliances, fashion, a cinema and the coldest AC in the city." }),
+  P({ id: "spintex_furniture", district: "spintex", name: "Spintex Furniture Gallery", kind: "furniture", sign: "FURNITURE GALLERY • SHOWROOM", pos: [-30, 16], size: [14, 9, 6], color: "#D7C4A3", open: [9, 19], services: [], blurb: "Showroom sofas, beds and dining sets, delivered on a truck." }),
 
   // --- East Legon
   P({ id: "coastline_bank_hq", district: "east_legon", name: "Coastline Bank HQ", kind: "bank", sign: "COASTLINE BANK • HEAD OFFICE", pos: [-24, -18], size: [18, 14, 18], color: "#F5F1E8", open: [8, 17], services: [], blurb: "Treasury desk, loans and private banking." }),
@@ -306,6 +331,9 @@ export const PLACES: Place[] = [
   P({ id: "prestige_autos", district: "trasacco", name: "Prestige Autos", kind: "dealer", sign: "PRESTIGE AUTOS", pos: [20, -18], size: [16, 12, 7], color: "#D9D4C7", open: [9, 18], services: [], blurb: "From tidy Corollas to the V8 of your dreams." }),
   P({ id: "valley_gate", district: "trasacco", name: "Valley Gate", kind: "transport", sign: "TRASACCO VALLEY • GATE 1", pos: [-62, 14], size: [8, 5, 4], color: "#B08D57", open: [0, 24], services: [], blurb: "Security will check your name." }),
 ];
+
+PLACES.push(...REGIONAL_PLACES);
+Object.assign(JOBS, REGIONAL_JOBS);
 
 export const PLACE_BY_ID: Record<string, Place> = Object.fromEntries(PLACES.map((p) => [p.id, p]));
 export const placesIn = (d: DistrictId) => PLACES.filter((p) => p.district === d);

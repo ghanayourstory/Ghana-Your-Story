@@ -21,6 +21,17 @@ export interface ProgressSnapshot {
   usdMinor: number;
   betsWon: number;
   maxBusinessLevel: number;
+  regionsVisited: number;
+  sitesVisited: number;
+  dishesTasted: number;
+  festivals: number;
+  followers: number;
+  harvests: number;
+  certificates: number;
+  licensed: boolean;
+  furnishingPoints: number;
+  ownsMansion: boolean;
+  carCount: number;
 }
 
 export interface Goal {
@@ -50,11 +61,25 @@ export const GOALS: Goal[] = [
   { id: "first_house", title: "Your own roof", description: "Finish building a house.", chapter: 4, check: (s) => s.housesBuilt >= 1, reward: { reputation: 10 } },
   { id: "business_lvl3", title: "Growing pains", description: "Upgrade a business to level 3.", chapter: 4, check: (s) => s.maxBusinessLevel >= 3, reward: { reputation: 4 } },
   { id: "love", title: "Somebody special", description: "Start a relationship.", chapter: 4, check: (s) => s.partner, reward: { reputation: 3 } },
-  { id: "car", title: "Wheels", description: "Buy a car.", chapter: 4, check: (s) => s.vehicles.length >= 1, reward: { reputation: 3 } },
+  { id: "car", title: "Wheels", description: "Buy a car.", chapter: 4, check: (s) => s.carCount >= 1, reward: { reputation: 3 } },
   { id: "net_1m", title: "Cedi millionaire", description: "Reach GH₵1,000,000 net worth.", chapter: 5, check: (s) => s.netWorthMinor >= money(1_000_000), progress: (s) => [Math.max(0, Math.min(s.netWorthMinor, money(1_000_000))), money(1_000_000)], reward: { reputation: 10 } },
   { id: "the_v8", title: "The V8", description: "Drive the Savanna V8 through the Valley gate.", chapter: 5, check: (s) => s.vehicles.includes("v8"), reward: { reputation: 10 } },
   { id: "the_dream", title: "The Sika City dream", description: "Own a home in Trasacco Valley.", chapter: 5, check: (s) => s.ownsHome && s.homeDistrict === "trasacco", reward: { reputation: 20 } },
+  // Life across Ghana
+  { id: "travel_3", title: "Beyond Accra", description: "Visit three of Ghana's regions.", chapter: 2, check: (s) => s.regionsVisited >= 3, progress: (s) => [Math.min(s.regionsVisited, 3), 3], reward: { reputation: 3 } },
+  { id: "sites_5", title: "See Ghana", description: "Take five day trips: waterfalls, castles, parks.", chapter: 3, check: (s) => s.sitesVisited >= 5, progress: (s) => [Math.min(s.sitesVisited, 5), 5], reward: { cash: 400, reputation: 3 } },
+  { id: "dishes_12", title: "Taste of Ghana", description: "Try twelve local dishes and drinks.", chapter: 2, check: (s) => s.dishesTasted >= 12, progress: (s) => [Math.min(s.dishesTasted, 12), 12], reward: { reputation: 3 } },
+  { id: "licence", title: "Licensed", description: "Get a driving or riding licence.", chapter: 2, check: (s) => s.licensed, reward: { reputation: 2 } },
+  { id: "furnished", title: "Make it home", description: "Furnish your home (12 comfort points).", chapter: 2, check: (s) => s.furnishingPoints >= 12, progress: (s) => [Math.min(s.furnishingPoints, 12), 12], reward: { reputation: 3 } },
+  { id: "first_harvest", title: "Back to the land", description: "Bring in your first harvest.", chapter: 3, check: (s) => s.harvests >= 1, reward: { cash: 300, reputation: 3 } },
+  { id: "certified", title: "Certified", description: "Complete a course or apprenticeship.", chapter: 2, check: (s) => s.certificates >= 1, reward: { reputation: 3 } },
+  { id: "followers_10k", title: "Influencer", description: "Reach 10,000 followers.", chapter: 3, check: (s) => s.followers >= 10_000, progress: (s) => [Math.min(s.followers, 10_000), 10_000], reward: { reputation: 5 } },
+  { id: "mansion", title: "Mansion life", description: "Build a mansion.", chapter: 5, check: (s) => s.ownsMansion, reward: { reputation: 15 } },
   // Achievements (hidden-ish extras)
+  { id: "ach_all_regions", title: "All sixteen", description: "Visit every region of Ghana.", chapter: 0, achievement: true, check: (s) => s.regionsVisited >= 16, reward: {} },
+  { id: "ach_festivals", title: "Festival soul", description: "Attend five different festivals.", chapter: 0, achievement: true, check: (s) => s.festivals >= 5, reward: {} },
+  { id: "ach_celebrity", title: "Celebrity", description: "Reach 100,000 followers.", chapter: 0, achievement: true, check: (s) => s.followers >= 100_000, reward: {} },
+  { id: "ach_supercar", title: "Ten centimetres of clearance", description: "Own the Vettore Furia.", chapter: 0, achievement: true, check: (s) => s.vehicles.includes("supercar"), reward: {} },
   { id: "ach_dollar", title: "Dollarised", description: "Hold $1,000 in your foreign-currency account.", chapter: 0, achievement: true, check: (s) => s.usdMinor >= 100_000, reward: {} },
   { id: "ach_respected", title: "Respected", description: "Reach 50 community standing.", chapter: 0, achievement: true, check: (s) => s.reputation >= 50, reward: {} },
   { id: "ach_tipster", title: "Ebo would be proud", description: "Win 3 football predictions.", chapter: 0, achievement: true, check: (s) => s.betsWon >= 3, reward: {} },
