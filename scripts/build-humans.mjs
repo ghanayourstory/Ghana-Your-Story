@@ -106,7 +106,6 @@ function build(gender) {
   const eyes = ["eye.L", "eye.R"].map((b) => ({ head: toM(jointPos(sk.bones[b].head)), tail: toM(jointPos(sk.bones[b].tail)) }));
   const eyeY = (eyes[0].head[1] + eyes[1].head[1]) / 2;
   const headP = heads.get("head");
-  const mouth = toM(jointPos(sk.bones["oris01"].head));
   const waistY = heads.get("spine04")[1] - 0.02;
 
   // Unweld on (vertex, uv) pairs.
@@ -149,12 +148,7 @@ function build(gender) {
     const [x, y, z] = [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
     let r = 0;
     if (/^(head|jaw|neck)/.test(dom)) {
-      const dm = Math.hypot(x - mouth[0], (y - mouth[1]) * 1.6, z - mouth[2]);
-      if (dom !== "neck01" && dom !== "neck02" && dom !== "neck03") {
-        if (y > eyeY + 0.032 || (y > eyeY - 0.02 && z < headP[2] - 0.03) || (y > eyeY - 0.055 && z < headP[2] - 0.06 && Math.abs(x) > 0.045)) r = 5;
-        else if (y > eyeY + 0.012 && y < eyeY + 0.03 && z > headP[2] + 0.06 && Math.abs(Math.abs(x) - Math.abs(eyes[0].head[0])) < 0.028) r = 8;
-        else if (dm < 0.024 && z > mouth[2] - 0.01) r = 7;
-      }
+      r = 0; // face and scalp detail comes from the smooth face masks below
     } else if (/^(spine|clavicle|shoulder|breast)/.test(dom) || (/^(root|pelvis)/.test(dom) && y >= waistY)) r = 1;
     else if (dom.startsWith("upperarm01")) r = 1;
     else if (dom.startsWith("upperarm02")) r = 2;
@@ -180,6 +174,57 @@ function build(gender) {
     const vi = src[i];
     const l = Math.hypot(wn[vi * 3], wn[vi * 3 + 1], wn[vi * 3 + 2]) || 1;
     normal.set([wn[vi * 3] / l, wn[vi * 3 + 1] / l, wn[vi * 3 + 2] / l], i * 3);
+  }
+
+  // -------------------------------------------------------------------------
+  // Smooth face masks (hair, brows, lips, lashes) from anatomical landmarks.
+  const eyeZ = (eyes[0].head[2] + eyes[1].head[2]) / 2;
+  const eyeX = Math.abs(eyes[0].head[0]);
+  const C = [0, eyeY + 0.02, eyeZ - 0.085];
+  let headR = 0, headN = 0;
+  let nose = [0, 0, -1];
+  for (let i = 0; i < n; i++) {
+    const vi = src[i];
+    const w = vw[vi].get("head") ?? 0;
+    if (w < 0.6) continue;
+    const p = [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+    if (Math.abs(p[0]) < 0.006 && p[1] < eyeY && p[1] > eyeY - 0.06 && p[2] > nose[2]) nose = p;
+    if (p[1] > eyeY + 0.04) { headR += Math.hypot(p[0] - C[0], p[1] - C[1], p[2] - C[2]); headN++; }
+  }
+  headR /= Math.max(1, headN);
+  const mouth = [0, nose[1] - 0.033, nose[2] - 0.012];
+  const smooth = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+  const lerp = (a, b, t) => a + (b - a) * t;
+  // Hairline elevation (degrees above the head centre's horizontal) by azimuth from the face.
+  const hairline = (az) => {
+    const a = Math.abs(az);
+    const pts = [[0, 27], [25, 25], [50, 17], [75, 4], [95, -4], [120, -20], [150, -36], [180, -42]];
+    for (let k = 1; k < pts.length; k++) if (a <= pts[k][0]) return lerp(pts[k - 1][1], pts[k][1], (a - pts[k - 1][0]) / (pts[k][0] - pts[k - 1][0]));
+    return -40;
+  };
+  const faceMask = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const vi = src[i];
+    const hw = (vw[vi].get("head") ?? 0) + (vw[vi].get("jaw") ?? 0) + (vw[vi].get("neck03") ?? 0) * 0.5;
+    if (hw < 0.3) continue;
+    const p = [pos[i * 3], pos[i * 3 + 1], pos[i * 3 + 2]];
+    const d = [p[0] - C[0], p[1] - C[1], p[2] - C[2]];
+    const dist = Math.hypot(...d);
+    const elev = (Math.asin(d[1] / dist) * 180) / Math.PI;
+    const az = (Math.atan2(d[0], d[2]) * 180) / Math.PI;
+    const onSkull = 1 - smooth(headR * 1.04, headR * 1.12, dist); // ears stick out: excluded
+    const hair = smooth(hairline(az) - 2.5, hairline(az) + 2.5, elev) * onSkull;
+    // Brows: arched bands above each eye, front only.
+    const bx = (Math.abs(p[0]) - (eyeX + 0.004)) / 0.023;
+    const archY = eyeY + 0.026 - 0.006 * bx * bx;
+    const brow = (1 - smooth(0.85, 1.05, Math.abs(bx))) * (1 - smooth(0.0028, 0.0052, Math.abs(p[1] - archY))) * smooth(eyeZ - 0.03, eyeZ - 0.01, p[2]);
+    // Upper lash line.
+    const lx = (Math.abs(p[0]) - eyeX) / 0.015;
+    const lash = (1 - smooth(0.8, 1.05, Math.abs(lx))) * (1 - smooth(0.0012, 0.003, Math.abs(p[1] - (eyeY + 0.007 - 0.004 * lx * lx)))) * smooth(eyeZ - 0.005, eyeZ + 0.008, p[2]);
+    // Lips: an ellipse around the mouth, frontal.
+    const le = Math.hypot(p[0] / 0.025, (p[1] - mouth[1]) / 0.0115);
+    const lip = (1 - smooth(0.8, 1.08, le)) * smooth(mouth[2] - 0.022, mouth[2] - 0.008, p[2]);
+    faceMask.set([hair * 255, brow * 255, lip * 255, lash * 255].map(Math.round), i * 4);
   }
 
   const morphDelta = (P) => {
@@ -291,6 +336,7 @@ function build(gender) {
     position: b64(new Float32Array(pos)),
     uv: b64(new Float32Array(uv)),
     normal: b64(normal),
+    faceMask: b64(faceMask),
     index: b64(new Uint16Array(idx)),
     skinIndex: b64(skinIndex),
     skinWeight: b64(skinWeight),

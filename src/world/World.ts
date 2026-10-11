@@ -411,7 +411,7 @@ export class World {
     const mag = Math.min(1, Math.hypot(ix, iz));
     const running = this.run || this.keys.has("shift") || mag > 0.95 && (this.joy.x !== 0 || this.joy.y !== 0) && Math.hypot(this.joy.x, this.joy.y) > 0.98;
     const energy = this.state?.player.stats.energy ?? 50;
-    const maxSpeed = (running ? 5.4 : 2.6) * (energy < 10 ? 0.6 : 1);
+    const maxSpeed = (running ? 4.6 : 1.7) * (energy < 10 ? 0.6 : 1);
     if (mag > 0.05) {
       const fwd = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw));
       const right = new THREE.Vector3(-fwd.z, 0, fwd.x);

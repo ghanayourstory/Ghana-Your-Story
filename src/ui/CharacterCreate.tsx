@@ -23,6 +23,9 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
   const canvas = useRef<HTMLCanvasElement>(null);
   const lookRef = useRef(look);
   lookRef.current = look;
+  const [view, setView] = useState<"body" | "face">(() => (location.hash === "#portrait" ? "face" : "body"));
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   useEffect(() => {
     const c = canvas.current!;
@@ -63,7 +66,12 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
         scene.add(rig.root);
       }
       const dt = clock.getDelta();
-      rig.root.rotation.y += dt * 0.5;
+      const face = viewRef.current === "face";
+      const ht = lookRef.current.height;
+      cam.position.lerp(new THREE.Vector3(0, face ? ht * 0.93 : 1.3, face ? 0.75 : 5.2), Math.min(1, dt * 6));
+      cam.lookAt(0, face ? ht * 0.925 : 0.95, 0);
+      if (face) rig.root.rotation.y = Math.sin(clock.elapsedTime * 0.6) * 0.6;
+      else rig.root.rotation.y += dt * 0.5;
       animatePerson(rig, dt, 0);
       const w = c.clientWidth, h = c.clientHeight;
       if (c.width !== Math.floor(w * renderer.getPixelRatio())) {
@@ -90,6 +98,10 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
           <div style={{ position: "absolute", left: 18, top: 16 }} className="brand">
             <div className="coin">₵</div>
             <div className="wordmark">Sika<span>City</span></div>
+          </div>
+          <div className="seg" style={{ position: "absolute", right: 14, top: 14 }}>
+            <button className={view === "body" ? "on" : ""} onClick={() => setView("body")}>Full body</button>
+            <button className={view === "face" ? "on" : ""} onClick={() => setView("face")}>Face</button>
           </div>
           <div style={{ position: "absolute", left: 18, bottom: 16, right: 18, textShadow: "0 1px 6px rgba(0,0,0,.6)" }}>
             <div style={{ fontWeight: 800, fontSize: 22 }}>{name.trim() || "Your name"}</div>
