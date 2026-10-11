@@ -9,11 +9,10 @@
     "erasableSyntaxOnly": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx",
     "strict": true,
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["shared", "server", "src", "tests"]
+  "include": ["shared", "server", "tests"]
 }

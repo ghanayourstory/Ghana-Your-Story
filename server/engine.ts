@@ -136,6 +136,9 @@ export const BACKGROUNDS = {
 } as const;
 export type Background = keyof typeof BACKGROUNDS;
 
+export const HAIR_STYLES = ["low", "afro", "braids", "bun", "wrap", "cap", "locs"] as const;
+export const PATTERNS = ["plain", "kente", "wax", "stripe"] as const;
+
 export interface LookInput {
   skin: string;
   shirt: string;
@@ -144,6 +147,8 @@ export interface LookInput {
   feminine: boolean;
   height: number;
   build: number;
+  hairStyle: (typeof HAIR_STYLES)[number];
+  pattern: (typeof PATTERNS)[number];
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -159,6 +164,8 @@ export function sanitizeLook(l: unknown): LookInput {
     feminine: o.feminine === true,
     height: num(o.height, 1.55, 1.95, 1.74),
     build: num(o.build, 0.85, 1.2, 1),
+    hairStyle: (HAIR_STYLES as readonly string[]).includes(o.hairStyle as string) ? (o.hairStyle as LookInput["hairStyle"]) : "low",
+    pattern: (PATTERNS as readonly string[]).includes(o.pattern as string) ? (o.pattern as LookInput["pattern"]) : "plain",
   };
 }
 
@@ -698,6 +705,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "discover": return actDiscover(p, a);
     case "service": return actService(ctx, p, a, fb);
     case "sleep": return actSleep(ctx, p, a, fb);
+    case "order_food": return actOrderFood(ctx, p, a, fb);
     case "travel": return actTravel(ctx, p, a, fb);
     case "job_apply": return actJobApply(p, a, fb);
     case "job_quit": return actJobQuit(p, fb);
@@ -767,6 +775,23 @@ function actService(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   return null;
 }
 
+/** Chop app: food delivered wherever you are, at a premium, paid by mobile money. */
+export const DELIVERY_MENU = ["waakye", "jollof", "banku", "fufu", "kelewele"] as const;
+export const DELIVERY_FEE = 15;
+
+function actOrderFood(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const sid = typeof a.serviceId === "string" ? a.serviceId : "";
+  if (!(DELIVERY_MENU as readonly string[]).includes(sid)) throw new GameError("bad_service", "Not on the menu");
+  const s = SERVICES[sid];
+  const hour = toGameDate(p.game_min).hour;
+  if (hour < 7 || hour >= 23) throw new GameError("closed", "Riders are off the road. Delivery runs 7:00–23:00.");
+  const cost = minor(Math.round(priceFor(s.cost, p.district) * 1.3) + DELIVERY_FEE);
+  const money = chargeStrict(ctx, p, cost, "spend", `Chop delivery: ${s.name}`, true);
+  advance(ctx, p, 40, fb, { quiet: true });
+  applyEffects(p, { ...s.effects, social: Math.min(2, s.effects.social ?? 0) }, fb, `Your ${s.name.toLowerCase()} arrived by okada rider`, money);
+  return null;
+}
+
 function actSleep(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("wrong_place", "You can only sleep at home. Head home first.");
   const hours = a.hours === 2 ? 2 : 8;
@@ -783,6 +808,7 @@ function actTravel(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (!(to in DISTRICTS)) throw new GameError("bad_district", "Unknown destination");
   if (!(mode in TRAVEL_MODES)) throw new GameError("bad_mode", "Unknown way to travel");
   if (to === p.district) throw new GameError("same_place", "You're already here");
+  if (DISTRICTS[to].city !== DISTRICTS[p.district].city) throw new GameError("intercity", "Intercity travel opens when more cities do.");
   const gd = toGameDate(p.game_min);
   const m = TRAVEL_MODES[mode];
   if (m.hours && !isOpenAt(m.hours, gd.hour)) throw new GameError("no_service", `No ${m.name.toLowerCase()} running at this hour.`);

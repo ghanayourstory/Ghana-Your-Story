@@ -1,0 +1,332 @@
+import { useMemo, useState } from "react";
+import { useGame } from "../store.tsx";
+import { AVATAR_COLORS, Bar, EffectsPreview, Sheet, initials, money } from "./common.tsx";
+import { CITIES, CITY_IDS } from "../../shared/cities.ts";
+import { projectKm, haversineKm } from "../../shared/geo.ts";
+import { DISTRICTS, districtsIn, JOBS, PLACE_BY_ID, SERVICES, TRAVEL_MODES, isOpenAt, priceFor, rankPay, travelQuote, type DistrictId, type TravelMode } from "../../shared/world.ts";
+import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
+import { VEHICLES } from "../../shared/economy.ts";
+import { toGameDate } from "../../shared/calendar.ts";
+import type { World } from "../world/World.ts";
+
+const SVC_ICON: Record<string, string> = { waakye: "🍛", kelewele: "🍌", jollof: "🍗", fufu: "🥣", banku: "🐟", sobolo: "🥤", coffee: "☕", fine_dining: "🍽️", gym: "🏋🏾", jog: "🏃🏾", swim: "🏊🏾", drum_circle: "🥁", club: "🪩", beach_bar: "🍹", clinic: "🩺", pharmacy: "💊", haircut: "💈", church: "⛪", nap: "😴", sleep: "🛏️", course: "📚", coworking: "💻", golf: "⛳", view: "👀" };
+
+function useMinute(world: World | null) {
+  const { state } = useGame();
+  return world ? Math.floor(world.minuteNow) : state!.time.minute;
+}
+
+export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone }: { placeId: string; world: World | null; onClose: () => void; onTalk: (id: string) => void; onTravel: () => void; onPhone: (app: string) => void }) {
+  const { state, act, busy } = useGame();
+  const [amount, setAmount] = useState("200");
+  const p = PLACE_BY_ID[placeId];
+  const minute = useMinute(world);
+  const gd = toGameDate(minute);
+  if (!state || !p) return null;
+  const open = isOpenAt(p.open, gd.hour);
+  const jobs = Object.values(JOBS).filter((j) => j.placeId === p.id);
+  const people = NPCS.filter((n) => npcLocation(n, gd.weekdayIndex, gd.hour) === p.id);
+  const dates = (state.dates as { id: number; npcId: string; placeId: string; startMin: number; status: string }[]).filter((d) => d.placeId === p.id && d.status === "pending");
+  const hours = p.open[0] === 0 && p.open[1] === 24 ? "Open 24 hours" : `${p.open[0]}:00 – ${p.open[1] % 24}:00`;
+  return (
+    <Sheet title={p.name} sub={<>{DISTRICTS[p.district].name} · {hours} · <span className={open ? "good" : "bad"}>{open ? "Open now" : "Closed"}</span></>} onClose={onClose}>
+      <p className="muted" style={{ margin: "8px 0 0" }}>{p.blurb}</p>
+
+      {dates.map((d) => {
+        const n = NPC_BY_ID[d.npcId];
+        const ready = minute >= d.startMin - 30 && minute <= d.startMin + 180;
+        return (
+          <div key={d.id} className="notice ok" style={{ marginTop: 12 }}>
+            <div className="spread">
+              <span>❤️ Date with {n.name.split(" ")[0]} · {toGameDate(d.startMin).label} {toGameDate(d.startMin).clock}</span>
+              <button className="btn primary sm" disabled={!ready || busy} onClick={() => act({ type: "date_attend", dateId: d.id })}>{ready ? "Meet" : "Not yet"}</button>
+            </div>
+          </div>
+        );
+      })}
+
+      {p.services.length > 0 && <h3>What you can do</h3>}
+      {p.services.map((sid) => {
+        const s = SERVICES[sid];
+        let cost = priceFor(s.cost, p.district);
+        if (sid === "clinic" && state.player.unlocks.includes("adjei_care")) cost = Math.round(cost / 2);
+        const avail = open && (!s.hours || isOpenAt(s.hours, gd.hour));
+        const rep = !s.requiresRep || state.player.reputation >= s.requiresRep;
+        return (
+          <div className="svc" key={sid}>
+            <div className="ic">{SVC_ICON[sid] ?? "•"}</div>
+            <div className="grow">
+              <div className="bold">{s.name}</div>
+              <div className="tiny muted">{cost ? money(cost * 100) : "Free"} · {s.minutes >= 60 ? `${s.minutes / 60}h` : `${s.minutes}m`}{s.hours ? ` · ${s.hours[0]}:00–${s.hours[1] % 24}:00` : ""}{!rep ? ` · needs ${s.requiresRep} standing` : ""}</div>
+              <EffectsPreview effects={s.effects} />
+            </div>
+            <button className="btn primary sm" disabled={!avail || !rep || busy} onClick={() => act({ type: "service", placeId: p.id, serviceId: sid })}>{s.verb.split(" ")[0]}</button>
+          </div>
+        );
+      })}
+
+      {p.kind === "bank" && (
+        <>
+          <h3>Counter</h3>
+          <div className="card col">
+            <div className="row"><input className="input num" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value.replace(/[^\d.]/g, ""))} /><span className="muted">GH₵</span></div>
+            <div className="row">
+              <button className="btn green grow" disabled={!open || busy} onClick={() => act({ type: "deposit", amount: Math.round(Number(amount) * 100), placeId: p.id })}>Deposit</button>
+              <button className="btn grow" disabled={!open || busy} onClick={() => act({ type: "withdraw", amount: Math.round(Number(amount) * 100), placeId: p.id })}>Withdraw</button>
+            </div>
+            <div className="tiny muted">No fees at the counter. Cash {money(state.money.cash)} · Bank {money(state.money.bank)}</div>
+            <button className="btn sm" onClick={() => onPhone("money")}>T-bills, dollars & loans →</button>
+          </div>
+        </>
+      )}
+      {p.kind === "realtor" && (
+        <>
+          <h3>Land & homes</h3>
+          <button className="btn primary block" onClick={() => onPhone("property")}>Browse plots, rentals & construction</button>
+        </>
+      )}
+      {p.kind === "dealer" && (
+        <>
+          <h3>On the lot</h3>
+          {Object.values(VEHICLES).map((v) => {
+            const owned = (state.vehicles as { type: string }[]).some((x) => x.type === v.id);
+            return (
+              <div className="svc" key={v.id}>
+                <div className="ic" style={{ background: v.color }}>🚙</div>
+                <div className="grow">
+                  <div className="bold">{v.name}</div>
+                  <div className="tiny muted">{money(v.price * 100)} · +{v.reputation} standing{v.requiresRep ? ` · needs ${v.requiresRep}` : ""}</div>
+                  <div className="tiny muted">{v.blurb}</div>
+                </div>
+                <button className="btn primary sm" disabled={owned || busy} onClick={() => act({ type: "vehicle_buy", vehicleId: v.id })}>{owned ? "Owned" : "Buy"}</button>
+              </div>
+            );
+          })}
+        </>
+      )}
+      {p.kind === "transport" && (
+        <>
+          <h3>Rides</h3>
+          <button className="btn primary block" onClick={onTravel}>🚐 Choose a destination</button>
+        </>
+      )}
+
+      {jobs.length > 0 && <h3>Work here</h3>}
+      {jobs.map((j) => {
+        const mine = state.player.job?.id === j.id;
+        const req = state.player.jobRequirements[j.id] ?? {};
+        const missing = Object.entries(req).filter(([k, v]) => ((k === "reputation" ? state.player.reputation : state.player.skills[k as keyof typeof state.player.skills]) ?? 0) < (v as number));
+        const inWindow = isOpenAt(j.shiftWindow, gd.hour) && !(j.weekdaysOnly && gd.isWeekend);
+        return (
+          <div className="svc" key={j.id}>
+            <div className="ic">💼</div>
+            <div className="grow">
+              <div className="bold">{mine ? `${state.player.job!.rankTitle} ${j.title}`.trim() : j.title}</div>
+              <div className="tiny muted">{money(rankPay(j.pay, mine ? state.player.job!.rank : 0) * 100)}/shift · {j.hours}h · start {j.shiftWindow[0]}:00–{j.shiftWindow[1]}:00{j.weekdaysOnly ? " · weekdays" : ""}{j.salaried ? " · monthly salary" : " · paid in cash"}</div>
+              <div className="tiny" style={{ marginTop: 3 }}>
+                {Object.keys(req).length === 0 ? <span className="good">No requirements</span> : Object.entries(req).map(([k, v]) => {
+                  const have = (k === "reputation" ? state.player.reputation : state.player.skills[k as keyof typeof state.player.skills]) ?? 0;
+                  return <span key={k} className={have >= (v as number) ? "good" : "bad"} style={{ marginRight: 8 }}>{have >= (v as number) ? "✓" : "✗"} {k} {Math.floor(have)}/{v as number}</span>;
+                })}
+              </div>
+              {mine && state.player.job!.nextRankAt && <div className="tiny muted">Promotion at {state.player.job!.nextRankAt} shifts ({state.player.job!.shifts} done)</div>}
+            </div>
+            {mine ? (
+              <button className="btn primary sm" disabled={!inWindow || !open || busy} onClick={() => act({ type: "work" })}>{inWindow ? "Work shift" : "Off shift"}</button>
+            ) : (
+              <button className="btn sm" disabled={missing.length > 0 || busy} onClick={() => act({ type: "job_apply", jobId: j.id })}>Apply</button>
+            )}
+          </div>
+        );
+      })}
+
+      {people.length > 0 && <h3>Here now</h3>}
+      {people.map((n) => (
+        <div className="svc" key={n.id}>
+          <div className="avatar" style={{ background: AVATAR_COLORS[n.id], width: 38, height: 38, fontSize: 15, borderRadius: 11 }}>{initials(n.name)}</div>
+          <div className="grow"><div className="bold">{n.name}</div><div className="tiny muted">{n.role}</div></div>
+          <button className="btn sm" onClick={() => onTalk(n.id)}>Talk</button>
+        </div>
+      ))}
+    </Sheet>
+  );
+}
+
+interface Line { who: "npc" | "me"; text: string }
+
+export function TalkSheet({ npcId, world, onClose }: { npcId: string; world: World | null; onClose: () => void }) {
+  const { state, act, busy } = useGame();
+  const npc = NPC_BY_ID[npcId];
+  const rel = state?.relationships.find((r) => r.npcId === npcId);
+  const [lines, setLines] = useState<Line[]>(() => [{ who: "npc", text: rel ? npc.lines.greet[tierFor(rel.affinity)][0] : npc.lines.greet.stranger[0] }]);
+  if (!state || !npc) return null;
+  const aff = rel?.affinity ?? 0;
+  const unlocked = state.player.unlocks.includes(npc.favour.unlock);
+  const say = async (topic: string, text: string) => {
+    setLines((l) => [...l, { who: "me", text }]);
+    world?.npcTalkAnim(npcId);
+    const r = await act({ type: "talk", npcId, topic });
+    if (r.ok) {
+      const d = r.data as { greet: string; reply: string; memory: string };
+      setLines((l) => [...l, { who: "npc", text: [l.length <= 2 ? "" : "", d.reply, d.memory].filter(Boolean).join(" ") }]);
+    } else setLines((l) => [...l, { who: "npc", text: "…" }]);
+  };
+  return (
+    <Sheet wide title={<div className="row"><div className="avatar" style={{ background: AVATAR_COLORS[npcId] }}>{initials(npc.name)}</div><div><div>{npc.name}</div><div className="small muted" style={{ fontWeight: 500 }}>{npc.role}</div></div></div>} onClose={onClose}>
+      <div className="card" style={{ marginTop: 12 }}>
+        <div className="spread small"><span>{rel ? (rel.partner ? "❤️ Partner" : tierFor(aff)[0].toUpperCase() + tierFor(aff).slice(1)) : "Stranger"}</span><span className="num muted">{Math.round(aff)}/100</span></div>
+        <Bar value={Math.max(0, aff)} color="#f2b705" />
+        {npc.romanceable && rel && rel.romance > 0 && <div className="tiny" style={{ marginTop: 6 }}>Romance {"♥".repeat(Math.ceil(rel.romance / 20))}{"♡".repeat(5 - Math.ceil(rel.romance / 20))}</div>}
+        <div className="tiny muted" style={{ marginTop: 6 }}>{npc.personality}</div>
+      </div>
+      <div className="col" style={{ marginTop: 12, maxHeight: 260, overflowY: "auto" }}>
+        {lines.map((l, i) => <div key={i} className={`bubble ${l.who === "me" ? "me" : ""}`}>{l.text}</div>)}
+      </div>
+      <div className="topics">
+        <button className="btn" disabled={busy} onClick={() => say("chat", "How's it going?")}>💬 Chat</button>
+        <button className="btn" disabled={busy} onClick={() => say("advice", "Any advice for me?")}>🧠 Ask advice</button>
+        <button className="btn" disabled={busy} onClick={() => say("compliment", "You're looking good today!")}>✨ Compliment</button>
+        <button className="btn" disabled={busy} onClick={() => say("gift", `I brought you ${npc.gift.item}.`)}>🎁 Gift · {money(npc.gift.cost * 100)}</button>
+        {npc.romanceable && !rel?.partner && <button className="btn" disabled={busy} onClick={() => say("ask_out", "Would you go out with me?")}>❤️ Ask out</button>}
+        {!unlocked && <button className="btn" disabled={busy} title={npc.favour.reward} onClick={() => say("favour", npc.favour.ask + "?")}>🤝 {npc.favour.ask} {aff < npc.favour.threshold ? `(${npc.favour.threshold}+)` : ""}</button>}
+      </div>
+      {rel && rel.memories.length > 0 && (
+        <>
+          <h3>{npc.name.split(" ")[0]} remembers</h3>
+          {rel.memories.slice(-3).reverse().map((m, i) => <div key={i} className="tiny muted">• Day {m.day + 1}: {m.text}</div>)}
+        </>
+      )}
+      <p className="tiny muted" style={{ marginTop: 10 }}>Goal: {npc.goal}</p>
+    </Sheet>
+  );
+}
+
+export function TravelSheet({ context, world, onClose }: { context: "stop" | "taxi" | "phone"; world: World | null; onClose: () => void }) {
+  const { state, act, busy } = useGame();
+  const minute = useMinute(world);
+  const gd = toGameDate(minute);
+  const hasCar = (state?.vehicles.length ?? 0) > 0;
+  const modes = useMemo<TravelMode[]>(() => {
+    const m: TravelMode[] = context === "stop" ? ["trotro", "taxi", "walk"] : context === "taxi" ? ["taxi"] : ["ride", "walk"];
+    if (hasCar && context !== "taxi") m.unshift("car");
+    return m;
+  }, [context, hasCar]);
+  const [mode, setMode] = useState<TravelMode>(modes[0]);
+  if (!state) return null;
+  const here = state.player.district;
+  const rainy = state.time.weather === "rain" || state.time.weather === "storm";
+  const go = async (to: DistrictId) => {
+    const r = await act({ type: "travel", to, mode });
+    if (r.ok) onClose();
+  };
+  return (
+    <Sheet title={context === "taxi" ? "🚕 Where to, boss?" : context === "stop" ? "🚐 Catch a ride" : "🗺️ Go somewhere"} sub={context === "phone" ? "Ride app works anywhere. Trotros and taxis: find a stop or flag one on the road." : `${DISTRICTS[here].name} · ${gd.clock}${rainy ? " · rain slows traffic" : ""}`} onClose={onClose}>
+      <div className="seg" style={{ marginTop: 12 }}>
+        {modes.map((m) => <button key={m} className={m === mode ? "on" : ""} onClick={() => setMode(m)}>{TRAVEL_MODES[m].name}</button>)}
+      </div>
+      <div className="tiny muted" style={{ marginTop: 6 }}>{TRAVEL_MODES[mode].note}{mode === "trotro" && state.player.unlocks.includes("kobby_ride") ? " · Kobby's bus: free for you" : ""}</div>
+      <CityMap here={here} onPick={(id) => id !== here && go(id)} />
+      <h3>Destinations</h3>
+      {districtsIn(DISTRICTS[here].city).filter((d) => d !== here).map((to) => {
+        const q = travelQuote(here, to, mode, gd.hour, gd.weekdayIndex, rainy);
+        const fare = mode === "trotro" && state.player.unlocks.includes("kobby_ride") ? 0 : q.fare;
+        const d = DISTRICTS[to];
+        const walkFar = mode === "walk" && q.km > 7;
+        return (
+          <div className="svc" key={to}>
+            <div className="ic">{d.style === "coastal" ? "🏖️" : d.style === "market" ? "🧺" : d.style === "corporate" ? "🏢" : d.style === "luxury" ? "⛳" : d.style === "suburban" ? "🌳" : "🎶"}</div>
+            <div className="grow">
+              <div className="bold">{d.name} <span className="tiny muted">· {d.tagline}</span></div>
+              <div className="tiny muted">{q.km} km · {q.minutes} min · {fare ? money(fare * 100) : "Free"} · cost of living ×{d.costOfLiving}</div>
+            </div>
+            <button className="btn primary sm" disabled={busy || walkFar} onClick={() => go(to)}>{walkFar ? "Too far" : "Go"}</button>
+          </div>
+        );
+      })}
+      <h3>Other cities</h3>
+      {CITY_IDS.filter((c) => c !== DISTRICTS[here].city).map((c) => {
+        const city = CITIES[c];
+        const km = Math.round(haversineKm(DISTRICTS[here].geo, city.center) * 1.25);
+        return (
+          <div className="svc" key={c} style={{ opacity: 0.7 }}>
+            <div className="ic">🚌</div>
+            <div className="grow"><div className="bold">{city.name} <span className="tiny muted">· {city.region}</span></div><div className="tiny muted">{km} km by road · {city.tagline}</div></div>
+            <span className="pill">Coming soon</span>
+          </div>
+        );
+      })}
+    </Sheet>
+  );
+}
+
+/** Accra drawn from real coordinates: coastline, landmarks and the playable districts. */
+export function CityMap({ here, onPick }: { here: DistrictId; onPick: (id: DistrictId) => void }) {
+  const city = CITIES[DISTRICTS[here].city];
+  const ids = districtsIn(city.id);
+  const origin = city.center;
+  const pts = ids.map((id) => ({ id, ...projectKm(DISTRICTS[id].geo, origin) }));
+  const lm = city.landmarks.map((l) => ({ ...l, ...projectKm(l.at, origin) }));
+  const xs = [...pts, ...lm].map((p) => p.x), ys = [...pts, ...lm].map((p) => p.y);
+  const pad = 2;
+  const minX = Math.min(...xs) - pad, maxX = Math.max(...xs) + pad, minY = Math.min(...ys) - pad, maxY = Math.max(...ys) + pad;
+  const coast = (city.coastline ?? []).map((c) => projectKm(c, origin));
+  const sea = coast.length ? `M ${minX - 5} ${-(minY - 5)} L ${coast.map((c) => `${c.x} ${-c.y}`).join(" L ")} L ${maxX + 5} ${-(minY - 5)} Z` : "";
+  return (
+    <svg viewBox={`${minX} ${-maxY} ${maxX - minX} ${maxY - minY}`} className="mapsvg" style={{ marginTop: 12, height: 230 }}>
+      <rect x={minX} y={-maxY} width={maxX - minX} height={maxY - minY} fill="#e9dcc0" />
+      {sea && <path d={sea} fill="#7cc2d6" />}
+      {lm.map((l) => (
+        <g key={l.name} opacity={0.75}>
+          <text x={l.x} y={-l.y} fontSize="0.55" textAnchor="middle" dominantBaseline="middle">{l.icon}</text>
+          <text x={l.x} y={-l.y + 0.7} fontSize="0.32" textAnchor="middle" fill="#5a4d38">{l.name}</text>
+        </g>
+      ))}
+      {pts.map((p) => (
+        <g key={p.id} onClick={() => onPick(p.id)} style={{ cursor: "pointer" }}>
+          <circle cx={p.x} cy={-p.y} r={p.id === here ? 0.62 : 0.5} fill={p.id === here ? "#c8452c" : "#1f7a4d"} stroke="#fff" strokeWidth="0.12" />
+          <text x={p.x} y={-p.y - 0.8} fontSize="0.55" fontWeight="800" textAnchor="middle" fill="#1d1a14">{DISTRICTS[p.id].name}</text>
+        </g>
+      ))}
+      <text x={minX + 0.4} y={-minY - 0.5} fontSize="0.45" fill="#0e5266">Gulf of Guinea</text>
+      <text x={maxX - 0.4} y={-maxY + 0.8} fontSize="0.6" fontWeight="800" textAnchor="end" fill="#1d1a14">N ↑</text>
+    </svg>
+  );
+}
+
+export function EventModal({ onClose }: { onClose: () => void }) {
+  const { state, act, busy } = useGame();
+  const ev = state?.event;
+  if (!ev) return null;
+  return (
+    <div className="modal-wrap" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="pill gold">📱 Life happens</div>
+        <h2 style={{ margin: "10px 0 6px" }}>{ev.title}</h2>
+        <p className="muted" style={{ marginTop: 0 }}>{ev.text}</p>
+        <div className="col">
+          {ev.choices.map((c) => (
+            <button key={c.id} className="btn block" disabled={busy} onClick={async () => { const r = await act({ type: "event_choose", eventId: ev.id, choiceId: c.id }); if (r.ok) onClose(); }} style={{ justifyContent: "space-between" }}>
+              <span>{c.label}</span>
+              <EffectsPreview effects={c.effects} />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function HomeSheet({ onClose, world }: { onClose: () => void; world: World | null }) {
+  const { state, act, busy } = useGame();
+  if (!state) return null;
+  const comfort = state.player.home.comfort;
+  return (
+    <Sheet title="🛏️ Your bed" sub={`Home comfort ${comfort}/7 — better homes mean better sleep.`} onClose={onClose}>
+      <div className="col" style={{ marginTop: 12 }}>
+        <button className="btn primary block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 8 }); if (r.ok) onClose(); }}>Sleep 8 hours · ⚡ +{52 + comfort * 6}</button>
+        <button className="btn block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 2 }); if (r.ok) onClose(); }}>Nap 2 hours · ⚡ +{14 + comfort * 2}</button>
+        <button className="btn ghost block" onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
+      </div>
+    </Sheet>
+  );
+}

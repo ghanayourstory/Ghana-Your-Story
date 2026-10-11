@@ -48,7 +48,7 @@ test("market closes at kickoff", async () => {
 test("stake validation: bounds, integers and available cash", async () => {
   const { ctx, id } = await setup();
   for (const stake of [0, 50, 12.5, -100, 600_000, "100"]) {
-    assert.throws(() => placeBet(ctx, id, key(), { fixtureId: "m1", selection: "home", stake }), undefined, `stake ${stake}`);
+    assert.throws(() => placeBet(ctx, id, key(), { fixtureId: "m1", selection: "home", stake }), Error, `stake ${stake}`);
   }
   assert.throws(() => placeBet(ctx, id, key(), { fixtureId: "m1", selection: "both", stake: 1000 }));
   // More than you hold in cash:

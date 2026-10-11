@@ -1,5 +1,8 @@
 // The city: districts, the places inside them, what you can do there and the
 // jobs on offer. Pure data shared by the server (rules) and client (rendering).
+// Districts sit at their real coordinates and carry their real road names.
+import { haversineKm, ROAD_FACTOR, type LatLon } from "./geo.ts";
+import type { CityId } from "./cities.ts";
 
 export type DistrictId = "osu" | "labadi" | "kaneshie" | "spintex" | "east_legon" | "trasacco";
 export type StatKey = "energy" | "hunger" | "health" | "social";
@@ -15,10 +18,15 @@ export interface District {
   tagline: string;
   mood: string;
   style: DistrictStyle;
+  city: CityId;
+  /** Real location of the stretch of road the district scene is built around. */
+  geo: LatLon;
+  /** Real road names: the main road (scene x axis) and the cross street (scene z axis). */
+  roads: { main: string; cross: string };
+  /** Compass bearing (degrees) the scene's +x axis points along, so the compass matches reality. */
+  bearing: number;
   /** Price multiplier applied to food, leisure and rent in this area. */
   costOfLiving: number;
-  /** Position on the city map (km-ish, x east, y north). */
-  map: { x: number; y: number };
   crowd: number; // 0..1 baseline crowd density
   traffic: number; // 0..1 baseline traffic
   nightlife: number; // 0..1
@@ -31,12 +39,15 @@ export interface District {
 export const DISTRICTS: Record<DistrictId, District> = {
   osu: {
     id: "osu",
+    city: "accra",
+    geo: { lat: 5.5566, lon: -0.1826 },
+    roads: { main: "Oxford Street", cross: "Ring Road East" },
+    bearing: 10,
     name: "Osu",
     tagline: "Oxford Street never sleeps",
     mood: "Busy, loud and stylish. Shops by day, music and grills by night.",
     style: "urban",
     costOfLiving: 1.25,
-    map: { x: 0, y: -1.5 },
     crowd: 0.85,
     traffic: 0.8,
     nightlife: 0.95,
@@ -46,12 +57,15 @@ export const DISTRICTS: Record<DistrictId, District> = {
   },
   labadi: {
     id: "labadi",
+    city: "accra",
+    geo: { lat: 5.56, lon: -0.148 },
+    roads: { main: "Labadi Road", cross: "La Beach Road" },
+    bearing: 70,
     name: "Labadi",
     tagline: "Sand, drums and sunsets",
     mood: "Relaxed, musical and friendly. The beach comes alive on weekends.",
     style: "coastal",
     costOfLiving: 1.05,
-    map: { x: 3.2, y: -2.6 },
     crowd: 0.65,
     traffic: 0.45,
     nightlife: 0.75,
@@ -61,12 +75,15 @@ export const DISTRICTS: Record<DistrictId, District> = {
   },
   kaneshie: {
     id: "kaneshie",
+    city: "accra",
+    geo: { lat: 5.568, lon: -0.235 },
+    roads: { main: "Winneba Road", cross: "First Light Road" },
+    bearing: 75,
     name: "Kaneshie",
     tagline: "If it's sold in Ghana, it's sold here",
     mood: "Crowded, cheap and hardworking. Trotros, traders and real hustle.",
     style: "market",
     costOfLiving: 0.8,
-    map: { x: -5.5, y: 0.2 },
     crowd: 1,
     traffic: 1,
     nightlife: 0.3,
@@ -76,12 +93,15 @@ export const DISTRICTS: Record<DistrictId, District> = {
   },
   spintex: {
     id: "spintex",
+    city: "accra",
+    geo: { lat: 5.633, lon: -0.115 },
+    roads: { main: "Spintex Road", cross: "Community 18 Road" },
+    bearing: 80,
     name: "Spintex",
     tagline: "Where the 9-to-5 lives",
     mood: "Offices, warehouses and new estates. Ambitious and a little rushed.",
     style: "corporate",
     costOfLiving: 1.0,
-    map: { x: 8.5, y: 1.4 },
     crowd: 0.55,
     traffic: 0.9,
     nightlife: 0.35,
@@ -91,12 +111,15 @@ export const DISTRICTS: Record<DistrictId, District> = {
   },
   east_legon: {
     id: "east_legon",
+    city: "accra",
+    geo: { lat: 5.635, lon: -0.161 },
+    roads: { main: "Boundary Road", cross: "Lagos Avenue" },
+    bearing: 90,
     name: "East Legon",
     tagline: "Cafés, gates and big ambitions",
     mood: "Polished and aspirational. Who you know matters here.",
     style: "suburban",
     costOfLiving: 1.55,
-    map: { x: 4.6, y: 4.6 },
     crowd: 0.45,
     traffic: 0.6,
     nightlife: 0.6,
@@ -106,12 +129,15 @@ export const DISTRICTS: Record<DistrictId, District> = {
   },
   trasacco: {
     id: "trasacco",
+    city: "accra",
+    geo: { lat: 5.664, lon: -0.136 },
+    roads: { main: "Trasacco Valley Road", cross: "Adjiringanor Road" },
+    bearing: 90,
     name: "Trasacco Valley",
     tagline: "The dream, gated",
     mood: "Quiet, green and very expensive. Earned, not given.",
     style: "luxury",
     costOfLiving: 2.2,
-    map: { x: 7.2, y: 6.2 },
     crowd: 0.15,
     traffic: 0.25,
     nightlife: 0.35,
@@ -222,6 +248,8 @@ export interface Place {
   open: [number, number];
   services: string[];
   blurb: string;
+  /** Real coordinates for real public landmarks. */
+  geo?: LatLon;
 }
 
 const P = (p: Place) => p;
@@ -236,18 +264,19 @@ export const PLACES: Place[] = [
   P({ id: "ridge_fitness", district: "osu", name: "Ridge Fitness", kind: "gym", sign: "RIDGE FITNESS", pos: [56, 15], size: [12, 9, 6], color: "#7FB7BE", open: [5, 22], services: ["gym"], blurb: "Mirrors, weights and serious people." }),
   P({ id: "osu_bank", district: "osu", name: "Coastline Bank (Osu)", kind: "bank", sign: "COASTLINE BANK", pos: [10, 16], size: [12, 9, 9], color: "#E8D5B5", open: [8, 17], services: [], blurb: "Accounts, savings and the FX desk." }),
   P({ id: "osu_station", district: "osu", name: "Osu Trotro Stop", kind: "transport", sign: "TROTRO • TAXI", pos: [-62, 14], size: [8, 4, 3], color: "#F2B705", open: [0, 24], services: [], blurb: "Catch a ride across the city." }),
-  P({ id: "black_star_square", district: "osu", name: "Black Star Square", kind: "landmark", sign: "BLACK STAR SQUARE", pos: [74, -2], size: [6, 6, 12], color: "#EDE6D6", open: [0, 24], services: ["view", "jog"], blurb: "The great arch and the black star, facing the sea." }),
+  P({ id: "black_star_square", district: "osu", name: "Black Star Square", kind: "landmark", sign: "BLACK STAR SQUARE", pos: [70, -26], size: [18, 10, 14], color: "#EDE6D6", open: [0, 24], services: ["view", "jog"], blurb: "Independence Arch and the Black Star Gate, facing the sea.", geo: { lat: 5.5477, lon: -0.1923 } }),
+  P({ id: "osu_castle", district: "osu", name: "Osu Castle", kind: "landmark", sign: "OSU CASTLE • FORT CHRISTIANSBORG", pos: [-48, 30], size: [14, 12, 9], color: "#F4F1E6", open: [8, 18], services: ["view"], blurb: "Built in the 1600s, seat of government for decades. The sea crashes below its walls.", geo: { lat: 5.547, lon: -0.18 } }),
 
   // --- Labadi
   P({ id: "sunset_shack", district: "labadi", name: "Sunset Shack", kind: "nightlife", sign: "SUNSET SHACK • BEACH BAR", pos: [-18, 30], size: [12, 8, 4], color: "#E9B872", open: [12, 3], services: ["beach_bar", "banku", "sobolo"], blurb: "Bamboo, reggae, cold drinks, Selasi on the decks." }),
-  P({ id: "labadi_beach", district: "labadi", name: "Labadi Beach", kind: "beach", sign: "LABADI BEACH", pos: [16, 34], size: [6, 4, 3], color: "#5FA8A0", open: [6, 22], services: ["swim", "jog", "drum_circle", "view"], blurb: "Horse rides, drummers and the Gulf of Guinea." }),
+  P({ id: "labadi_beach", district: "labadi", name: "Labadi Beach", kind: "beach", sign: "LABADI BEACH", pos: [16, 34], size: [6, 4, 3], color: "#5FA8A0", open: [6, 22], services: ["swim", "jog", "drum_circle", "view"], blurb: "Horse rides, drummers and the Gulf of Guinea.", geo: { lat: 5.5585, lon: -0.147 } }),
   P({ id: "fish_landing", district: "labadi", name: "La Fish Landing", kind: "market", sign: "LA FISHERMEN'S LANDING", pos: [44, 28], size: [10, 7, 3], color: "#5FA8A0", open: [5, 16], services: ["banku"], blurb: "Canoes come in before noon. Nii Armah holds court." }),
   P({ id: "la_church", district: "labadi", name: "La Presby Chapel", kind: "church", sign: "LA PRESBY CHAPEL", pos: [-46, -16], size: [12, 16, 10], color: "#F7F3E8", open: [6, 20], services: ["church"], blurb: "Sunday hymns you can hear from the beach." }),
   P({ id: "labadi_stop", district: "labadi", name: "La Junction", kind: "transport", sign: "LA JUNCTION", pos: [-62, -14], size: [8, 4, 3], color: "#F2B705", open: [0, 24], services: [], blurb: "Trotros to Osu and Teshie." }),
   P({ id: "la_pharmacy", district: "labadi", name: "Wave Pharmacy", kind: "clinic", sign: "WAVE PHARMACY", pos: [20, -16], size: [8, 7, 4], color: "#F4E3C1", open: [7, 22], services: ["pharmacy"], blurb: "Plasters, ORS and sunscreen." }),
 
   // --- Kaneshie
-  P({ id: "kaneshie_market", district: "kaneshie", name: "Kaneshie Market", kind: "market", sign: "KANESHIE MARKET COMPLEX", pos: [-20, -20], size: [34, 18, 9], color: "#D9C9A3", open: [5, 19], services: ["sobolo"], blurb: "Three floors of everything. Mind your pockets." }),
+  P({ id: "kaneshie_market", district: "kaneshie", name: "Kaneshie Market", kind: "market", sign: "KANESHIE MARKET COMPLEX", pos: [-20, -20], size: [34, 18, 9], color: "#D9C9A3", open: [5, 19], services: ["sobolo"], blurb: "Three floors of everything. Mind your pockets.", geo: { lat: 5.5689, lon: -0.2363 } }),
   P({ id: "kaneshie_station", district: "kaneshie", name: "Kaneshie Station", kind: "transport", sign: "KANESHIE LORRY STATION", pos: [30, -18], size: [16, 8, 4], color: "#E3A857", open: [0, 24], services: [], blurb: "The loudest trotro station in Accra." }),
   P({ id: "mama_adwoa", district: "kaneshie", name: "Mama Adwoa's Chop Bar", kind: "food", sign: "MAMA ADWOA CHOP BAR • NO CONDITION IS PERMANENT", pos: [8, 16], size: [9, 7, 3.4], color: "#C47A5A", open: [9, 21], services: ["fufu", "banku", "sobolo"], blurb: "Fufu pounded to order. Goat light soup on Fridays." }),
   P({ id: "blessed_hands", district: "kaneshie", name: "Blessed Hands Barbering", kind: "shop", sign: "BLESSED HANDS BARBERING SALON", pos: [-38, 15], size: [7, 6, 3.2], color: "#8FA8C0", open: [8, 21], services: ["haircut"], blurb: "Uncle Ebo cuts hair and argues about football." }),
@@ -268,6 +297,7 @@ export const PLACES: Place[] = [
   P({ id: "lagoon_cafe", district: "east_legon", name: "Lagoon Café", kind: "food", sign: "LAGOON CAFÉ", pos: [-8, 16], size: [10, 8, 4.5], color: "#BFD8D2", open: [7, 22], services: ["coffee", "jollof"], blurb: "Brunch, laptops and deal-making." }),
   P({ id: "legon_prime", district: "east_legon", name: "Legon Prime Fitness", kind: "gym", sign: "LEGON PRIME", pos: [40, -16], size: [12, 10, 6], color: "#CFC6B8", open: [5, 22], services: ["gym", "swim"], blurb: "Pool, sauna and personal trainers." }),
   P({ id: "legon_lounge", district: "east_legon", name: "Skyline Lounge", kind: "nightlife", sign: "SKYLINE LOUNGE", pos: [46, 16], size: [12, 10, 10], color: "#55606E", open: [18, 3], services: ["club", "fine_dining"], blurb: "Rooftop cocktails and the city lights." }),
+  P({ id: "ug_legon", district: "east_legon", name: "University of Ghana", kind: "school", sign: "UNIVERSITY OF GHANA • LEGON", pos: [-52, -18], size: [18, 12, 9], color: "#F2E2C4", open: [7, 21], services: ["course", "coworking"], blurb: "Balme Library, Commonwealth Hall and evening professional courses.", geo: { lat: 5.6508, lon: -0.187 } }),
   P({ id: "legon_stop", district: "east_legon", name: "Legon Junction", kind: "transport", sign: "LEGON JUNCTION", pos: [-62, 14], size: [8, 4, 3], color: "#F2B705", open: [0, 24], services: [], blurb: "Taxis wait under the neem tree." }),
 
   // --- Trasacco Valley
@@ -300,11 +330,12 @@ export const TRAVEL_MODES: Record<TravelMode, { name: string; perKm: number; bas
   car: { name: "Your car", perKm: 3.2, base: 0, speedKmh: 30, note: "Fuel only, and people notice" },
 };
 
+/** Road distance between two districts, from their real coordinates. */
 export function distanceKm(a: DistrictId, b: DistrictId): number {
-  const A = DISTRICTS[a].map, B = DISTRICTS[b].map;
-  // Map units are roughly km; roads are never straight in Accra.
-  return Math.round(Math.hypot(A.x - B.x, A.y - B.y) * 1.35 * 10) / 10;
+  return Math.round(haversineKm(DISTRICTS[a].geo, DISTRICTS[b].geo) * ROAD_FACTOR * 10) / 10;
 }
+
+export const districtsIn = (city: CityId) => DISTRICT_IDS.filter((d) => DISTRICTS[d].city === city);
 
 export function isRushHour(hour: number, weekday: number): boolean {
   if (weekday === 0 || weekday === 6) return false;
