@@ -8,6 +8,7 @@ import { DISTRICTS, PLACES, placesIn, type DistrictId, type DistrictStyle, type 
 import { mulberry32 } from "../../shared/rng.ts";
 import type { HomeTier } from "../../shared/homes.ts";
 import { createOcean } from "./ocean.ts";
+import { buildAircraft } from "./vehicles.ts";
 import type { Genre, SoundSpot } from "./audio.ts";
 
 export const ROAD_HALF = 6;
@@ -51,7 +52,7 @@ export interface DistrictScene {
   homeDoor: THREE.Vector3;
   plotSpot: THREE.Vector3;
   roadName: (x: number, z: number) => string;
-  trafficLight: { phase: () => "ew" | "ns"; mats: { ewGreen: THREE.MeshStandardMaterial; ewRed: THREE.MeshStandardMaterial; nsGreen: THREE.MeshStandardMaterial; nsRed: THREE.MeshStandardMaterial } };
+  trafficLight: { phase: () => "ew" | "ns"; amber: () => boolean; mats: Record<"ewGreen" | "ewAmber" | "ewRed" | "nsGreen" | "nsAmber" | "nsRed", THREE.MeshStandardMaterial> };
   stalls: THREE.Vector3[];
   shoreZ: number | null;
   placeDoors: Map<string, THREE.Vector3>;
@@ -183,6 +184,15 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     curb: std({ map: T.concrete("#d9d4c8", 3), roughness: 0.8 }),
     curbPaint: std({ color: "#f2c200", roughness: 0.7 }),
     gutter: std({ color: "#2a2724", roughness: 1 }),
+    drainWater: std({ color: "#3b3a2a", roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.92 }),
+    algae: std({ color: "#3e4a2a", roughness: 1 }),
+    silt: std({ color: "#4a4032", roughness: 1 }),
+    sachet: std({ color: "#e8eef0", roughness: 0.3, transparent: true, opacity: 0.85 }),
+    bottleBlue: std({ color: "#5a8fb8", roughness: 0.2, transparent: true, opacity: 0.8 }),
+    bottleGreen: std({ color: "#3a7a4a", roughness: 0.2, transparent: true, opacity: 0.8 }),
+    bottleClear: std({ color: "#dfe8ea", roughness: 0.1, transparent: true, opacity: 0.7 }),
+    blackBag: std({ color: "#141414", roughness: 0.4 }),
+    signalYellow: std({ color: "#f2c200", roughness: 0.6 }),
     gutterWall: std({ map: T.concrete("#7d776d", 5), roughness: 1 }),
     concrete: std({ map: T.concrete("#b5aea3", 41) }),
     white: std({ color: "#f3f1ea", roughness: 0.6 }),
@@ -333,9 +343,23 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       box(M.curb, cx, 0.12, side * (ROAD_HALF + 0.12), len, 0.24, 0.24);
       // Black-and-yellow painted curb stones.
       if (!savanna) for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.245, side * (ROAD_HALF + 0.12), 1, 0.01, 0.25);
-      batch.add(G.plane, M.gutter, [cx, -0.55, side * (ROAD_HALF + 0.55)], [-Math.PI / 2, 0, 0], [len, 0.6, 1]);
-      box(M.gutterWall, cx, -0.2, side * (ROAD_HALF + 0.24), len, 0.7, 0.04);
-      box(M.gutterWall, cx, -0.2, side * (ROAD_HALF + 0.86), len, 0.75, 0.12);
+      // A real Accra open drain: rough concrete U-channel, murky water, silt,
+      // algae stains along the waterline and the inevitable sachets and bottles.
+      const gz = side * (ROAD_HALF + 0.55);
+      batch.add(G.plane, M.gutter, [cx, -0.72, gz], [-Math.PI / 2, 0, 0], [len, 0.62, 1]);
+      box(M.gutterWall, cx, -0.28, side * (ROAD_HALF + 0.22), len, 0.9, 0.06);
+      box(M.gutterWall, cx, -0.28, side * (ROAD_HALF + 0.88), len, 0.95, 0.12);
+      box(M.algae, cx, -0.52, side * (ROAD_HALF + 0.255), len, 0.18, 0.012);
+      box(M.algae, cx, -0.52, side * (ROAD_HALF + 0.82), len, 0.18, 0.012);
+      batch.add(G.plane, M.drainWater, [cx, -0.6, gz], [-Math.PI / 2, 0, 0], [len, 0.6, 1]);
+      for (let x = x0 + 1; x < x1 - 1; x += 0.8 + rnd() * 2.4) {
+        const r = rnd();
+        const lz = gz + (rnd() - 0.5) * 0.4;
+        if (r < 0.45) batch.add(G.box, M.sachet, [x, -0.58, lz], [0, rnd() * 3, 0.1], [0.16, 0.03, 0.1]); // "pure water" sachet
+        else if (r < 0.65) batch.add(G.cyl8, [M.bottleBlue, M.bottleGreen, M.bottleClear][Math.floor(rnd() * 3)], [x, -0.57, lz], [0, 0, Math.PI / 2], [0.04, 0.24, 0.04]);
+        else if (r < 0.8) batch.add(G.ico, M.silt, [x, -0.63, lz], [0, 0, 0], [0.2 + rnd() * 0.3, 0.06, 0.18]);
+        else if (r < 0.88) batch.add(G.box, M.blackBag, [x, -0.55, lz], [0, rnd() * 3, 0], [0.28, 0.12, 0.2]);
+      }
       // Concrete slabs bridging the gutter; between them it's an open drain you jump across.
       const slabs: number[] = [];
       for (let x = x0 + 4; x < x1 - 2; x += 9 + rnd() * 8) {
@@ -362,25 +386,40 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     }
   }
 
-  // Traffic lights at the junction.
+  // Traffic lights at the junction: galvanised poles with three-aspect heads
+  // (red, amber, green) in black housings with visors and a yellow-bordered backplate.
   const tl = {
-    ewGreen: std({ color: "#0b3", emissive: "#2f2", emissiveIntensity: 0 }),
-    ewRed: std({ color: "#600", emissive: "#f22", emissiveIntensity: 0 }),
-    nsGreen: std({ color: "#0b3", emissive: "#2f2", emissiveIntensity: 0 }),
-    nsRed: std({ color: "#600", emissive: "#f22", emissiveIntensity: 0 }),
+    ewGreen: std({ color: "#063", emissive: "#2f5", emissiveIntensity: 0 }),
+    ewAmber: std({ color: "#530", emissive: "#fa2", emissiveIntensity: 0 }),
+    ewRed: std({ color: "#500", emissive: "#f22", emissiveIntensity: 0 }),
+    nsGreen: std({ color: "#063", emissive: "#2f5", emissiveIntensity: 0 }),
+    nsAmber: std({ color: "#530", emissive: "#fa2", emissiveIntensity: 0 }),
+    nsRed: std({ color: "#500", emissive: "#f22", emissiveIntensity: 0 }),
   };
   for (const [sx, sz, axis] of [[1, -1, "ew"], [-1, 1, "ew"], [-1, -1, "ns"], [1, 1, "ns"]] as const) {
     if (coastal && sz === 1) continue;
     const px = sx * (CROSS_HALF + 0.9), pz = sz * (ROAD_HALF + 1.1);
-    box(M.darkMetal, px, 2.2, pz, 0.14, 4.4, 0.14);
-    box(M.black, px, 4.0, pz, 0.35, 0.9, 0.3);
-    const g = axis === "ew" ? tl.ewGreen : tl.nsGreen, r = axis === "ew" ? tl.ewRed : tl.nsRed;
-    batch.add(G.sphere, r, [px, 4.25, pz + (axis === "ns" ? -sz * 0.16 : 0) ], [0, 0, 0], [0.1, 0.1, 0.1]);
-    batch.add(G.sphere, g, [px, 3.8, pz + (axis === "ns" ? -sz * 0.16 : 0)], [0, 0, 0], [0.1, 0.1, 0.1]);
+    box(M.metal, px, 2.3, pz, 0.12, 4.6, 0.12);
+    box(M.signalYellow, px, 0.35, pz, 0.14, 0.7, 0.14); // painted base
+    // Facing: ew heads face along x (towards approaching ew traffic); ns heads face along z.
+    const fx = axis === "ew" ? -sx : 0, fz = axis === "ns" ? -sz : 0;
+    const hx = px + fx * 0.22, hz = pz + fz * 0.22;
+    const [hw, hd] = axis === "ew" ? [0.3, 0.36] : [0.36, 0.3];
+    box(M.black, hx, 4.0, hz, hw, 1.05, hd);
+    box(M.signalYellow, hx - fx * 0.05, 4.0, hz - fz * 0.05, axis === "ew" ? 0.03 : 0.62, 1.3, axis === "ew" ? 0.62 : 0.03);
+    box(M.black, hx - fx * 0.06, 4.0, hz - fz * 0.06, axis === "ew" ? 0.035 : 0.54, 1.22, axis === "ew" ? 0.54 : 0.035);
+    const g = axis === "ew" ? tl.ewGreen : tl.nsGreen, a = axis === "ew" ? tl.ewAmber : tl.nsAmber, r = axis === "ew" ? tl.ewRed : tl.nsRed;
+    for (const [y, m] of [[4.33, r], [4.0, a], [3.67, g]] as const) {
+      batch.add(G.cyl, m, [hx + fx * 0.16, y, hz + fz * 0.16], axis === "ew" ? [0, 0, Math.PI / 2] : [Math.PI / 2, 0, 0], [0.1, 0.03, 0.1]);
+      // Visor (hood) over each lamp.
+      box(M.black, hx + fx * 0.26, y + 0.12, hz + fz * 0.26, axis === "ew" ? 0.2 : 0.26, 0.03, axis === "ew" ? 0.26 : 0.2);
+    }
     collide(px, pz, 0.3, 0.3);
   }
   const startMs = performance.now();
-  const phase = () => (Math.floor((performance.now() - startMs) / 14000) % 2 === 0 ? "ew" : "ns");
+  const CYCLE = 14000, AMBER = 2500;
+  const phase = () => (Math.floor((performance.now() - startMs) / CYCLE) % 2 === 0 ? "ew" : "ns");
+  const amber = () => (performance.now() - startMs) % CYCLE > CYCLE - AMBER;
 
   // -------------------------------------------------------------------------
   // Places
@@ -406,7 +445,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     return s;
   };
 
-  const ICON: Record<string, string> = { food: "🍲", work: "💼", bank: "🏦", gym: "🏋🏾", clinic: "🩺", nightlife: "🎶", beach: "🏖️", market: "🧺", realtor: "🏘️", home: "🏠", church: "⛪", transport: "🚐", landmark: "⭐", shop: "✂️", school: "🎓", dealer: "🚙", mosque: "🕌", lodge: "🛏️", tour: "🧭", furniture: "🛋️", phone: "📱", mall: "🛍️" };
+  const ICON: Record<string, string> = { food: "🍲", work: "💼", bank: "🏦", gym: "🏋🏾", clinic: "🩺", nightlife: "🎶", beach: "🏖️", market: "🧺", realtor: "🏘️", home: "🏠", church: "⛪", transport: "🚐", landmark: "⭐", shop: "✂️", school: "🎓", dealer: "🚙", mosque: "🕌", lodge: "🛏️", tour: "🧭", furniture: "🛋️", phone: "📱", mall: "🛍️" , shrine: "🏺", airport: "✈️", hangar: "🛩️" };
 
   const placeOnBeach = (p: Place) => coastal && p.pos[1] >= 28;
 
@@ -1546,6 +1585,35 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
         if (open && rnd() < 0.5) plasticSet(ux + (rnd() - 0.5) * 2, front - side * 2.2);
       }
     }
+    // Upper floors: balconies with railings (and washing), window frames with burglar bars.
+    for (let f = 1; f < storeys && !glassy; f++) {
+      const y = f * 3;
+      if (rnd() < 0.55) {
+        const bw = Math.min(w - 2, 3 + rnd() * 3), bx = x + (rnd() - 0.5) * (w - bw - 1.2);
+        box(M.concrete, bx, y, front - side * 0.6, bw, 0.14, 1.2);
+        box(M.darkMetal, bx, y + 0.55, front - side * 1.18, bw, 0.04, 0.04);
+        for (let k = 0; k <= bw / 0.3; k++) box(M.darkMetal, bx - bw / 2 + k * 0.3, y + 0.28, front - side * 1.18, 0.025, 0.55, 0.025);
+        if (rnd() < 0.5) for (let k = 0; k < 4; k++) box(colorMat(["#C8452C", "#1F5AA6", "#F2B705", "#ffffff", "#2E7D4F"][Math.floor(rnd() * 5)], 0.9), bx - bw / 2 + 0.5 + k * (bw - 1) / 3, y + 0.75, front - side * 1.15, 0.4, 0.5, 0.02);
+        // Balcony door.
+        box(colorMat("#5b3a29", 0.6), bx, y + 1.1, front - side * 0.03, 0.9, 2.1, 0.05);
+      }
+      for (let k = 0; k < Math.floor((w - 1) / 3); k++) {
+        const wx = x - (w - 0.6) / 2 + 1.5 + k * 3;
+        box(M.white, wx, y + 1.5, front - side * 0.05, 1.3, 1.25, 0.05);
+        for (let b = 1; b < 5; b++) box(M.darkMetal, wx - 0.65 + b * 0.26, y + 1.5, front - side * 0.09, 0.025, 1.15, 0.025);
+      }
+    }
+    if (!glassy && storeys >= 2 && rnd() < 0.5) {
+      // Satellite dish on the roof.
+      batch.add(G.sphere, M.white, [x + (rnd() - 0.5) * (w - 3), h + 0.9, cz + side * 1.5], [0.6, 0, 0], [0.45, 0.45, 0.12]);
+      box(M.metal, x, h + 0.4, cz + side * 1.5, 0.06, 0.8, 0.06);
+    }
+    // Residential buildings without a shop get a proper front door with steps.
+    if (style === "coastal" && rnd() < 0.5) {
+      box(colorMat("#4a2f1e", 0.6), x, 1.05, front - side * 0.04, 1.0, 2.1, 0.06);
+      box(M.white, x, 2.2, front - side * 0.05, 1.2, 0.12, 0.08);
+      box(M.concrete, x, 0.08, front - side * 0.45, 1.6, 0.16, 0.8);
+    }
     acUnits(x, cz, w - 0.6, depth, h, -side);
     collide(x, cz, w - 0.6, depth, h + 0.6);
   }
@@ -1559,7 +1627,18 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       if (isFree(side, x, x + w)) {
         filler(x + w / 2, side, w);
         reserve(side, x, x + w);
-        x += w + (rnd() < 0.2 ? 3 + rnd() * 4 : 0.2);
+        const gap = rnd() < 0.28 ? 2.6 + rnd() * 3 : 0.2;
+        if (gap > 1) {
+          // An alley / walkway between buildings, paved, running back from the pavement.
+          const ax = x + w + gap / 2;
+          batch.add(tiledPlane(gap, 16, 3), M.walk, [ax, 0.12, side * (BUILD_LINE + 8)], [-Math.PI / 2, 0, 0]);
+          if (upscale || rnd() < 0.3) {
+            // Covered walkway (campus-style): posts and a light roof.
+            for (let k = 0; k < 4; k++) box(M.white, ax - gap / 2 + 0.2, 1.3, side * (BUILD_LINE + 1.5 + k * 4), 0.12, 2.6, 0.12);
+            box(M.roofClean, ax, 2.7, side * (BUILD_LINE + 7.5), gap - 0.2, 0.08, 15);
+          }
+        }
+        x += w + gap;
       } else x += 2;
     }
     // A second row behind for depth.
@@ -1769,6 +1848,72 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       collide(16 + Math.cos(a) * 2.2, 28 + Math.sin(a) * 2.2, 0.6, 0.6, 0.8);
     }
   }
+  if (id === "airport_city") {
+    // Behind the office blocks: apron, runway, control tower, hangar and parked aircraft.
+    const apronZ = -77;
+    batch.add(tiledPlane(240, 26, 8), colorMat("#8f9093", 0.85), [0, 0.03, apronZ], [-Math.PI / 2, 0, 0]);
+    batch.add(G.plane, colorMat("#34353a", 0.9), [0, 0.04, apronZ - 18], [-Math.PI / 2, 0, 0], [240, 10, 1]);
+    for (let x = -116; x < 116; x += 9) box(M.white, x, 0.05, apronZ - 18, 4.5, 0.01, 0.3);
+    for (const z of [apronZ - 13.2, apronZ - 22.8]) box(M.white, 0, 0.05, z, 236, 0.01, 0.2);
+    box(M.yellowLine, 0, 0.045, apronZ - 6, 230, 0.01, 0.25);
+    const chainLink = std({ color: "#b8bec4", roughness: 0.5, metalness: 0.6, transparent: true, opacity: 0.28, depthWrite: false });
+    // Airside security fence with a gate where the road meets the apron.
+    for (const sx of [-1, 1]) {
+      const x0 = sx * 7, x1 = sx * 118, cx = (x0 + x1) / 2, w = Math.abs(x1 - x0);
+      box(chainLink, cx, 1.2, apronZ + 13.2, w, 2.4, 0.05);
+      for (let x = Math.min(x0, x1); x <= Math.max(x0, x1); x += 4) box(M.concrete, x, 1.3, apronZ + 13.2, 0.12, 2.6, 0.12);
+      collide(cx, apronZ + 13.2, w, 0.4, 2.6);
+    }
+    box(M.signalYellow ?? M.yellowLine, 0, 1.1, apronZ + 13.2, 12, 0.18, 0.18);
+    collide(0, apronZ + 13.2, 14, 0.4, 2.6);
+    // Control tower.
+    batch.add(G.cyl, colorMat("#e9e6e0", 0.7), [104, 14, apronZ + 4], [0, 0, 0], [2.4, 28, 2.4]);
+    batch.add(G.cyl, colorMat("#2b3440", 0.1, 0.3), [104, 29.5, apronZ + 4], [0, 0, 0], [4.4, 3.2, 4.4]);
+    batch.add(G.cyl, colorMat("#e9e6e0", 0.7), [104, 31.4, apronZ + 4], [0, 0, 0], [4.8, 0.6, 4.8]);
+    collide(104, apronZ + 4, 4.6, 4.6, 30);
+    // Private hangar, doors open towards the city.
+    box(colorMat("#cfd3d6", 0.5, 0.5), -62, 6, apronZ, 34, 12, 22);
+    box(colorMat("#2a2c30", 0.9), -62, 5, apronZ + 11.05, 26, 10, 0.1);
+    box(M.white, -62, 11, apronZ + 11.1, 30, 1.2, 0.1);
+    collide(-62, apronZ, 34, 22, 12);
+    labelSprite("General Aviation Hangars", "🛩️", 13.5, -62, apronZ + 11.5);
+    // Airliners and a turboprop at the stands.
+    for (const [x, kind, liv, stripe] of [[22, "airliner", "#f4f4f2", "#1F7A4D"], [66, "airliner", "#f4f4f2", "#C8452C"], [-26, "turboprop", "#f4f4f2", "#F2B705"]] as const) {
+      const a = buildAircraft(kind, liv, stripe);
+      a.position.set(x, 0, apronZ + 1);
+      a.rotation.y = -Math.PI / 2;
+      group.add(a);
+      collide(x, apronZ + 1, kind === "airliner" ? 38 : 14, kind === "airliner" ? 30 : 16, 8);
+    }
+  }
+  if (d.style === "luxury" || d.style === "suburban") {
+    // Gated estate entrance across the main road: gatehouse, boom barriers, a
+    // big sign, and a perimeter wall with railings along the estate.
+    const ex = -EXTENT_X + 14;
+    const estate = d.style === "luxury" ? "TRASACCO VALLEY ESTATE" : `${d.name.toUpperCase()} GARDENS ESTATE`;
+    for (const s2 of [-1, 1]) {
+      box(colorMat("#efe6d6", 0.8), ex, 2.2, s2 * (ROAD_HALF + 3.4), 1.6, 4.4, 1.6); // pillars
+      box(colorMat("#b08d57", 0.4, 0.6), ex, 4.5, s2 * (ROAD_HALF + 3.4), 1.8, 0.25, 1.8);
+      collide(ex, s2 * (ROAD_HALF + 3.4), 1.6, 1.6, 4.4);
+      // Boom barrier (raised, so traffic and you can pass).
+      box(M.darkMetal, ex + 1.2, 0.6, s2 * (ROAD_HALF - 0.4), 0.3, 1.2, 0.3);
+      batch.add(G.box, colorMat("#d8261c", 0.6), [ex + 1.2, 2.8, s2 * (ROAD_HALF - 0.4)], [0, 0, 1.25], [4.6, 0.12, 0.12]);
+    }
+    box(signMat(estate, "#1F3A2A", "#E8C670", "WELCOME • RESIDENTS & GUESTS"), ex, 5.4, 0, 0.2, 1.1, ROAD_HALF * 2 + 6);
+    box(colorMat("#b08d57", 0.4, 0.6), ex, 4.75, 0, 0.3, 0.2, ROAD_HALF * 2 + 7);
+    // Gatehouse with a window.
+    const ghz = -(ROAD_HALF + 6.5);
+    box(colorMat("#efe6d6", 0.8), ex - 1, 1.5, ghz, 3.2, 3, 3);
+    box(colorMat("#2b3440", 0.1), ex + 0.62, 1.7, ghz, 0.04, 1.0, 1.8);
+    box(M.roofClean, ex - 1, 3.1, ghz, 3.8, 0.2, 3.6);
+    collide(ex - 1, ghz, 3.2, 3, 3);
+    labelSprite("Estate security", "🛡️", 3.9, ex - 1, ghz);
+    // Perimeter walls with railings behind the pavements, west of the gate.
+    for (const s2 of [-1, 1]) {
+      box(colorMat("#efe6d6", 0.8), -EXTENT_X + 4, 1.1, s2 * (WALK_OUT + 0.4), 20, 2.2, 0.3);
+      for (let x = -EXTENT_X - 5; x < ex - 2; x += 0.35) box(M.darkMetal, x, 2.6, s2 * (WALK_OUT + 0.4), 0.03, 0.9, 0.03);
+    }
+  }
   if (d.style === "luxury") {
     // Golf course behind the clubhouse.
     const golf = new THREE.Mesh(tiledPlane(80, 40, 6), M.lush);
@@ -1813,7 +1958,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     homeDoor,
     plotSpot,
     roadName: (x, z) => (Math.abs(x) < CROSS_HALF + 4 && Math.abs(z) > ROAD_HALF + 4 ? crossRoad : coastal && z > 14 ? "Labadi Beach" : mainRoad),
-    trafficLight: { phase, mats: tl },
+    trafficLight: { phase, amber, mats: tl },
     stalls,
     shoreZ,
     placeDoors,

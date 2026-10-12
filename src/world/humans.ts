@@ -20,6 +20,7 @@ interface HumanAsset {
   region: string;
   faceMask: string;
   morphs: Record<"muscle" | "heavy" | "slim", string>;
+  faceMorphs?: Record<string, { idx: string; d: string }>;
   shells: Record<"top" | "shorts" | "shins" | "shoes", ShellAsset>;
   hips: { waistY: number; kneeY: number; hipHalfWidth: number };
   arm: { shoulder: number[]; elbow: number[]; wrist: number[] };
@@ -44,6 +45,9 @@ interface Template {
   headRadius: number;
 }
 
+/** Face shape axes baked by scripts/build-humans.mjs, in order. */
+export const FACE_KEYS = ["nose_wide", "nose_big", "jaw", "chin", "cheeks", "cheekbones", "eyes", "lips", "mouth_wide", "head_long", "head_round", "forehead", "age"] as const;
+
 const templates: Partial<Record<"male" | "female", Template>> = {};
 let loading: Promise<boolean> | null = null;
 
@@ -60,7 +64,17 @@ function makeTemplate(a: HumanAsset): Template {
   g.setAttribute("skinWeight", new THREE.Uint8BufferAttribute(bytes(a.skinWeight), 4, true));
   g.setAttribute("region", new THREE.Float32BufferAttribute(Float32Array.from(bytes(a.region)), 1));
   g.setAttribute("faceMask", new THREE.Uint8BufferAttribute(bytes(a.faceMask), 4, true));
-  g.morphAttributes.position = (["muscle", "heavy", "slim"] as const).map((k) => new THREE.BufferAttribute(f32(a.morphs[k]), 3));
+  const n = g.attributes.position.count;
+  const faceAttrs = FACE_KEYS.map((k) => {
+    const out = new Float32Array(n * 3);
+    const fm = a.faceMorphs?.[k];
+    if (fm) {
+      const idx = new Uint16Array(bytes(fm.idx).buffer), d = f32(fm.d);
+      for (let i = 0; i < idx.length; i++) out.set(d.subarray(i * 3, i * 3 + 3), idx[i] * 3);
+    }
+    return new THREE.BufferAttribute(out, 3);
+  });
+  g.morphAttributes.position = [...(["muscle", "heavy", "slim"] as const).map((k) => new THREE.BufferAttribute(f32(a.morphs[k]), 3)), ...faceAttrs];
   g.morphTargetsRelative = true;
   g.computeBoundingSphere();
   const shell = (sa: ShellAsset) => {
@@ -218,17 +232,18 @@ diffuseColor.rgb = c;`,
 }
 
 /** Cloth with a triplanar-projected pattern: no UV seams, pattern scale in real centimetres. */
-function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0) {
+function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99) {
   const m = new THREE.MeshStandardMaterial({ roughness: 0.92, side: THREE.DoubleSide });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uFabric = { value: tex };
     shader.uniforms.uNeckY = { value: neckY };
     shader.uniforms.uNeckZ = { value: neckZ };
+    shader.uniforms.uHemY = { value: hemY };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRest = position;\nvRestN = normal;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nfloat foldH;\n" + `
+      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nfloat foldH;\n" + `
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -248,6 +263,8 @@ vec3 bumpNormal(vec3 n, float h, float scale) {
         `#include <color_fragment>
 // A clean round neckline instead of the mesh's jagged edge.
 if (vRest.y > uNeckY - 0.085 + 3.0 * vRest.x * vRest.x - max(0.0, uNeckZ - vRest.z) * 0.3) discard;
+// A straight hem instead of the mesh edge.
+if (vRest.y < uHemY && abs(vRest.x) < 0.3) discard;
 vec3 w = pow(abs(normalize(vRestN)), vec3(4.0));
 w /= (w.x + w.y + w.z);
 float sc = 8.0;
@@ -333,9 +350,9 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     body.add(g);
     garments.push(g);
   };
-  const cloth = (pattern: string, color: string, neck?: [number, number, number]) => fabricMaterial(fabricTex(pattern, color), neck?.[1], neck?.[2]);
+  const cloth = (pattern: string, color: string, neck?: [number, number, number], hem?: number) => fabricMaterial(fabricTex(pattern, color), neck?.[1], neck?.[2], hem);
   const neckBone = t.asset.bones.find((b) => b.name === "neck01");
-  dress(t.shells.top, cloth(look.pattern ?? "plain", look.shirt, neckBone?.head));
+  dress(t.shells.top, cloth(look.pattern ?? "plain", look.shirt, neckBone?.head, a.hips.waistY - 0.1));
   if (!skirt) {
     const pm = cloth("plain", look.pants);
     dress(t.shells.shorts, pm);
@@ -363,7 +380,9 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     Math.max(0, (build - 1.05) * 3),
     Math.max(0, (1 - build) * 4),
   ];
-  for (const m of [mesh, ...garments]) m.morphTargetInfluences = [...influences];
+  const face = FACE_KEYS.map((_, i) => THREE.MathUtils.clamp(look.face?.[i] ?? 0, -1, 1) * (FACE_KEYS[i] === "age" ? 1 : 0.85));
+  mesh.morphTargetInfluences = [...influences, ...face];
+  for (const m of garments) m.morphTargetInfluences = [...influences];
   const root = new THREE.Group();
   root.add(body);
   body.scale.setScalar(look.height / a.height);

@@ -67,12 +67,13 @@ for (const d of REGIONAL_DISTRICTS) {
 }
 
 /** Intercity transport. Prices in cedis. */
-export type IntercityMode = "bus" | "vip" | "flight" | "car";
+export type IntercityMode = "bus" | "vip" | "flight" | "car" | "own_plane";
 export const INTERCITY_MODES: Record<IntercityMode, { name: string; perKm: number; base: number; speedKmh: number; overhead: number; hours: [number, number]; note: string }> = {
   bus: { name: "Intercity bus", perKm: 0.48, base: 20, speedKmh: 48, overhead: 60, hours: [4, 22], note: "From the lorry station. Leaves when it's full." },
   vip: { name: "VIP / STC coach", perKm: 0.72, base: 35, speedKmh: 58, overhead: 45, hours: [5, 23], note: "Air-con, a movie and a reserved seat." },
   flight: { name: "Domestic flight", perKm: 2.6, base: 600, speedKmh: 420, overhead: 120, hours: [6, 20], note: "Only between towns with airports." },
   car: { name: "Drive yourself", perKm: 1.1, base: 0, speedKmh: 65, overhead: 0, hours: [0, 24], note: "Fuel only. Mind the potholes and the police barriers." },
+  own_plane: { name: "Your aircraft", perKm: 9, base: 400, speedKmh: 300, overhead: 40, hours: [6, 19], note: "Fuel, landing fees and your pilot. Airports only, daylight (VFR)." },
 };
 
 /** Towns with commercial airports. */
@@ -82,8 +83,8 @@ export function intercityQuote(from: CityId, to: CityId, mode: IntercityMode) {
   const route = routeBetween(from, to);
   if (!route) return null;
   const m = INTERCITY_MODES[mode];
-  if (mode === "flight" && !(AIRPORTS.includes(from) && AIRPORTS.includes(to))) return null;
-  const km = mode === "flight" ? Math.round(haversineKm(TOWN_BY_ID[from].at, TOWN_BY_ID[to].at)) : route.km;
+  if ((mode === "flight" || mode === "own_plane") && !(AIRPORTS.includes(from) && AIRPORTS.includes(to))) return null;
+  const km = mode === "flight" || mode === "own_plane" ? Math.round(haversineKm(TOWN_BY_ID[from].at, TOWN_BY_ID[to].at)) : route.km;
   const minutes = Math.round((km / m.speedKmh) * 60) + m.overhead;
   const fare = Math.round(m.base + m.perKm * km);
   const energy = mode === "flight" ? -8 : mode === "car" ? -Math.min(45, Math.round(6 + km / 15)) : -Math.min(20, Math.round(4 + km / 40));

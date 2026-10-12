@@ -5,6 +5,7 @@ import { buildPerson, animatePerson, type PersonLook, type HairStyle, type Patte
 import { shadowBlob } from "../world/vehicles.ts";
 
 const SKINS = SKIN_TONES;
+const FACE_SLIDERS: [number, string][] = [[0, "Nose width"], [1, "Nose size"], [7, "Lips"], [2, "Jaw"], [6, "Eyes"], [5, "Cheekbones"], [9, "Head shape"]];
 const OUTFITS = ["#1F7A4D", "#C8452C", "#F2B705", "#2E86AB", "#3A2E6E", "#F7F3E8", "#1A1A1A", "#E35D3A", "#0E7C86", "#B03A62"];
 const PANTS = ["#2B2B2B", "#1F3A5F", "#E9DCC6", "#4A4036", "#7A2E2E", "#3A4A5A"];
 const HAIRS: { id: HairStyle; label: string }[] = [
@@ -131,8 +132,14 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
             <b>Body</b>
             <div className="seg"><button className={!look.feminine ? "on" : ""} onClick={() => set({ feminine: false, hairStyle: look.hairStyle === "braids" ? "low" : look.hairStyle })}>Masculine</button><button className={look.feminine ? "on" : ""} onClick={() => set({ feminine: true, hairStyle: look.hairStyle === "low" ? "braids" : look.hairStyle })}>Feminine</button></div>
             <div className="swatches">{SKINS.map((c) => <button key={c} className={`swatch ${look.skin === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ skin: c })} aria-label="Skin tone" />)}</div>
-            <div className="row small"><span className="muted" style={{ width: 60 }}>Height</span><input type="range" min={1.55} max={1.95} step={0.01} value={look.height} onChange={(e) => set({ height: Number(e.target.value) })} className="grow" /><span className="num">{look.height.toFixed(2)}m</span></div>
-            <div className="row small"><span className="muted" style={{ width: 60 }}>Build</span><input type="range" min={0.85} max={1.2} step={0.01} value={look.build} onChange={(e) => set({ build: Number(e.target.value) })} className="grow" /></div>
+            <div className="row small"><span className="muted" style={{ width: 60 }}>Height</span><input type="range" min={1.48} max={2.0} step={0.01} value={look.height} onChange={(e) => set({ height: Number(e.target.value) })} className="grow" /><span className="num">{look.height.toFixed(2)}m</span></div>
+            <div className="row small"><span className="muted" style={{ width: 60 }}>Build</span><input type="range" min={0.8} max={1.4} step={0.01} value={look.build} onChange={(e) => set({ build: Number(e.target.value) })} className="grow" /></div>
+          </div>
+          <div className="col" style={{ gap: 6 }}>
+            <div className="spread"><b>Face</b><button className="btn sm" onClick={() => set({ face: Array.from({ length: 13 }, (_, i) => (i === 12 ? 0 : Math.max(-1, Math.min(1, (Math.random() + Math.random() + Math.random() - 1.5) * 0.9)))) })}>🎲 New face</button></div>
+            {FACE_SLIDERS.map(([i, label]) => (
+              <div className="row small" key={i}><span className="muted" style={{ width: 80 }}>{label}</span><input type="range" min={-1} max={1} step={0.05} value={look.face?.[i] ?? 0} onChange={(e) => { const f = [...(look.face ?? Array(13).fill(0))]; f[i] = Number(e.target.value); set({ face: f }); }} className="grow" /></div>
+            ))}
           </div>
           <div className="col" style={{ gap: 6 }}>
             <b>Hair</b>

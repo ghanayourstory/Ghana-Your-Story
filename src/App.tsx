@@ -239,15 +239,14 @@ function Game() {
         <div className="modal-wrap" onClick={closeNews}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="pill gold">🆕 Update · {BUILD_VERSION}</div>
-            <h2 style={{ margin: "10px 0 4px" }}>Sika City is now all of Ghana 🇬🇭</h2>
-            <p className="muted small" style={{ marginTop: 0 }}>16 regions, 20 playable towns, real roads between them.</p>
+            <h2 style={{ margin: "10px 0 4px" }}>Real homes, real streets 🏠</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>Your home now matches what you can afford, and test characters get GH₵500M to try everything.</p>
             <div className="col small">
-              <div>🚗 <b>New in v6:</b> real 3D car models (Ghana-style yellow-quartered taxis, saloons, Land Cruisers, sports cars), people in proper loose clothes with natural skin, and the full range of Ghanaian skin tones.</div>
-              <div>🚌 <b>Travel</b> by bus, VIP or flight to Kumasi, Tamale, Kintampo, Wa, Bole, Sawla, Cape Coast, Ho and more.</div>
-              <div>🧭 <b>Day trips:</b> Kintampo Falls, Bui Dam, Mole, Wli, Paga, Kakum. 🥁 <b>Festivals</b> in their real months.</div>
-              <div>🛍️ <b>Shops:</b> Melcom, Accra Mall, phone shops, carpenters. Furnish your room and it shows in 3D.</div>
-              <div>🛺 <b>Vehicles:</b> motorbikes, pragya, taxis on work-and-pay, the V8, a supercar. 🎓 <b>Driving school</b> for your licence.</div>
-              <div>🌱 <b>Farms</b>, 📸 <b>Vibes</b> social media, new people to meet, and Nima & Jamestown in Accra.</div>
+              <div>🏠 <b>Homes you can walk into:</b> sleep, bath, cook, watch TV. A compound room has a shared bathroom and a coal pot; a northern room has bucket baths; penthouses and mansions get chef kitchens, ensuites, pools and gatehouses.</div>
+              <div>🛣️ <b>Streets:</b> real open gutters with rubbish and slab crossings, three-light traffic signals, hawkers in traffic, burglar bars, balconies, alleys and walkways, and the gated Trasacco Valley Estate.</div>
+              <div>🧍 <b>People:</b> different faces, heights and builds, wheelchair users and people on crutches, street preachers. Shrines and more mosques.</div>
+              <div>✈️ <b>Airport City:</b> Kotoka apron, buy a hangar, then a plane or helicopter, and fly yourself between airports.</div>
+              <div>🚶 Slower, natural walking pace (hold Shift to run). Smaller minimap.</div>
             </div>
             <div className="row" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>
               <button className="btn primary" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "travel", ctx: "phone", scope: "ghana" }); }}>🗺️ Ghana map</button>

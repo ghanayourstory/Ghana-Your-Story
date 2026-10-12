@@ -237,3 +237,25 @@ test("homes: compound rooms share a bathroom and cook on a coal pot; penthouses 
   assert.ok(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).ok);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {
+  const env = makeCtx({ devTools: true });
+  const id = newPlayer(env.ctx, "graduate", true);
+  const { ctx } = env;
+  assert.ok(act(ctx, id, { type: "dev_grant", amount: 500_000_000 * 100 }).ok);
+  ctx.db.run("UPDATE players SET reputation = 70 WHERE id = ?", id);
+  skipTo(ctx, id, 9);
+  assert.ok(act(ctx, id, { type: "travel", to: "airport_city", mode: "taxi" }).ok);
+  skipTo(ctx, id, 10);
+  assert.equal(act(ctx, id, { type: "vehicle_buy", vehicleId: "bizjet", placeId: "aircraft_dealer" }).code, "no_hangar");
+  assert.ok(act(ctx, id, { type: "plot_buy", plotId: "kotoka_hangar" }).ok);
+  const r = act(ctx, id, { type: "vehicle_buy", vehicleId: "bizjet", placeId: "aircraft_dealer" });
+  assert.ok(r.ok, r.error);
+  const before = gameMin(ctx, id);
+  const f = act(ctx, id, { type: "travel", to: "tamale", mode: "own_plane" });
+  assert.ok(f.ok, f.error);
+  assert.equal(district(ctx, id), "tamale");
+  assert.ok(gameMin(ctx, id) - before < 120, "a jet gets there in well under two hours");
+  assert.equal(act(ctx, id, { type: "travel", to: "kintampo", mode: "own_plane" }).code, "no_route");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

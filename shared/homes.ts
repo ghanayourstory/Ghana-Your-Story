@@ -49,7 +49,7 @@ export const RENTAL_TIER: Record<string, HomeTier> = {
 };
 export const DESIGN_TIER: Record<string, HomeTier> = {
   chamber_hall: "chamber_hall", bungalow: "apartment", family_house: "townhouse", villa: "villa", shop_block: "chamber_hall", apartments: "apartment",
-  northern_compound: "northern_room", compound_house: "chamber_hall", guesthouse: "apartment", mansion: "mansion", penthouse_unit: "penthouse",
+  northern_compound: "northern_room", compound_house: "chamber_hall", guesthouse: "apartment", mansion: "mansion", penthouse_unit: "penthouse", hangar: "apartment",
 };
 export function tierForHome(kind: "rental" | "owned", ref: string): HomeTier {
   return kind === "rental" ? RENTAL_TIER[ref] ?? "compound_room" : DESIGN_TIER[ref] ?? "apartment";

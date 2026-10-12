@@ -147,6 +147,22 @@ const FACE = {
   },
 };
 
+export const FACE_AXES = {
+  nose_wide: ["nose/nose-scale-horiz-incr", "nose/nose-flaring-incr"],
+  nose_big: ["nose/nose-volume-incr", "nose/nose-scale-vert-incr"],
+  jaw: ["chin/chin-width-incr", "head/head-square"],
+  chin: ["chin/chin-prominent-incr", "chin/chin-height-incr"],
+  cheeks: ["cheek/l-cheek-volume-incr", "cheek/r-cheek-volume-incr"],
+  cheekbones: ["cheek/l-cheek-bones-incr", "cheek/r-cheek-bones-incr"],
+  eyes: ["eyes/l-eye-scale-incr", "eyes/r-eye-scale-incr"],
+  lips: ["mouth/mouth-lowerlip-volume-incr", "mouth/mouth-upperlip-volume-incr"],
+  mouth_wide: ["mouth/mouth-scale-horiz-incr"],
+  head_long: ["head/head-scale-vert-incr", "head/head-oval"],
+  head_round: ["head/head-round", "head/head-fat-incr"],
+  forehead: ["forehead/forehead-scale-vert-incr"],
+  age: ["head/head-age-incr"],
+};
+
 function build(gender) {
   let base0 = V;
   for (const [eth, w] of Object.entries(ETHNIC)) base0 = apply(base0, readTarget(`${eth}-${gender}-young`), w);
@@ -158,6 +174,9 @@ function build(gender) {
     heavy: variant("averagemuscle-maxweight"),
     slim: variant("averagemuscle-minweight"),
   };
+  // Face shape axes: every person mixes these differently, so nobody looks the same.
+  const faceAxis = (targets) => smoothFace(targets.reduce((P, t) => apply(P, readTarget(t), 1), apply(base0, readTarget(`universal-${gender}-young-averagemuscle-averageweight`), 1)));
+  for (const [k, targets] of Object.entries(FACE_AXES)) morphs[k] = faceAxis(targets);
   const jointPos = (name, P = base) => {
     const idx = sk.joints[name];
     const s = [0, 0, 0];
@@ -438,7 +457,7 @@ function build(gender) {
     });
     out.skinIndex = b64(si);
     out.skinWeight = b64(sw);
-    out.morphs = Object.fromEntries(Object.entries(morphs).map(([k, P]) => {
+    out.morphs = Object.fromEntries(Object.entries(morphs).filter(([k]) => !(k in FACE_AXES)).map(([k, P]) => {
       const S = shape(P);
       return [k, b64(new Float32Array(S.flatMap((p, i) => p.map((x, j) => x - basePos[i][j]))))];
     }));
@@ -466,7 +485,16 @@ function build(gender) {
     skinIndex: b64(skinIndex),
     skinWeight: b64(skinWeight),
     region: b64(region),
-    morphs: Object.fromEntries(Object.entries(morphs).map(([k, P]) => [k, b64(morphDelta(P))])),
+    morphs: Object.fromEntries(Object.entries(morphs).filter(([k]) => !(k in FACE_AXES)).map(([k, P]) => [k, b64(morphDelta(P))])),
+    // Face axes only move the head: stored sparsely (vertex index + delta).
+    faceMorphs: Object.fromEntries(Object.keys(FACE_AXES).map((k) => {
+      const d = morphDelta(morphs[k]);
+      const idx = [], val = [];
+      for (let i = 0; i < d.length / 3; i++) {
+        if (Math.abs(d[i * 3]) + Math.abs(d[i * 3 + 1]) + Math.abs(d[i * 3 + 2]) > 1e-5) { idx.push(i); val.push(d[i * 3], d[i * 3 + 1], d[i * 3 + 2]); }
+      }
+      return [k, { idx: b64(new Uint16Array(idx)), d: b64(new Float32Array(val)) }];
+    })),
     shells,
     hips,
     arm: { shoulder: heads.get("upperarm01.L"), elbow: heads.get("lowerarm01.L"), wrist: heads.get("wrist.L") },

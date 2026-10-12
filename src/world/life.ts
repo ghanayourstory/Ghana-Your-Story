@@ -62,6 +62,59 @@ interface Walker {
   target: THREE.Vector2 | null;
   bubble: THREE.Sprite | null;
   bubbleT: number;
+  role?: "hawker" | "preacher" | "wheelchair" | "crutches";
+  /** Hawkers patrol a stretch of road between the lanes. */
+  range?: [number, number];
+}
+
+const HAWKER_CALLS = ["Pure water! Cold pure water!", "Plantain chips!", "Phone charger, boss!", "Meat pie! Meat pie!", "Daily Graphic!", "Ice cream!", "Kofi Brokeman!", "Handkerchief, wipe your sweat!", "Bofrot!"];
+const PREACHER_LINES = ["Jesus is coming soon!", "Repent and be saved!", "Hallelujah! Somebody shout Amen!", "God will lift you up!", "Your miracle is today!", "Amen? AMEN!"];
+
+/** Pose a person seated (for wheelchair users). Works on the detailed bodies. */
+function seat(p: Person) {
+  const r = p as unknown as { real?: boolean; bones?: Record<string, THREE.Bone> };
+  if (!r.real || !r.bones) return;
+  for (const s of ["L", "R"]) {
+    r.bones[`upperleg01.${s}`]?.rotation.set(-1.45, 0, s === "L" ? -0.05 : 0.05);
+    r.bones[`lowerleg01.${s}`]?.rotation.set(1.5, 0, 0);
+    r.bones[`upperarm01.${s}`]?.rotation.set(0.5, 0, s === "L" ? 1.15 : -1.15);
+  }
+}
+
+function wheelchair(): THREE.Group {
+  const g = new THREE.Group();
+  const frame = new THREE.MeshStandardMaterial({ color: "#2b2d30", roughness: 0.4, metalness: 0.7 });
+  const seatM = new THREE.MeshStandardMaterial({ color: "#1a1a1a", roughness: 0.8 });
+  const wheel = new THREE.TorusGeometry(0.3, 0.025, 8, 24);
+  for (const s of [-1, 1]) {
+    const w = new THREE.Mesh(wheel, frame);
+    w.rotation.y = Math.PI / 2;
+    w.position.set(s * 0.3, 0.32, -0.05);
+    g.add(w);
+    const c = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.02, 6, 12), frame);
+    c.rotation.y = Math.PI / 2;
+    c.position.set(s * 0.22, 0.08, 0.38);
+    g.add(c);
+  }
+  const seatBox = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.05, 0.45), seatM);
+  seatBox.position.set(0, 0.5, 0.05);
+  g.add(seatBox);
+  const back = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.5, 0.04), seatM);
+  back.position.set(0, 0.78, -0.18);
+  g.add(back);
+  return g;
+}
+
+function crutches(): THREE.Group {
+  const g = new THREE.Group();
+  const m = new THREE.MeshStandardMaterial({ color: "#9aa1a8", roughness: 0.3, metalness: 0.8 });
+  for (const s of [-1, 1]) {
+    const c = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 1.3, 6), m);
+    c.position.set(s * 0.32, 0.65, 0.12);
+    c.rotation.z = s * 0.08;
+    g.add(c);
+  }
+  return g;
 }
 
 export interface NpcActor {
@@ -139,6 +192,48 @@ export class CityLife {
       rig.root.position.set(w.x, 0.16, w.z);
       this.group.add(rig.root);
       this.walkers.push(w);
+    }
+    // Hawkers working the traffic at the junction (daytime, busy places).
+    if (!night && ["market", "urban", "town", "corporate", "savanna"].includes(dist.style)) {
+      const n = dist.style === "market" ? 6 : 4;
+      for (let i = 0; i < n; i++) {
+        const rig = buildPerson(randomLook(Math.floor(this.rnd() * 1e9), { carry: true }), { key: i < 3 });
+        const sideX = i % 2 ? 1 : -1;
+        const range: [number, number] = sideX > 0 ? [CROSS_HALF + 5, CROSS_HALF + 30] : [-CROSS_HALF - 30, -CROSS_HALF - 5];
+        const x = range[0] + this.rnd() * (range[1] - range[0]);
+        const z = (this.rnd() - 0.5) * 0.5;
+        rig.root.position.set(x, 0.02, z);
+        this.group.add(rig.root);
+        this.walkers.push({ rig, z, x, dir: this.rnd() < 0.5 ? 1 : -1, speed: 0.75, pause: 0, vendor: true, beach: false, target: null, bubble: null, bubbleT: this.rnd() * 10, role: "hawker", range });
+      }
+    }
+    // A street preacher with a megaphone, and people living with disabilities.
+    if (!night) {
+      const sw = this.d.sidewalks[0];
+      const px = -20 + this.rnd() * 40;
+      const preacher = buildPerson({ ...randomLook(Math.floor(this.rnd() * 1e9)), shirt: "#f4f2ec", pants: "#1a1a1a", pattern: "plain", feminine: false, hairStyle: "low" }, { key: true });
+      preacher.root.position.set(px, 0.16, sw.z);
+      preacher.root.rotation.y = 0;
+      const mega = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.28, 12, 1, true), new THREE.MeshStandardMaterial({ color: "#e8e8e6", roughness: 0.4, side: THREE.DoubleSide }));
+      mega.rotation.x = -Math.PI / 2;
+      mega.position.set(0.18, 1.5, 0.3);
+      preacher.root.add(mega);
+      this.group.add(preacher.root);
+      this.walkers.push({ rig: preacher, z: sw.z, x: px, dir: 0, speed: 0, pause: 1e9, vendor: false, beach: false, target: null, bubble: null, bubbleT: 2, role: "preacher" });
+      for (let i = 0; i < 2; i++) {
+        const wc = i === 0;
+        const s2 = this.d.sidewalks[i % this.d.sidewalks.length];
+        const rig = buildPerson(randomLook(Math.floor(this.rnd() * 1e9)), { key: true });
+        const x = -60 + this.rnd() * 120;
+        if (wc) {
+          rig.root.add(wheelchair());
+          seat(rig);
+          (rig as unknown as { body?: THREE.Object3D }).body?.position.set(0, -0.32, 0);
+        } else rig.root.add(crutches());
+        rig.root.position.set(x, 0.16, s2.z);
+        this.group.add(rig.root);
+        this.walkers.push({ rig, z: s2.z, x, dir: this.rnd() < 0.5 ? 1 : -1, speed: wc ? 0.8 : 0.55, pause: 0, vendor: false, beach: false, target: null, bubble: null, bubbleT: 30, role: wc ? "wheelchair" : "crutches" });
+      }
     }
     // Sellers standing behind stalls.
     for (const s of this.d.stalls) {
@@ -227,9 +322,12 @@ export class CityLife {
   update(dt: number, t: number, player: THREE.Vector3, night: boolean, camera: THREE.Camera) {
     const phase = this.d.trafficLight.phase();
     const tl = this.d.trafficLight.mats;
-    tl.ewGreen.emissiveIntensity = phase === "ew" ? 3 : 0;
+    const amber = this.d.trafficLight.amber();
+    tl.ewGreen.emissiveIntensity = phase === "ew" && !amber ? 3 : 0;
+    tl.ewAmber.emissiveIntensity = phase === "ew" && amber ? 3 : 0;
     tl.ewRed.emissiveIntensity = phase === "ew" ? 0 : 3;
-    tl.nsGreen.emissiveIntensity = phase === "ns" ? 3 : 0;
+    tl.nsGreen.emissiveIntensity = phase === "ns" && !amber ? 3 : 0;
+    tl.nsAmber.emissiveIntensity = phase === "ns" && amber ? 3 : 0;
     tl.nsRed.emissiveIntensity = phase === "ns" ? 0 : 3;
 
     // Vehicles: keep distance, obey lights, stop for the player, pull in at stops.
@@ -320,6 +418,16 @@ export class CityLife {
             moving = w.speed;
           }
         }
+      } else if (w.role === "hawker" && w.range) {
+        // Weave along the centre line between the lanes, turning at the ends of the stretch.
+        if (w.pause > 0) w.pause -= dt;
+        else {
+          w.x += w.dir * w.speed * dt;
+          if (w.x > w.range[1] || w.x < w.range[0]) { w.dir *= -1; w.pause = 1 + Math.random() * 3; }
+          w.rig.root.rotation.y = w.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+          moving = w.speed;
+          if (Math.random() < dt * 0.05) { w.pause = 2 + Math.random() * 4; w.rig.root.rotation.y = Math.random() < 0.5 ? 0 : Math.PI; }
+        }
       } else if (w.dir !== 0) {
         if (w.pause > 0) w.pause -= dt;
         else {
@@ -339,14 +447,16 @@ export class CityLife {
       }
       w.rig.root.position.x = w.x;
       w.rig.root.position.z = w.z;
-      animatePerson(w.rig, dt, moving);
+      if (w.role !== "wheelchair") animatePerson(w.rig, dt, w.role === "crutches" ? moving * 0.7 : moving);
       // Occasional shout near the player.
       w.bubbleT -= dt;
       const near = Math.hypot(player.x - w.x, player.z - w.z) < 14;
       if (w.bubbleT <= 0) {
         w.bubbleT = 14 + Math.random() * 30;
-        if (near && !w.bubble) {
-          const text = CROWD_SHOUTS[Math.floor(Math.random() * CROWD_SHOUTS.length)];
+        if (w.role === "preacher") w.bubbleT = 5 + Math.random() * 4;
+        if ((near || w.role === "preacher") && !w.bubble) {
+          const pool = w.role === "hawker" ? HAWKER_CALLS : w.role === "preacher" ? PREACHER_LINES : CROWD_SHOUTS;
+          const text = pool[Math.floor(Math.random() * pool.length)];
           const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: label(text, { bg: "rgba(255,255,255,0.92)", fg: "#1a1a1a" }), depthTest: true }));
           const img = sp.material.map!.image as HTMLCanvasElement;
           sp.scale.set(0.42 * (img.width / img.height), 0.42, 1);

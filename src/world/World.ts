@@ -8,7 +8,7 @@ import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook 
 import { buildSite } from "./construction.ts";
 import { buildHomeInterior, type Interior } from "./interiors.ts";
 import type { HomeSpec } from "../../shared/homes.ts";
-import { buildVehicle, vehicleKindForModel } from "./vehicles.ts";
+import { buildAircraft, buildVehicle, vehicleKindForModel, type AircraftKind } from "./vehicles.ts";
 import { VEHICLES } from "../../shared/life.ts";
 import { CityAudio } from "./audio.ts";
 import { setMaxAnisotropy } from "./textures.ts";
@@ -238,13 +238,22 @@ export class World {
   private updateParked(s: GameState) {
     const d = this.district;
     if (!d) return;
-    const key = s.player.home.district === d.id ? s.vehicles.map((v) => (v as { type: string }).type).join(",") : "";
+    const key = s.player.home.district === d.id || d.id === "airport_city" ? `${d.id}:${s.vehicles.map((v) => (v as { type: string }).type).join(",")}` : "";
     if (key === this.parkedKey) return;
     this.parkedKey = key;
     if (this.parked) this.scene.remove(this.parked);
     this.parked = new THREE.Group();
     let x = d.homeDoor.x + 3.4;
-    key.split(",").filter(Boolean).forEach((type, i) => {
+    // Your aircraft wait on the apron at Airport City.
+    if (d.id === "airport_city") {
+      s.vehicles.map((v) => (v as { type: string }).type).filter((t) => VEHICLES[t]?.category === "aircraft").forEach((t, i) => {
+        const a = buildAircraft(VEHICLES[t].model as AircraftKind, "#f4f4f2", "#b08d57");
+        a.position.set(-62 + (i % 2) * 9 - 4.5, 0, -74 + Math.floor(i / 2) * -6);
+        a.rotation.y = 0;
+        this.parked!.add(a);
+      });
+    }
+    key.split(",").filter((t) => t && VEHICLES[t]?.category !== "aircraft").forEach((type, i) => {
       const def = VEHICLES[type];
       const v = buildVehicle(vehicleKindForModel(def?.model ?? "sedan"), 77 + i);
       x += v.width / 2 + 0.5;

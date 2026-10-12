@@ -545,3 +545,85 @@ export function setVehicleLights(v: VehicleRig, night: boolean, braking: boolean
 export function spinWheels(v: VehicleRig, distance: number) {
   for (const w of v.wheels) w.rotation.x += distance / 0.35;
 }
+
+// ---------------------------------------------------------------------------
+// Aircraft (for the airport apron, hangars and the planes you own).
+
+export type AircraftKind = "prop_plane" | "turboprop" | "bizjet" | "helicopter" | "airliner";
+
+export function buildAircraft(kind: AircraftKind, livery = "#f4f4f2", stripe = "#c8452c"): THREE.Group {
+  const g = new THREE.Group();
+  const body = paint(livery);
+  const accent = paint(stripe);
+  const dark = black;
+  const win = glass;
+  const add = (o: THREE.Object3D) => (g.add(o), o);
+  const cyl = (r0: number, r1: number, len: number, m: THREE.Material, z: number, y: number, x = 0) => {
+    const c = mesh(new THREE.CylinderGeometry(r1, r0, len, 20), m, x, y, z);
+    c.rotation.x = Math.PI / 2;
+    return add(c);
+  };
+  const wing = (span: number, chordRoot: number, chordTip: number, y: number, z: number, sweep: number, m: THREE.Material = body) => {
+    for (const s of [-1, 1]) {
+      const shape = new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(span / 2, -sweep), new THREE.Vector2(span / 2, -sweep - chordTip), new THREE.Vector2(0, -chordRoot)]);
+      const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.12, bevelEnabled: false });
+      geo.rotateX(Math.PI / 2);
+      const w = mesh(geo, m, 0, y, z);
+      w.scale.x = s;
+      add(w);
+    }
+  };
+  if (kind === "helicopter") {
+    add(mesh(new THREE.SphereGeometry(1.1, 20, 14), body, 0, 1.5, 0.6)).scale.set(1, 0.9, 1.4);
+    add(mesh(new THREE.SphereGeometry(0.95, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2.2), win, 0, 1.55, 1.3)).rotation.x = 0.9;
+    cyl(0.32, 0.12, 5.2, body, -2.8, 1.75);
+    add(mesh(rbox(0.08, 1.2, 0.8, 0.03), accent, 0, 2.3, -5.2));
+    for (const s of [-1, 1]) add(mesh(rbox(0.08, 0.08, 3.2, 0.03), dark, s * 0.85, 0.2, 0.5));
+    for (const s of [-1, 1]) for (const z of [-0.4, 1.4]) add(mesh(rbox(0.06, 0.6, 0.06, 0.02), dark, s * 0.85, 0.5, z));
+    add(mesh(new THREE.CylinderGeometry(0.15, 0.15, 0.5, 10), dark, 0, 2.6, 0.5));
+    for (let i = 0; i < 4; i++) { const b = add(mesh(rbox(0.25, 0.04, 9.5, 0.02), dark, 0, 2.86, 0.5)); b.rotation.y = (i * Math.PI) / 4; }
+    return g;
+  }
+  const L = kind === "airliner" ? 38 : kind === "bizjet" ? 26 : kind === "turboprop" ? 13.5 : 8.3;
+  const R = kind === "airliner" ? 2.0 : kind === "bizjet" ? 1.2 : kind === "turboprop" ? 0.85 : 0.6;
+  const yc = kind === "prop_plane" ? 1.15 : R + (kind === "airliner" ? 1.6 : 0.9);
+  cyl(R, R, L * 0.7, body, 0, yc);
+  add(mesh(new THREE.SphereGeometry(R, 20, 14), body, 0, yc, L * 0.35)).scale.set(1, 1, 1.9);
+  cyl(R, R * 0.25, L * 0.28, body, -L * 0.49, yc + R * 0.25);
+  // Cockpit glass and a cabin window line.
+  add(mesh(new THREE.SphereGeometry(R, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), win, 0, yc + R * 0.35, L * 0.37)).scale.set(0.82, 0.4, 0.9);
+  for (const s of [-1, 1]) add(mesh(rbox(0.02, R * 0.13, L * 0.5, 0.01), dark, s * R * 0.99, yc + R * 0.3, -L * 0.02));
+  add(mesh(rbox(R * 2.02, R * 0.18, L * 0.7, 0.02), accent, 0, yc - R * 0.2, 0)).scale.set(1, 1, 1);
+  // Tail fin and stabilisers.
+  const finH = kind === "airliner" ? 6 : kind === "bizjet" ? 4.2 : kind === "turboprop" ? 3 : 1.5;
+  const fin = add(mesh(rbox(0.18, finH, L * 0.13, 0.05), accent, 0, yc + R * 0.4 + finH / 2, -L * 0.53));
+  fin.rotation.x = -0.3;
+  const tailY = kind === "bizjet" ? yc + R + finH - 0.4 : yc + R * 0.3;
+  add(mesh(rbox(L * 0.36, 0.12, L * 0.08, 0.04), body, 0, tailY, -L * 0.58));
+  if (kind === "prop_plane") {
+    // High wing (Cessna-style) with struts and a nose propeller.
+    add(mesh(rbox(11, 0.14, 1.5, 0.05), body, 0, yc + R + 0.15, L * 0.08));
+    for (const s of [-1, 1]) { const st = add(mesh(rbox(0.06, 1.3, 0.08, 0.02), dark, s * 1.6, yc + 0.2, L * 0.08)); st.rotation.z = s * 0.7; }
+    add(mesh(rbox(0.12, 1.9, 0.12, 0.03), dark, 0, yc, L * 0.35 + R * 1.9));
+    for (const s of [-1, 1]) add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.95, 8), dark, s * 0.9, 0.48, L * 0.05));
+    add(mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.95, 8), dark, 0, 0.48, L * 0.32));
+  } else {
+    const span = kind === "airliner" ? 34 : kind === "bizjet" ? 27 : 16;
+    wing(span, L * 0.2, L * 0.07, yc - R * 0.5, L * 0.08, kind === "turboprop" ? 0.3 : L * 0.16);
+    if (kind === "turboprop") {
+      for (const s of [-1, 1]) {
+        cyl(0.42, 0.42, 3, body, L * 0.12, yc - R * 0.35, s * 3.2);
+        add(mesh(rbox(0.12, 2.6, 0.12, 0.03), dark, s * 3.2, yc - R * 0.35, L * 0.12 + 1.6));
+      }
+    } else {
+      // Rear-mounted jet engines (bizjet) or under-wing engines (airliner).
+      for (const s of [-1, 1]) {
+        if (kind === "bizjet") { cyl(0.55, 0.5, 3.6, body, -L * 0.36, yc + R * 0.5, s * (R + 0.65)); add(mesh(rbox(0.7, 0.15, 1.4, 0.04), body, s * (R + 0.2), yc + R * 0.5, -L * 0.36)); }
+        else { cyl(1.1, 1.0, 4.2, body, L * 0.12, yc - R - 0.6, s * 6); cyl(0.95, 0.95, 0.1, dark, L * 0.12 + 2.12, yc - R - 0.6, s * 6); add(mesh(rbox(0.25, 1.7, 3, 0.05), body, s * 6, yc - R + 0.55, L * 0.1)); }
+      }
+    }
+    for (const s of [-1, 1]) add(mesh(new THREE.CylinderGeometry(0.12, 0.12, yc - R + 0.3, 8), dark, s * R * 1.4, (yc - R) / 2, -L * 0.05));
+    add(mesh(new THREE.CylinderGeometry(0.1, 0.1, yc - R + 0.3, 8), dark, 0, (yc - R) / 2, L * 0.3));
+  }
+  return g;
+}

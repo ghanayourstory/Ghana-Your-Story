@@ -47,6 +47,7 @@ export const REGIONAL_SERVICES: Record<string, Service> = {
   lorry_chat: S({ id: "lorry_chat", name: "Chat with drivers at the station", verb: "Chat with drivers", cost: 0, minutes: 30, effects: { social: 6 } }),
   smock_fitting: S({ id: "smock_fitting", name: "Get measured for a smock", verb: "Order a smock", cost: 450, minutes: 60, effects: { social: 6, reputation: 3, charisma: 1 }, note: "Hand-woven strips sewn into a batakari." }),
   kente_viewing: S({ id: "kente_viewing", name: "Watch the kente weavers", verb: "Watch the weavers", cost: 20, minutes: 60, effects: { social: 6, charisma: 1 } }),
+  libation: S({ id: "libation", name: "Pour libation with the priest", verb: "Pay respects", cost: 15, minutes: 40, effects: { social: 5, reputation: 1 }, note: "A small bottle of schnapps, poured for the ancestors." }),
   street_football: S({ id: "street_football", name: "Gutter-to-gutter football", verb: "Play football", cost: 0, minutes: 75, effects: { fitness: 1, social: 12, energy: -16, hunger: -8 }, hours: [15, 19], note: "Two stones for goalposts, one ball, thirty players." }),
   boxing: S({ id: "boxing", name: "Boxing training", verb: "Train", cost: 20, minutes: 90, effects: { fitness: 2, health: 3, energy: -24, hunger: -12 }, hours: [6, 19], note: "Bukom has produced world champions. The coaches don't let you forget it." }),
   ga_kenkey: S({ id: "ga_kenkey", name: "Ga kenkey, fried fish & shito", verb: "Eat Ga kenkey", cost: 18, minutes: 20, effects: { hunger: 52, social: 3 }, hours: [7, 22] }),
@@ -221,7 +222,7 @@ interface TownSpec {
 
 const DEFAULT_SIZE: Partial<Record<PlaceKind, [number, number, number]>> = {
   market: [24, 14, 6], food: [9, 7, 3.4], church: [12, 14, 9], mosque: [12, 12, 9], clinic: [12, 10, 7], school: [14, 10, 7], bank: [11, 9, 8],
-  lodge: [12, 10, 6], tour: [8, 6, 3.4], shop: [10, 8, 4], dealer: [16, 10, 5], work: [14, 10, 6], landmark: [14, 10, 8], nightlife: [10, 8, 4], furniture: [14, 9, 4], realtor: [9, 8, 5], phone: [8, 7, 4],
+  shrine: [6, 6, 3.2], lodge: [12, 10, 6], tour: [8, 6, 3.4], shop: [10, 8, 4], dealer: [16, 10, 5], work: [14, 10, 6], landmark: [14, 10, 8], nightlife: [10, 8, 4], furniture: [14, 9, 4], realtor: [9, 8, 5], phone: [8, 7, 4],
 };
 const KIND_COLOR: Partial<Record<PlaceKind, string>> = { mosque: "#E8DCC0", church: "#F2EEE4", clinic: "#F4F4EE", bank: "#E8D5B5", lodge: "#E9B872", tour: "#5FA8A0", dealer: "#D9D4C7" };
 
@@ -270,6 +271,19 @@ const tour = (id: string, name: string, district: string, blurb: string): PlaceS
 
 const TOWNS_SPEC: TownSpec[] = [
   {
+    id: "airport_city", city: "accra", name: "Airport City", tagline: "Kotoka, glass towers and private hangars", mood: "Accra's business district by the runway: hotels, airline offices and the roar of jets.",
+    style: "corporate", geo: { lat: 5.6052, lon: -0.1718 }, roads: { main: "Liberation Road", cross: "Airport Bypass" }, bearing: 0,
+    costOfLiving: 1.45, crowd: 0.55, traffic: 0.8, nightlife: 0.5, palette: "city", landmark: "Kotoka International Airport",
+    places: [
+      station("airport_stop", "Airport Junction", "Taxis, ride apps and the shuttle to the terminals."),
+      { id: "kotoka", name: "Kotoka International Airport (Terminal 3)", kind: "airport", services: ["view", "coffee"], open: [0, 24], size: [30, 16, 14], blurb: "Domestic flights to Kumasi, Tamale, Takoradi, Wa, Ho and Sunyani; international to the world.", geo: { lat: 5.6052, lon: -0.1668 } },
+      { id: "hangar_office", name: "General Aviation Hangars", kind: "hangar", open: [7, 19], size: [22, 14, 10], blurb: "Private hangars for business aviation. Leases, sales and maintenance." },
+      { id: "aircraft_dealer", name: "Skyline Aviation Sales", kind: "dealer", open: [9, 18], size: [16, 10, 8], blurb: "Light aircraft, turboprops, business jets and helicopters." },
+      { id: "airport_hotel", name: "Runway View Hotel", kind: "lodge", services: ["lodge", "coffee"], open: [0, 24], size: [16, 12, 22], blurb: "Business hotel with a rooftop bar facing the runway." },
+      { id: "airport_bank", name: "Coastline Bank (Airport City)", kind: "bank", open: [8, 17], blurb: "Corporate banking and the FX desk." },
+    ],
+  },
+  {
     id: "nima", city: "accra", name: "Nima", tagline: "The zongo that raised half of Accra", mood: "Dense, loud, devout and generous. Kiosks, mosques, gutter football and the best waakye at dawn.",
     style: "market", geo: { lat: 5.5833, lon: -0.1963 }, roads: { main: "Nima Highway", cross: "Mamobi Road" }, bearing: 5,
     costOfLiving: 0.65, crowd: 1, traffic: 0.8, nightlife: 0.35, palette: "city", landmark: "Nima Market",
@@ -295,6 +309,7 @@ const TOWNS_SPEC: TownSpec[] = [
       { id: "bukom_gym", name: "Bukom Boxing Gym", kind: "gym", services: ["boxing"], open: [6, 20], blurb: "Ring ropes, punching bags made from sacks, and champions on the walls." },
       { id: "ga_kenkey_spot", name: "Auntie Naa's Kenkey", kind: "food", services: ["ga_kenkey", "banku", "sobolo"], open: [7, 22], blurb: "Ga kenkey, hot fried fish and pepper ground in an asanka." },
       { id: "fish_smokers", name: "Fish Smoking Yards", kind: "market", services: ["market_haggle"], blurb: "Women smoke herrings over clay ovens all day." },
+      { id: "ga_shrine", name: "Sakumo Shrine (Ga traditional)", kind: "shrine", services: ["libation"], open: [6, 18], blurb: "Where the Wulomo, the Ga traditional priest, keeps the old rites." },
       { id: "ga_mantse", name: "Ga Mantse Palace", kind: "landmark", services: ["view"], open: [9, 17], blurb: "Seat of the Ga paramount chief." },
       { id: "jamestown_harbour", name: "Jamestown Fishing Harbour", kind: "market", services: ["banku", "view"], blurb: "Painted canoes, nets and the morning catch.", beach: true },
     ],
@@ -318,6 +333,7 @@ const TOWNS_SPEC: TownSpec[] = [
       { id: "bantama_church", name: "Wesley Methodist Cathedral", kind: "church", services: ["church"], open: [6, 20], blurb: "Big choir, bigger hats." },
       lodge("garden_city_lodge", "Garden City Guesthouse"),
       tour("kumasi_tours", "Ashanti Tours Desk", "adum", "Day trips to Lake Bosomtwe, Bonwire kente and Ntonso adinkra."),
+      { id: "okomfo_sword", name: "Okomfo Anokye Sword Site", kind: "shrine", services: ["view", "libation"], open: [8, 18], blurb: "The sword the priest Okomfo Anokye drove into the ground. Legend says if it's pulled out, the Asante kingdom falls." },
       { id: "kumasi_spot", name: "Highlife Spot", kind: "nightlife", services: ["beach_bar", "palm_wine"], open: [16, 2], blurb: "Plastic chairs, cold beer and old highlife records." },
     ],
   },
@@ -540,6 +556,7 @@ const TOWNS_SPEC: TownSpec[] = [
       { id: "ho_melcom", name: "Melcom Ho", kind: "shop", open: [8, 21], blurb: "Household goods." },
       lodge("ho_lodge", "Adaklu View Lodge"),
       tour("ho_tours", "Volta Tours", "ho", "Wli falls, Mount Afadja, Tafi Atome, Keta, Akosombo and Hogbetsotso."),
+      { id: "ho_shrine", name: "Traditional Shrine, Ho-Bankoe", kind: "shrine", services: ["libation"], open: [6, 18], blurb: "Ewe traditional shrine. Ask the priest before you enter." },
       { id: "ho_palm_wine", name: "Palm Wine Joint", kind: "nightlife", services: ["palm_wine"], open: [10, 22], blurb: "Tapped this morning." },
     ],
   },
@@ -604,8 +621,8 @@ const TOWNS_SPEC: TownSpec[] = [
   },
 ];
 
-const NO_REALTOR = new Set(["jamestown"]);
-const BIG_TOWNS = new Set(["adum", "tamale", "takoradi", "sunyani", "ho", "koforidua", "techiman", "bolgatanga", "wa", "kintampo"]);
+const NO_REALTOR = new Set(["jamestown", "airport_city"]);
+const BIG_TOWNS = new Set(["airport_city", "adum", "tamale", "takoradi", "sunyani", "ho", "koforidua", "techiman", "bolgatanga", "wa", "kintampo"]);
 for (const t of TOWNS_SPEC) {
   const short = t.name.split(/[ &-]/)[0];
   if (!NO_REALTOR.has(t.id)) t.places.push({ id: `${t.id}_realtor`, name: `${short} Land & Homes`, kind: "realtor", open: [8, 18], size: [9, 8, 5], blurb: "Plots with proper indentures, houses for rent, and a surveyor who answers his phone." });

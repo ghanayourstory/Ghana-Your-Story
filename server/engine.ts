@@ -157,6 +157,7 @@ export interface LookInput {
   build: number;
   hairStyle: (typeof HAIR_STYLES)[number];
   pattern: (typeof PATTERNS)[number];
+  face?: number[];
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -170,8 +171,9 @@ export function sanitizeLook(l: unknown): LookInput {
     pants: col(o.pants, "#2B2B2B"),
     hair: col(o.hair, "#111111"),
     feminine: o.feminine === true,
-    height: num(o.height, 1.55, 1.95, 1.74),
-    build: num(o.build, 0.85, 1.2, 1),
+    height: num(o.height, 1.45, 2.05, 1.74),
+    build: num(o.build, 0.78, 1.42, 1),
+    face: Array.isArray(o.face) ? o.face.slice(0, 13).map((v) => num(v, -1, 1, 0)) : undefined,
     hairStyle: (HAIR_STYLES as readonly string[]).includes(o.hairStyle as string) ? (o.hairStyle as LookInput["hairStyle"]) : "low",
     pattern: (PATTERNS as readonly string[]).includes(o.pattern as string) ? (o.pattern as LookInput["pattern"]) : "plain",
   };
@@ -932,7 +934,7 @@ function actTravel(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
 
 /** Where you step off in a city, by how you arrived. */
 export function arrivalDistrict(city: string, mode: IntercityMode): DistrictId {
-  if (city === "accra") return mode === "flight" ? "east_legon" : "kaneshie";
+  if (city === "accra") return mode === "flight" || mode === "own_plane" ? "airport_city" : "kaneshie";
   return districtsIn(city)[0];
 }
 
@@ -942,7 +944,15 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const fromCity = DISTRICTS[p.district].city;
   const toCity = DISTRICTS[a.to as DistrictId].city;
   const q = intercityQuote(fromCity, toCity, mode);
-  if (!q) throw new GameError("no_route", mode === "flight" ? "No flights between those towns. Take the bus." : "No road route found.");
+  if (!q) throw new GameError("no_route", mode === "flight" || mode === "own_plane" ? "No airport there. Take the bus." : "No road route found.");
+  if (mode === "own_plane") {
+    const planes = ctx.db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).map((v) => VEHICLES[v.type]).filter((v) => v?.category === "aircraft");
+    if (!planes.length) throw new GameError("no_plane", "You don't own an aircraft. Skyline Aviation Sales in Airport City can fix that.");
+    const best = planes.sort((a, b) => b.speedKmh - a.speedKmh)[0];
+    q.minutes = Math.round((q.km / best.speedKmh) * 60) + 40;
+    q.fare = Math.round(400 + best.perKm * q.km);
+    q.energy = -4;
+  }
   const m = INTERCITY_MODES[mode];
   const gd = toGameDate(p.game_min);
   if (!isOpenAt(m.hours, gd.hour)) throw new GameError("no_service", `No ${m.name.toLowerCase()} departures at this hour (${m.hours[0]}:00–${m.hours[1]}:00).`);
@@ -953,7 +963,7 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   }
   if (q.minutes > 240) requireAwake(p, 20, "make that journey");
   const fare = minor(q.fare);
-  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}`, mode === "flight");
+  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}`, mode === "flight" || mode === "own_plane");
   // On long journeys you doze in your seat (unless you're the one driving).
   advance(ctx, p, q.minutes, fb, { quiet: true, sleeping: q.minutes > 240 && mode !== "car" });
   const from = p.district;
@@ -1478,7 +1488,7 @@ function actBizSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
 
 /** Your best personal vehicle for city driving (not on work-and-pay). */
 function drivable(db: Db, p: PlayerRow) {
-  const vs = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).map((v) => VEHICLES[v.type]).filter((v) => v && v.category !== "bicycle");
+  const vs = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).map((v) => VEHICLES[v.type]).filter((v) => v && v.category !== "bicycle" && v.category !== "aircraft");
   vs.sort((x, y) => (hasUnlock(p, y.licence ?? "") ? 1 : 0) - (hasUnlock(p, x.licence ?? "") ? 1 : 0) || y.speedKmh - x.speedKmh);
   return vs[0] ?? null;
 }
@@ -1489,12 +1499,15 @@ function actVehicleBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const place = requirePlace(p, a.placeId);
   if (!(DEALER_STOCK[place.id] ?? []).includes(v.id)) throw new GameError("not_stocked", `${place.name} doesn't sell that.`);
   if (v.requiresRep && p.reputation < v.requiresRep) throw new GameError("reputation", `The dealer only sells this to established clients (${v.requiresRep} standing).`);
+  if (v.category === "aircraft" && !ctx.db.get("SELECT 1 FROM buildings WHERE player_id = ? AND design = 'hangar' AND status IN ('complete','upgrading')", p.id)) {
+    throw new GameError("no_hangar", "You need a hangar first. The General Aviation office next door has one for sale.");
+  }
   const count = ctx.db.get<{ n: number }>("SELECT COUNT(*) AS n FROM vehicles WHERE player_id = ? AND type = ?", p.id, v.id)!.n;
   if (count >= (v.workPay ? 5 : 1)) throw new GameError("already", v.workPay ? "Five is the most you can manage. Even fleet owners sleep." : "You already own one");
   const discount = place.id === "tamale_motors" && hasUnlock(p, "abu_moto") ? 0.85 : 1;
   const money = chargeStrict(ctx, p, minor(v.price * discount), "vehicle", `Bought ${v.name}${discount < 1 ? " (Alhaji's price)" : ""}`, true);
   ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, v.id, minor(v.price), p.game_min);
-  const icon = v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗";
+  const icon = v.category === "aircraft" ? "🛩️" : v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗";
   applyEffects(p, { reputation: v.reputation, social: v.category === "luxury" ? 16 : 8 }, fb, `${icon} You rode the ${v.name} out of ${place.name}.${v.licence && !hasUnlock(p, v.licence) ? " (You'll need a licence before you can drive it.)" : ""}`, money);
   return null;
 }

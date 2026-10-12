@@ -6,9 +6,10 @@ import type { DistrictId, Effects, SkillKey } from "./world.ts";
 // ---------------------------------------------------------------------------
 // Vehicles
 
-export type VehicleCategory = "bicycle" | "motorbike" | "tricycle" | "car" | "luxury";
+export type VehicleCategory = "bicycle" | "motorbike" | "tricycle" | "car" | "luxury" | "aircraft";
 export type VehicleModel =
-  | "bicycle" | "motorbike" | "pragya" | "aboboyaa" | "compact" | "sedan" | "taxi" | "accordo" | "pickup" | "suv" | "saloon" | "v8" | "supercar" | "phantom";
+  | "bicycle" | "motorbike" | "pragya" | "aboboyaa" | "compact" | "sedan" | "taxi" | "accordo" | "pickup" | "suv" | "saloon" | "v8" | "supercar" | "phantom"
+  | "prop_plane" | "turboprop" | "bizjet" | "helicopter";
 
 export interface Vehicle {
   id: string;
@@ -46,6 +47,13 @@ export const VEHICLES: Record<string, Vehicle> = {
   supercar: V({ id: "supercar", name: "Vettore Furia V12", category: "luxury", model: "supercar", price: 5_400_000, reputation: 40, color: "#e8b100", licence: "licence_b", perKm: 6, speedKmh: 36, requiresRep: 55, blurb: "730 horsepower, ten centimetres of ground clearance and every speed bump in Accra as an enemy." }),
   phantom: V({ id: "phantom", name: "Imperial Phantom", category: "luxury", model: "phantom", price: 8_900_000, reputation: 55, color: "#2a2340", licence: "licence_b", longDistance: true, perKm: 6.5, speedKmh: 33, requiresRep: 70, blurb: "Starlight headliner, a chauffeur and total silence. You have arrived." }),
 };
+for (const v of [
+  V({ id: "prop_plane", name: "Skyhawk 4-seat single-prop", category: "aircraft", model: "prop_plane", price: 2_900_000, reputation: 15, color: "#f2f2ee", perKm: 9, speedKmh: 230, requiresRep: 20, blurb: "The flying school classic. Accra to Kumasi in under an hour." }),
+  V({ id: "helicopter", name: "Ranger light helicopter", category: "aircraft", model: "helicopter", price: 14_000_000, reputation: 25, color: "#1d2a3a", perKm: 28, speedKmh: 220, requiresRep: 30, blurb: "Skip the Spintex traffic forever." }),
+  V({ id: "turboprop", name: "King Air-class twin turboprop", category: "aircraft", model: "turboprop", price: 38_000_000, reputation: 35, color: "#f2f2ee", perKm: 32, speedKmh: 480, requiresRep: 40, blurb: "Eight seats, any airstrip in Ghana." }),
+  V({ id: "bizjet", name: "Gulfstream-class business jet", category: "aircraft", model: "bizjet", price: 260_000_000, reputation: 70, color: "#f4f4f2", perKm: 85, speedKmh: 820, requiresRep: 60, blurb: "Lagos for lunch, London for dinner. The ultimate Ghanaian dream." }),
+]) VEHICLES[v.id] = v;
+
 export const VEHICLE_DEPRECIATION_PER_MONTH = 0.012;
 
 /** Which vehicles each dealer place sells. */
@@ -59,6 +67,7 @@ export const DEALER_STOCK: Record<string, string[]> = {
   wa_dealer: ["bicycle", "motorbike", "pragya"],
   bole_dealer: ["bicycle", "motorbike", "aboboyaa"],
   bolga_dealer: ["bicycle", "motorbike", "pragya", "aboboyaa"],
+  aircraft_dealer: ["prop_plane", "helicopter", "turboprop", "bizjet"],
 };
 
 // ---------------------------------------------------------------------------

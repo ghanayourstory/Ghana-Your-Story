@@ -71,7 +71,8 @@ export function IntercityPanel({ onDone }: { onDone: () => void }) {
   const fromCity = DISTRICTS[here].city;
   const hour = state.time.hour;
   const hasCar = (state.vehicles as { type: string; status: string }[]).some((v) => v.status === "personal" && VEHICLES[v.type]?.longDistance);
-  const modes: IntercityMode[] = ["bus", "vip", "flight", ...(hasCar ? (["car"] as IntercityMode[]) : [])];
+  const hasPlane = (state.vehicles as { type: string; status: string }[]).some((v) => v.status === "personal" && VEHICLES[v.type]?.category === "aircraft");
+  const modes: IntercityMode[] = ["bus", "vip", "flight", ...(hasCar ? (["car"] as IntercityMode[]) : []), ...(hasPlane ? (["own_plane"] as IntercityMode[]) : [])];
   const cities = [...new Set(Object.values(DISTRICTS).map((d) => d.city))].filter((c) => c !== fromCity);
   const rows = cities.map((c) => ({ c, q: intercityQuote(fromCity, c, mode) })).sort((a, b) => (a.q?.km ?? 9e9) - (b.q?.km ?? 9e9));
   const go = async (city: string) => {
@@ -83,7 +84,7 @@ export function IntercityPanel({ onDone }: { onDone: () => void }) {
   return (
     <>
       <div className="seg" style={{ marginTop: 10 }}>
-        {modes.map((x) => <button key={x} className={x === mode ? "on" : ""} onClick={() => setMode(x)}>{{ bus: "🚌 Bus", vip: "🚍 VIP", flight: "✈️ Fly", car: "🚗 Drive" }[x]}</button>)}
+        {modes.map((x) => <button key={x} className={x === mode ? "on" : ""} onClick={() => setMode(x)}>{{ bus: "🚌 Bus", vip: "🚍 VIP", flight: "✈️ Fly", car: "🚗 Drive", own_plane: "🛩️ Your plane" }[x]}</button>)}
       </div>
       <div className="tiny muted" style={{ marginTop: 6 }}>{m.note} {running ? "" : `Departures ${m.hours[0]}:00–${m.hours[1]}:00.`}{mode === "flight" ? ` Airports: ${AIRPORTS.map((a) => TOWN_BY_ID[a].name).join(", ")}.` : ""}</div>
       <CountryMap here={here} onPick={(c) => setPick(c)} />
@@ -172,7 +173,7 @@ export function DealerPanel({ place, open }: { place: Place; open: boolean }) {
         const lic = v.licence && !state.player.unlocks.includes(v.licence);
         return (
           <div className="svc" key={v.id}>
-            <div className="ic" style={{ background: v.color }}>{v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗"}</div>
+            <div className="ic" style={{ background: v.color }}>{v.category === "aircraft" ? (v.model === "helicopter" ? "🚁" : "🛩️") : v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗"}</div>
             <div className="grow">
               <div className="bold">{v.name}</div>
               <div className="tiny muted">{money(v.price * 100, true)} · +{v.reputation} standing{v.workPay ? ` · work-and-pay ~${money(v.workPay * 100)}/day` : ""}{v.requiresRep ? ` · needs ${v.requiresRep}` : ""}</div>

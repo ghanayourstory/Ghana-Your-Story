@@ -247,7 +247,7 @@ export const RANK_TITLES = ["Junior", "", "Senior", "Lead", "Head"];
 // ---------------------------------------------------------------------------
 // Places
 
-export type PlaceKind = "food" | "work" | "bank" | "gym" | "clinic" | "nightlife" | "beach" | "market" | "realtor" | "home" | "church" | "transport" | "landmark" | "shop" | "school" | "dealer" | "mosque" | "lodge" | "tour" | "furniture" | "phone" | "mall";
+export type PlaceKind = "food" | "work" | "bank" | "gym" | "clinic" | "nightlife" | "beach" | "market" | "realtor" | "home" | "church" | "transport" | "landmark" | "shop" | "school" | "dealer" | "mosque" | "lodge" | "tour" | "furniture" | "phone" | "mall" | "shrine" | "airport" | "hangar";
 
 export interface Place {
   id: string;
@@ -291,6 +291,7 @@ export const PLACES: Place[] = [
   P({ id: "fish_landing", district: "labadi", name: "La Fish Landing", kind: "market", sign: "LA FISHERMEN'S LANDING", pos: [44, 28], size: [10, 7, 3], color: "#5FA8A0", open: [5, 16], services: ["banku"], blurb: "Canoes come in before noon. Nii Armah holds court." }),
   P({ id: "la_church", district: "labadi", name: "La Presby Chapel", kind: "church", sign: "LA PRESBY CHAPEL", pos: [-46, -16], size: [12, 16, 10], color: "#F7F3E8", open: [6, 20], services: ["church"], blurb: "Sunday hymns you can hear from the beach." }),
   P({ id: "labadi_stop", district: "labadi", name: "La Junction", kind: "transport", sign: "LA JUNCTION", pos: [-62, -14], size: [8, 4, 3], color: "#F2B705", open: [0, 24], services: [], blurb: "Trotros to Osu and Teshie." }),
+  P({ id: "la_kpa_shrine", district: "labadi", name: "La Kpa Shrine", kind: "shrine", sign: "LA KPA SHRINE • RESPECT", pos: [-20, -16], size: [6, 6, 3.2], color: "#f4efe2", open: [6, 19], services: ["libation", "view"], blurb: "Shrine of La's guardian deity. Shoes off, no photos without the priest's permission." }),
   P({ id: "la_pharmacy", district: "labadi", name: "Wave Pharmacy", kind: "clinic", sign: "WAVE PHARMACY", pos: [20, -16], size: [8, 7, 4], color: "#F4E3C1", open: [7, 22], services: ["pharmacy"], blurb: "Plasters, ORS and sunscreen." }),
 
   // --- Kaneshie
@@ -302,6 +303,7 @@ export const PLACES: Place[] = [
   P({ id: "kaneshie_church", district: "kaneshie", name: "Mount Zion Assembly", kind: "church", sign: "MOUNT ZION ASSEMBLY", pos: [56, 16], size: [12, 14, 8], color: "#EDE6D6", open: [6, 21], services: ["church"], blurb: "Loud praise, warm people." }),
   P({ id: "kaneshie_school", district: "kaneshie", name: "Accra Evening Institute", kind: "school", sign: "ACCRA EVENING INSTITUTE", pos: [36, 16], size: [12, 9, 7], color: "#A9B4A0", open: [16, 22], services: ["course"], blurb: "Accounting, IT and business classes after work." }),
 
+  P({ id: "kaneshie_mosque", district: "kaneshie", name: "Kaneshie Mosque", kind: "mosque", sign: "KANESHIE CENTRAL MOSQUE", pos: [-55, -18], size: [10, 10, 9], color: "#E8DCC0", open: [4, 22], services: ["mosque", "jumah"], blurb: "Traders slip in between sales for prayers." }),
   P({ id: "kaneshie_phones", district: "kaneshie", name: "Kaneshie Phone Market", kind: "phone", sign: "PHONES • ACCESSORIES • MOMO", pos: [-14, 15], size: [8, 7, 4], color: "#8FA8C0", open: [7, 20], services: [], blurb: "Rows of glass counters. Haggle hard." }),
   P({ id: "kaneshie_carpenters", district: "kaneshie", name: "Carpenters' Row", kind: "furniture", sign: "GOD'S TIME FURNITURE WORKS", pos: [-24, 15], size: [8, 7, 3.6], color: "#C47A5A", open: [7, 18], services: [], blurb: "Beds, wardrobes and sofas built to order in the open air." }),
   P({ id: "tokunbo_lot", district: "kaneshie", name: "Abossey Okai Tokunbo Lot", kind: "dealer", sign: "TOKUNBO CARS • ABOSSEY OKAI", pos: [55, -18], size: [16, 10, 5], color: "#B8B8AA", open: [8, 18], services: [], blurb: "Home-used cars from Europe and the US, and every spare part in Ghana around the corner." }),
