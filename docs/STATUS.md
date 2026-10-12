@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v20. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v21. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -73,6 +73,21 @@ Acceptance from the brief: each system has a useful start-to-finish path, meanin
 | Family & relationships | ✅ family routines, calls, help, visits, chores; friends, dates, partners; proposal → knocking → customary marriage or nikah in the partner's hometown → shared household (spouse pays half, at home inside and out); children by birth or adoption, the naming, school, time together, monthly costs. ⏳ children growing into adults with their own lives |
 | Story missions | ✅ eight arcs checked by the server against real state, paid once |
 | Events | ✅ life events, Saturday funerals/weddings, festivals |
+
+## Stage 4 progress ("connect the regions")
+
+Acceptance from the brief: intercity movement changes available work, contacts, costs, routines, places and stories, not just the background.
+
+| Changes when you move | Today |
+|---|---|
+| Work | ✅ local jobs in every town (and regional ones: oil, harbour, cocoa, shea, tourism); jobs lapse after a week away |
+| Trade | ✅ regional produce bought at the source, priced by road distance, luggage on buses, spoilage on the way |
+| Contacts | ✅ townspeople and regional characters; phone calls keep friendships alive across distance |
+| Costs | ✅ prices, rents and wages follow each town's cost of living |
+| Routines | ✅ market days, worship days and customs, dumsor groups, festivals by town |
+| Places | ✅ 20 playable towns, day trips to real sites |
+| Stories | ✅ six regional arcs; marriage happens in the partner's hometown |
+| ⏳ | rural spokes (villages around hubs), more towns per region, reviewed regional content packs |
 
 ## Next slices, in order
 

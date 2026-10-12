@@ -79,6 +79,12 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
             </div>
           ) : null;
         })()}
+        {job && place && DISTRICTS[place.district].city !== DISTRICTS[p.district].city && (
+          <div className="today-row">
+            <span>💼</span>
+            <div className="grow"><b>Your job is in {DISTRICTS[place.district].name}</b><div className="tiny muted">Jobs are local: a week without a shift and they'll give it to someone else. There's work here too.</div></div>
+          </div>
+        )}
         {festivalsFor([DISTRICTS[p.district].city, p.hometown], t.month + 1, t.day).map((f) => (
           <div className="today-row" key={f.id}>
             <span>🥁</span>

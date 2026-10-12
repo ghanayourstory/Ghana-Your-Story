@@ -452,7 +452,7 @@ function MoneyApp() {
 }
 
 function PeopleApp({ minute }: { minute: number }) {
-  const { state } = useGame();
+  const { state, act, busy } = useGame();
   const [open, setOpen] = useState<string | null>(null);
   if (!state) return null;
   const rels = new Map(state.relationships.map((r) => [r.npcId, r]));
@@ -484,6 +484,7 @@ function PeopleApp({ minute }: { minute: number }) {
                 <div style={{ marginTop: 4 }}><b>Usually:</b> {n.schedule.map((b) => `${PLACE_BY_ID[b.place].name} ${b.from}:00–${b.to}:00 (${b.days})`).join(" · ")}</div>
                 {met && <div style={{ marginTop: 4 }}><b>Favour:</b> {state.player.unlocks.includes(n.favour.unlock) ? `✅ ${n.favour.reward}` : `"${n.favour.ask}" at ${n.favour.threshold} affinity — ${n.favour.reward}`}</div>}
                 {r?.partner && <MarriagePanel npcId={n.id} />}
+                {met && r!.affinity >= 15 && <button className="btn sm" style={{ marginTop: 6 }} disabled={busy} onClick={(e) => { e.stopPropagation(); act({ type: "talk", npcId: n.id, topic: "call" }); }}>📞 Call (GH₵1.50)</button>}
                 {r && r.memories.length > 0 && <div style={{ marginTop: 6 }}><b>Memories</b>{r.memories.slice().reverse().map((m, i) => <div key={i} className="tiny muted">• Day {m.day + 1}: {m.text}</div>)}</div>}
               </div>
             )}
@@ -857,17 +858,20 @@ function StoryApp() {
   const { state } = useGame();
   if (!state) return null;
   const arcs = state.player.missions;
-  const open = arcs.filter((a) => !a.complete);
-  const done = arcs.filter((a) => a.complete);
+  const [tab, setTab] = useState<"life" | "regions">("life");
+  const shown = arcs.filter((a) => (tab === "regions") === !!a.region);
+  const open = shown.filter((a) => !a.complete);
+  const done = shown.filter((a) => a.complete);
   return (
     <div className="col" style={{ gap: 10 }}>
-      <div className="tiny muted">Do them in any order, or not at all. Each pays once when every step is done.</div>
+      <div className="seg"><button className={tab === "life" ? "on" : ""} onClick={() => setTab("life")}>Your life</button><button className={tab === "regions" ? "on" : ""} onClick={() => setTab("regions")}>Around Ghana</button></div>
+      <div className="tiny muted">{tab === "life" ? "Do them in any order, or not at all. Each pays once when every step is done." : "Reasons to travel: the people, the food, the places, and the produce you can carry home."}</div>
       {[...open, ...done].map((a) => {
         const next = a.steps.find((s) => !s.done);
         const n = a.steps.filter((s) => s.done).length;
         return (
           <div className="card col" key={a.id} style={{ gap: 6, opacity: a.complete ? 0.7 : 1 }}>
-            <div className="spread"><b>{a.icon} {a.title}</b><span className={`pill ${a.complete ? "green" : "gold"}`}>{a.complete ? "Done" : `${n}/${a.steps.length}`}</span></div>
+            <div className="spread"><b>{a.icon} {a.title}{a.region ? <span className="tiny muted"> · {a.region}</span> : null}</b><span className={`pill ${a.complete ? "green" : "gold"}`}>{a.complete ? "Done" : `${n}/${a.steps.length}`}</span></div>
             <div className="tiny muted">{a.blurb} Reward: GH₵{a.reward.toLocaleString()} and +{a.reputation} standing.</div>
             {a.steps.map((s) => (
               <div key={s.id} className="small" style={{ display: "flex", gap: 8 }}>

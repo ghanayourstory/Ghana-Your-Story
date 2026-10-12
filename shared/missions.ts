@@ -18,6 +18,8 @@ export interface MissionArc {
   /** Fictional GH₵ paid when every step is done. */
   reward: number;
   reputation: number;
+  /** Regional stories happen in one part of the country. */
+  region?: string;
 }
 
 const S = (id: string, label: string, hint: string): MissionStep => ({ id, label, hint });
@@ -119,6 +121,46 @@ MISSIONS.push({
     S("child_close", "Be there for them", "Play, help with homework, show up. Closeness 80."),
   ],
 });
+// Regional stories: each one is a reason to go there, meet people, eat the
+// food, see the place and carry its produce to the rest of the country.
+const R = (id: string, icon: string, title: string, region: string, blurb: string, steps: MissionStep[], reward = 600): MissionArc =>
+  ({ id, icon, title, region, blurb, steps, reward, reputation: 4 });
+MISSIONS.push(
+  R("kumasi_story", "🪑", "The Garden City", "Ashanti", "Kumasi: Kejetia, kente and the Asantehene.", [
+    S("friend:kwame_boateng", "Befriend Nana Kwame Boateng", "He trades cloth at Kejetia Market."),
+    S("site:bonwire_kente", "Watch the weavers at Bonwire", "A day trip from Kumasi."),
+    S("fest:akwasidae", "Attend Akwasidae at Manhyia", "Every sixth Sunday; the Today card counts down."),
+    S("sold_far:kente", "Sell kente far from where it's woven", "Buy at Kejetia, sell in Accra or the north."),
+  ]),
+  R("tamale_story", "🧈", "The shea road", "Northern", "Tamale: TZ, motorbikes and shea butter.", [
+    S("friend:memuna", "Befriend Hajia Memuna", "Her TZ joint feeds half of Tamale Central."),
+    S("dish:tz", "Eat TZ with ayoyo soup", "Any chop bar in the north."),
+    S("site:mole_park", "Walk with the elephants at Mole", "A day trip from Tamale or Damongo."),
+    S("sold_far:shea_butter", "Carry shea butter south", "Buy in a northern market, sell in Kumasi, Accra or on the coast."),
+  ]),
+  R("cape_story", "🐟", "Oguaa", "Central", "Cape Coast: castles, Fante kenkey and the sea.", [
+    S("site:cape_coast_castle", "Tour Cape Coast Castle", "A hard, necessary visit."),
+    S("dish:fante_kenkey", "Eat Fante kenkey and fried fish", "By the market or the sea."),
+    S("friend:ewurabena", "Befriend Ewurabena", "She's in Cape Coast."),
+    S("sold_far:smoked_fish", "Take smoked fish inland", "Buy at Kotokuraba, sell in Kumasi or the north."),
+  ]),
+  R("volta_story", "⛰️", "Volta hills", "Volta", "Ho: mountains, waterfalls and akple.", [
+    S("friend:comfort", "Befriend Comfort", "She's in Ho."),
+    S("dish:akple", "Eat akple and fetri detsi", "Any chop bar in the Volta."),
+    S("site:wli_falls", "Hike to Wli Falls", "A day trip from Ho."),
+  ], 400),
+  R("kintampo_story", "🍠", "The middle of Ghana", "Bono East", "Kintampo and Techiman: yam, waterfalls and the great market.", [
+    S("site:kintampo_falls", "Swim under the Kintampo falls", "A day trip from Kintampo or Techiman."),
+    S("friend:fuseini", "Befriend Fuseini", "He's in Kintampo."),
+    S("sold_far:yam", "Take yam to the city", "Buy yam in Kintampo or Techiman, sell it in Accra or Kumasi."),
+  ], 500),
+  R("upper_story", "🐊", "Baskets and crocodiles", "Upper East & West", "Bolgatanga and Wa: weavers, painted houses, hippos.", [
+    S("site:paga_crocodiles", "Visit the Paga crocodiles", "A day trip from Bolgatanga."),
+    S("site:sirigu", "See the painted houses of Sirigu", "A day trip from Bolgatanga."),
+    S("friend:dery", "Befriend Dery in Wa", "He's in Wa."),
+    S("sold_far:basket", "Sell Bolga baskets far away", "Buy at Bolga market, sell in Accra or Kumasi."),
+  ]),
+);
 export const MISSION_BY_ID = Object.fromEntries(MISSIONS.map((m) => [m.id, m]));
 
 export interface MissionState {

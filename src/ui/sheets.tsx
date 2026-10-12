@@ -3,7 +3,7 @@ import { isMarketDay, marketDayNames } from "../../shared/weekly.ts";
 import { LANGUAGES, languagesOfCity } from "../../shared/identity.ts";
 import { CELEBRATION_BASE, CUSTOMARY_BASE, KNOCKING_COST, KNOCK_TO_CEREMONY_DAYS, PROPOSAL_RING, customFor, partnerHometown } from "../../shared/marriage.ts";
 import { startGigShift } from "./gig.ts";
-import { GOODS, canBuyHere, canSellHere, sellPrice } from "../../shared/trade.ts";
+import { GOODS, canBuyGood, canBuyHere, canSellHere, regionalFactor, sellPrice } from "../../shared/trade.ts";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, ConfirmButton, Bar, EffectsPreview, Sheet, initials, money } from "./common.tsx";
 import { CITIES } from "../../shared/cities.ts";
@@ -425,13 +425,14 @@ function TradePanel({ placeId, hour, open }: { placeId: string; hour: number; op
       {buyHere && (
         <>
           <div className="seg" style={{ marginBottom: 6 }}>{[1, 5, 10, 20].map((n) => <button key={n} className={qty === n ? "on" : ""} onClick={() => setQty(n)}>×{n}</button>)}</div>
-          {Object.values(GOODS).map((g) => {
+          {Object.values(GOODS).filter((g) => canBuyGood(p, g)).map((g) => {
             const price = Math.round(priceFor(g.buy, p.district) * 100 * (isMarketDay(p.id, state.time.day) ? 0.92 : 1) * (state.player.unlocks.includes(`trader_${p.id}`) ? 0.95 : 1)) / 100;
             return (
               <div className="svc" key={g.id}>
                 <span className="goal-icon">{g.icon}</span>
                 <div className="grow">
-                  <div className="bold">{g.name} <span className="tiny muted">per {g.unit}</span></div>
+                  <div className="bold">{g.name} <span className="tiny muted">per {g.unit}</span>{g.origin && <span className="pill gold" style={{ marginLeft: 6 }}>local produce</span>}</div>
+                  {g.origin && <div className="tiny good">Cheap here, where it's made. Worth about {money(Math.round(g.sell * regionalFactor(g, "accra") * 100))} in Accra, {money(Math.round(g.sell * regionalFactor(g, "kumasi") * 100))} in Kumasi, {money(Math.round(g.sell * regionalFactor(g, "tamale") * 100))} in Tamale. Buses charge GH₵1.50 a unit for luggage.</div>}
                   <div className="tiny muted">Buy {money(price * 100)} · sells for about {money(g.sell * 100)} at {g.sellAt.includes("transport") ? "stations & markets" : "markets"}{g.spoil ? ` · goes off (${Math.round(g.spoil * 100)}% a night)` : " · keeps"}</div>
                 </div>
                 <button className="btn primary sm" disabled={busy || !open || carrying + qty > st.carryCap} onClick={() => act({ type: "trade_buy", placeId: p.id, goodId: g.id, qty })}>Buy {qty} · {money(price * qty * 100)}</button>

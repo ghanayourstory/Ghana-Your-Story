@@ -7,6 +7,8 @@ import { intercityQuote } from "../shared/cities.ts";
 import { DISTRICTS, JOBS, PLACES, SERVICES } from "../shared/world.ts";
 import { NPCS, npcLocation } from "../shared/people.ts";
 import { SITES } from "../shared/regional.ts";
+import { MISSIONS } from "../shared/missions.ts";
+import { GOODS, sellPrice } from "../shared/trade.ts";
 import { COURSES, VEHICLES } from "../shared/life.ts";
 import { outageWindow, powerOff } from "../shared/power.ts";
 import { marketDays, townEvents } from "../shared/weekly.ts";
@@ -779,5 +781,52 @@ test("children: try for a baby when married, the naming from day eight, play and
   assert.equal(st.player.children[0].name, baby.suggestions[0]);
   assert.ok(st.player.mood.moodlets.some((m) => m.id === "family_time"));
   assert.ok(st.player.missions.find((m) => m.id === "raising_children")!.steps.find((s) => s.id === "child_named")!.done);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("regional stories only point at real people, places, dishes, festivals and goods", () => {
+  for (const m of MISSIONS.filter((x) => x.region)) {
+    for (const s of m.steps) {
+      const [kind, id] = s.id.split(":");
+      if (kind === "friend") assert.ok(NPCS.some((n) => n.id === id), s.id);
+      else if (kind === "site") assert.ok(SITES.some((x) => x.id === id), s.id);
+      else if (kind === "dish") assert.ok(SERVICES[id], s.id);
+      else if (kind === "fest") assert.ok(SERVICES[`fest_${id}`], s.id);
+      else if (kind === "sold_far") assert.ok(GOODS[id]?.origin, s.id);
+      else assert.fail(`unknown step ${s.id}`);
+    }
+  }
+});
+
+test("connected regions: yam is bought in Kintampo and fetches far more in Accra; jobs are local", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 7);
+  assert.ok(act(ctx, id, { type: "job_apply", jobId: "market_loader" }).ok);
+  assert.ok(act(ctx, id, { type: "work" }).ok);
+  assert.equal(act(ctx, id, { type: "trade_buy", placeId: "kaneshie_market", goodId: "yam", qty: 5 }).code, "not_here");
+  skipTo(ctx, id, 6);
+  assert.ok(act(ctx, id, { type: "travel", to: "kintampo", mode: "bus" }).ok);
+  skipTo(ctx, id, 9);
+  const market = PLACES.find((p) => p.district === "kintampo" && p.kind === "market")!;
+  const b = act(ctx, id, { type: "trade_buy", placeId: market.id, goodId: "yam", qty: 20 });
+  assert.ok(b.ok, b.error);
+  const atSource = sellPrice(GOODS.yam, "kintampo", 10, 0);
+  const inAccra = sellPrice(GOODS.yam, "kaneshie", 10, 0);
+  assert.ok(inAccra > atSource * 1.8, `Accra ${inAccra} vs Kintampo ${atSource}`);
+  skipTo(ctx, id, 6);
+  const tr = act(ctx, id, { type: "travel", to: "kaneshie", mode: "bus" });
+  assert.ok(tr.ok, tr.error);
+  assert.ok(tr.feedback.some((f) => f.text.includes("luggage")), "luggage paid for the stock");
+  skipTo(ctx, id, 10);
+  const left = buildState(ctx, loadPlayer(ctx.db, id)).player.stock.find((x) => x.id === "yam")!.qty;
+  assert.ok(left >= 15 && left <= 20, "yam keeps well on the road");
+  const s = act(ctx, id, { type: "trade_sell", placeId: "kaneshie_market", goodId: "yam", qty: left });
+  assert.ok(s.ok, s.error);
+  assert.ok(s.feedback.some((f) => f.text.includes("profit")));
+  const st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.ok(st.player.missions.find((m) => m.id === "kintampo_story")!.steps.find((x) => x.id === "sold_far:yam")!.done);
+  // Away from the job for a week and more: it goes to someone else.
+  for (let i = 0; i < 9; i++) skip(ctx, id, 24);
+  assert.equal(buildState(ctx, loadPlayer(ctx.db, id)).player.job, null);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });

@@ -4,7 +4,7 @@ import type { DistrictId } from "./world.ts";
 import { REGIONAL_NPCS } from "./people-regional.ts";
 import { TOWNSFOLK } from "./townsfolk.ts";
 
-export type Topic = "chat" | "advice" | "compliment" | "gift" | "ask_out" | "favour";
+export type Topic = "chat" | "advice" | "compliment" | "gift" | "ask_out" | "favour" | "call";
 export type Tier = "stranger" | "acquaintance" | "friend" | "close";
 
 export interface ScheduleBlock {
@@ -33,7 +33,7 @@ export interface Npc {
   personality: string;
   goal: string;
   /** How much they enjoy each topic (−2..+3). */
-  likes: Record<Exclude<Topic, "ask_out" | "favour" | "gift">, number>;
+  likes: Record<Exclude<Topic, "ask_out" | "favour" | "gift" | "call">, number>;
   gift: { item: string; cost: number };
   romanceable: boolean;
   favour: { threshold: number; ask: string; reward: string; unlock: string };

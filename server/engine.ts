@@ -4,7 +4,7 @@ import { isMarketDay, townEvents, weekdayOf } from "../shared/weekly.ts";
 import { fmtHour, outageWindow, powerOff } from "../shared/power.ts";
 import { mulberry32 } from "../shared/rng.ts";
 import { ROLE_LABEL, makeFamily, requestFor, type FamilyRequest, type FamilyRole, choresFor, familyWhereabouts, WHEREABOUTS_LABEL } from "../shared/family.ts";
-import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../shared/trade.ts";
+import { GOODS, LUGGAGE_PER_UNIT, canBuyGood, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../shared/trade.ts";
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { MISSIONS, type MissionState } from "../shared/missions.ts";
@@ -23,7 +23,7 @@ import {
   type DistrictId, type EffectKey, type Effects, type TravelMode,
   placesIn,
 } from "../shared/world.ts";
-import { NPC_BY_ID, NPCS, lineFor, npcLocation, tierFor, type Topic } from "../shared/people.ts";
+import { NPC_BY_ID, NPCS, lineFor, npcLocation, tierFor, type Npc, type Topic } from "../shared/people.ts";
 import {
   ATTENDANT_BOOST, MANAGER_BOOST, SEVERANCE_DAYS, attendantWage, managerWage, maxAttendants,
   BUSINESSES, BUSINESS_UPGRADE_DAYS, DESIGNS, LOAN_MIN_REPAYMENT, LOAN_RATE, MAX_BUSINESS_LEVEL, NEGLECT_DAYS,
@@ -80,6 +80,7 @@ export interface PlayerRow {
   chores: string;
   missions: string;
   family_plan: string;
+  last_work_day: number;
   helped_day: number;
   last_police_min: number;
   last_gig_day: number;
@@ -147,11 +148,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?, family_plan=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?, family_plan=?, last_work_day=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions, p.family_plan,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions, p.family_plan, p.last_work_day,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -692,6 +693,7 @@ function eventMultiplier(db: Db, playerId: number, day: number): number {
 function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   spoilStock(ctx, p, fb);
   familyDay(ctx, p, day, fb);
+  jobAttendance(p, day, fb);
   householdDay(ctx, p, day, fb);
   illnessDay(ctx, p, day, fb);
   // The prepaid meter ticks down.
@@ -1279,8 +1281,10 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
     if (!owned.some((v) => !v.licence || hasUnlock(p, v.licence))) throw new GameError("no_licence", "The police at the barrier will want your licence. Get one at a driving school.");
   }
   if (q.minutes > 240) requireAwake(p, 20, "make that journey");
-  const fare = minor(q.fare);
-  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}`, mode === "flight" || mode === "own_plane");
+  // Traders pay the mate for the stock riding in the boot.
+  const units = mode === "bus" || mode === "vip" ? stockOf(ctx.db, p).reduce((n, r) => n + r.qty, 0) : 0;
+  const fare = minor(q.fare) + minor(units * LUGGAGE_PER_UNIT);
+  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}${units ? ` (+ luggage for ${units} units of stock)` : ""}`, mode === "flight" || mode === "own_plane");
   // On long journeys you doze in your seat (unless you're the one driving).
   advance(ctx, p, q.minutes, fb, { quiet: true, sleeping: q.minutes > 240 && mode !== "car" });
   if (mode === "car") wearVehicle(ctx, p, roadVehicle(ctx.db, p, true), q.km * 0.03, fb);
@@ -1289,7 +1293,7 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   p.pos_x = -58;
   p.pos_z = 6;
   const via = q.route.roads.length && mode !== "flight" ? ` via ${q.route.roads.slice(0, 2).map((r) => r.split(" (")[0]).join(", ")}` : "";
-  applyEffects(p, { energy: q.energy, social: mode === "bus" ? 4 : 1 }, fb, `${m.name} from ${CITIES[fromCity].name} to ${CITIES[toCity].name}: ${q.km} km, ${Math.floor(q.minutes / 60)}h ${q.minutes % 60}m${via}.`, money);
+  applyEffects(p, { energy: q.energy, social: mode === "bus" ? 4 : 1 }, fb, `${m.name} from ${CITIES[fromCity].name} to ${CITIES[toCity].name}: ${q.km} km, ${Math.floor(q.minutes / 60)}h ${q.minutes % 60}m${via}.${units ? ` Your ${units} units of stock rode in the boot (luggage ${formatMoney(minor(units * LUGGAGE_PER_UNIT))}).` : ""}`, money);
   if (addToList(p, "visited", p.district)) {
     applyEffects(p, { social: 6, reputation: 1 }, fb, `First time in ${CITIES[toCity].name} (${CITIES[toCity].region} Region): ${DISTRICTS[p.district].tagline}.`);
   }
@@ -1336,6 +1340,24 @@ function actJobApply(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   p.job_shifts = 0;
   applyEffects(p, { reputation: 1, social: 5 }, fb, previous ? `You left ${previous} and started as ${job.title} at ${place.name}.` : `Hired! You're now a ${job.title} at ${place.name}.`);
   return null;
+}
+
+/** Jobs are where they are: stay away a week without a shift (say, you've moved to another town) and the job goes to someone else. */
+export const JOB_ABSENCE_WARN = 5;
+export const JOB_ABSENCE_LIMIT = 8;
+function jobAttendance(p: PlayerRow, day: number, fb: Feedback) {
+  if (!p.job_id || p.last_work_day < 0) return;
+  const job = JOBS[p.job_id];
+  const away = day - p.last_work_day;
+  const where = PLACE_BY_ID[job.placeId];
+  const town = CITIES[DISTRICTS[where.district].city]?.name ?? DISTRICTS[where.district].name;
+  if (away === JOB_ABSENCE_WARN) fb.add(`📞 ${where.name} called: you haven't worked a shift in ${away} days. They need you back in ${town} this week or they'll give your place to someone else.`, [], "bad");
+  if (away >= JOB_ABSENCE_LIMIT) {
+    fb.add(`💼 ${where.name} gave your job as ${job.title} to someone else: no shifts for ${away} days. Jobs are local; there's work wherever you are now.`, [], "bad");
+    p.job_id = null;
+    p.job_rank = 0;
+    p.job_shifts = 0;
+  }
 }
 
 function actJobQuit(p: PlayerRow, fb: Feedback) {
@@ -1387,12 +1409,32 @@ function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   return null;
 }
 
+/** Keep in touch from anywhere: a phone call to someone you already know. */
+function callFriend(ctx: Ctx, p: PlayerRow, npc: Npc, fb: Feedback) {
+  const rel = relationship(ctx.db, p.id, npc.id);
+  if (rel.affinity < 15) throw new GameError("stranger", `You don't have ${npc.name.split(" ")[0]}'s number yet. Meet them in person first.`);
+  const gd = toGameDate(p.game_min);
+  if (gd.hour >= 22 || gd.hour < 7) throw new GameError("late", "Too late to call. Try in the morning.");
+  const today = gd.day;
+  if (rel.last_talk_day === today) throw new GameError("already", "You've already spoken today.");
+  const money = chargeStrict(ctx, p, minor(1.5), "airtime", `Call to ${npc.name}`);
+  advance(ctx, p, 15, fb, { quiet: true });
+  rel.affinity = clamp(rel.affinity + 1.5, -100, 100);
+  rel.last_talk_day = today;
+  rel.talks_today = 1;
+  saveRel(ctx.db, p.id, rel);
+  const reply = lineFor(npc.lines.chat, `${p.id}:${npc.id}:${p.game_min}:call`);
+  applyEffects(p, { social: 5, fun: 2 }, fb, `📞 You call ${npc.name.split(" ")[0]}. "${reply}"`, money);
+  return { greet: "", reply, memory: "" };
+}
+
 function actTalk(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const npc = typeof a.npcId === "string" ? NPC_BY_ID[a.npcId] : undefined;
   if (!npc) throw new GameError("bad_npc", "Who?");
   const topic = a.topic as Topic;
-  if (!["chat", "advice", "compliment", "gift", "ask_out", "favour"].includes(topic)) throw new GameError("bad_topic", "Unknown topic");
+  if (!["chat", "advice", "compliment", "gift", "ask_out", "favour", "call"].includes(topic)) throw new GameError("bad_topic", "Unknown topic");
   const gd = toGameDate(p.game_min);
+  if (topic === "call") return callFriend(ctx, p, npc, fb);
   const where = npcLocation(npc, gd.weekdayIndex, gd.hour);
   if (!where || PLACE_BY_ID[where].district !== p.district) throw new GameError("not_here", `${npc.name.split(" ")[0]} isn't around right now.`);
   const db = ctx.db;
@@ -2515,6 +2557,20 @@ function missionState(p: PlayerRow): MissionState | null {
   try { return JSON.parse(p.missions) as MissionState; } catch { return null; }
 }
 
+/** Regional story steps written as "kind:id" (site, dish, fest, friend, sold_far). */
+function genericCheck(ctx: Ctx, p: PlayerRow, stepId: string): boolean {
+  const [kind, id] = stepId.split(":");
+  if (!id) return false;
+  if (kind === "site" || kind === "dish" || kind === "fest") return list(p.discovered).includes(`${kind}:${id}`);
+  if (kind === "friend") return (ctx.db.get<{ affinity: number }>("SELECT affinity FROM relationships WHERE player_id = ? AND npc_id = ?", p.id, id)?.affinity ?? 0) >= 40;
+  if (kind === "sold_far") {
+    const g = GOODS[id];
+    return ctx.db.all<{ place_id: string }>("SELECT place_id FROM trade_sales WHERE player_id = ? AND good_id = ? AND sold > 0", p.id, id)
+      .some((r) => { const c = DISTRICTS[PLACE_BY_ID[r.place_id]?.district]?.city; return !!c && !g?.origin?.includes(c); });
+  }
+  return false;
+}
+
 /** After each action: tick off steps that are now true, pay out finished arcs. */
 function trackMissions(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   const prev = missionState(p);
@@ -2524,7 +2580,7 @@ function trackMissions(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   for (const arc of MISSIONS) {
     if (st.paid.includes(arc.id)) continue;
     for (const step of arc.steps) {
-      if (st.done.includes(step.id) || !checks[step.id]?.()) continue;
+      if (st.done.includes(step.id) || !(checks[step.id] ? checks[step.id]() : genericCheck(ctx, p, step.id))) continue;
       st.done.push(step.id);
       changed = true;
       // The first look at an older save marks what's already done quietly.
@@ -2545,7 +2601,7 @@ function trackMissions(ctx: Ctx, p: PlayerRow, fb: Feedback) {
 function missionsView(p: PlayerRow) {
   const st = missionState(p) ?? { done: [], paid: [] };
   return MISSIONS.map((m) => ({
-    id: m.id, icon: m.icon, title: m.title, blurb: m.blurb, reward: m.reward, reputation: m.reputation,
+    id: m.id, icon: m.icon, title: m.title, blurb: m.blurb, reward: m.reward, reputation: m.reputation, region: m.region ?? null,
     complete: st.paid.includes(m.id),
     steps: m.steps.map((s) => ({ ...s, done: st.done.includes(s.id) })),
   }));
@@ -2590,6 +2646,7 @@ function trackDaily(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback, discovered:
   const st = dailyState(ctx.db, p);
   const hits = dailyHits(a, discovered);
   if (["work", "gig_shift", "trade_sell", "biz_collect", "farm_harvest"].includes(String(a.type))) p.productive_day = dayOf(p.game_min);
+  if (["work", "gig_shift", "job_apply"].includes(String(a.type))) p.last_work_day = dayOf(p.game_min);
   let changed = false;
   for (const g of st.goals) {
     if (g.done || !hits.includes(g.id)) continue;
@@ -2624,6 +2681,7 @@ function actTradeBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const g = GOODS[String(a.goodId)];
   if (!g) throw new GameError("bad_good", "Nobody sells that here.");
   if (!canBuyHere(place)) throw new GameError("not_market", "You buy stock at a market.");
+  if (!canBuyGood(place, g)) throw new GameError("not_here", `${g.name} is bought where it's made: ${g.origin!.map((c) => CITIES[c]?.name ?? c).join(", ")}.`);
   if (!isOpenAt(place.open, toGameDate(p.game_min).hour)) throw new GameError("closed", `${place.name} is closed now.`);
   const qty = Math.floor(Number(a.qty));
   if (!Number.isFinite(qty) || qty < 1 || qty > 200) throw new GameError("bad_qty", "Pick how many to buy.");
