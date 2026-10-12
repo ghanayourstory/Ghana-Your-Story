@@ -749,3 +749,35 @@ test("marriage: propose in person, knock in their hometown, the ceremony days la
   assert.ok(st.player.missions.find((m) => m.id === "family_of_your_own")!.complete);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("children: try for a baby when married, the naming from day eight, play and school; adoption needs a home with room", () => {
+  const { ctx, id } = rich();
+  assert.equal(act(ctx, id, { type: "household", step: "try" }).code, "not_married");
+  assert.equal(act(ctx, id, { type: "household", step: "adopt" }).code, "home", "a shared compound room isn't enough");
+  ctx.db.run("INSERT INTO relationships (player_id, npc_id, affinity, romance, partner, stage) VALUES (?, 'selasi', 85, 80, 1, 'married')", id);
+  assert.ok(act(ctx, id, { type: "household", step: "try" }).ok);
+  let st = buildState(ctx, loadPlayer(ctx.db, id));
+  for (let i = 0; i < 60 && !st.player.children.length; i++) {
+    skip(ctx, id, 24);
+    st = buildState(ctx, loadPlayer(ctx.db, id));
+  }
+  assert.equal(st.player.children.length, 1, "a baby arrives");
+  const baby = st.player.children[0];
+  assert.ok(baby.suggestions.length >= 2);
+  assert.equal(act(ctx, id, { type: "household", step: "name", childId: baby.id, name: baby.suggestions[0] }).code, "too_soon");
+  skip(ctx, id, 24 * 8);
+  skipTo(ctx, id, 9);
+  if (district(ctx, id) !== "kaneshie") assert.ok(act(ctx, id, { type: "travel", to: "kaneshie", mode: "taxi" }).ok);
+  const nm = act(ctx, id, { type: "household", step: "name", childId: baby.id, name: baby.suggestions[0] });
+  assert.ok(nm.ok, nm.error);
+  skipTo(ctx, id, 17);
+  const pl = act(ctx, id, { type: "household", step: "play", childId: baby.id });
+  assert.ok(pl.ok, pl.error);
+  assert.equal(act(ctx, id, { type: "household", step: "play", childId: baby.id }).code, "already");
+  assert.ok(act(ctx, id, { type: "household", step: "school", childId: baby.id, school: "private" }).ok);
+  st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(st.player.children[0].name, baby.suggestions[0]);
+  assert.ok(st.player.mood.moodlets.some((m) => m.id === "family_time"));
+  assert.ok(st.player.missions.find((m) => m.id === "raising_children")!.steps.find((s) => s.id === "child_named")!.done);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

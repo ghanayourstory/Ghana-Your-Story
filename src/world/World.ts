@@ -575,43 +575,86 @@ export class World {
     this.scene.add(group);
   }
 
-  private spouse: { rig: Person; label: THREE.Sprite; key: string } | null = null;
+  private household: { group: THREE.Group; people: { rig: Person; seat: SpotUse | null }[]; key: string; inside: boolean } | null = null;
 
-  /** Your husband or wife waits at home in the evenings and on days off (whenever their own schedule doesn't have them out). */
+  /**
+   * Your household at home: a spouse (when their own schedule doesn't have them out) and
+   * children (when they're not at school). Outside they wait by your door; inside your
+   * spouse sits by the TV and the children play.
+   */
   private updateSpouse() {
     const s = this.state, d = this.district;
+    const gd = toGameDate(Math.floor(this.minuteNow));
+    const atHome = !!(s && d && s.player.home.district === d.id);
+    const awake = gd.hour >= 6 && gd.hour < 23;
     const rel = s?.relationships.find((r) => r.stage === "married");
     const npc = rel ? NPC_BY_ID[rel.npcId] : undefined;
-    const gd = toGameDate(Math.floor(this.minuteNow));
-    const show = !!(npc && d && s && s.player.home.district === d.id && !this.inside && gd.hour >= 6 && gd.hour < 23 && !npcLocation(npc, gd.weekdayIndex, gd.hour));
-    const key = show ? `${d!.id}:${npc!.id}` : "";
-    if (this.spouse && this.spouse.key === key) return;
-    if (this.spouse) { this.scene.remove(this.spouse.rig.root, this.spouse.label); this.spouse = null; }
-    if (!show || !npc || !d) return;
-    const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: "wax" }, { key: true });
-    const side = Math.sign(d.homeDoor.z) || 1;
-    rig.root.position.set(d.homeDoor.x + 1.4, 0.16, d.homeDoor.z - side * 1.1);
-    rig.root.rotation.y = side > 0 ? Math.PI : 0;
-    const tex = T.label(`${npc.name.split(" ")[0]} 💍`, { bg: "rgba(176,58,98,0.92)" });
-    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
-    const img = tex.image as HTMLCanvasElement;
-    label.scale.set(0.45 * (img.width / img.height), 0.45, 1);
-    label.position.copy(rig.root.position).add(new THREE.Vector3(0, npc.look.height + 0.5, 0));
-    this.scene.add(rig.root, label);
-    this.spouse = { rig, label, key };
+    const spouseHome = !!npc && awake && !npcLocation(npc, gd.weekdayIndex, gd.hour);
+    const schoolTime = gd.weekdayIndex >= 1 && gd.weekdayIndex <= 5 && gd.hour >= 7 && gd.hour < 14;
+    const kids = (s?.player.children ?? []).filter((c) => c.age >= 1 && c.age < 18 && awake && !(c.age >= 4 && schoolTime));
+    const key = atHome ? `${this.inside}:${d!.id}:${spouseHome ? npc!.id : ""}:${kids.map((c) => `${c.id}.${c.age}`).join(",")}` : "";
+    if (this.household && this.household.key === key) return;
+    if (this.household) { (this.household.inside ? this.interiorScene : this.scene).remove(this.household.group); this.household = null; }
+    if (!key || (!spouseHome && !kids.length)) return;
+    const group = new THREE.Group();
+    const people: { rig: Person; seat: SpotUse | null }[] = [];
+    // Indoors: by the TV, or in a compound the sitting area where everyone gathers.
+    const tvSpot = this.inside ? (this.interior?.spots.find((sp) => sp.id === "tv" && sp.use) ?? this.interior?.spots.find((sp) => sp.id === "neighbours" && sp.use)) : undefined;
+    const b = this.interior?.bounds;
+    const anchor = this.inside && this.interior
+      ? (tvSpot ? new THREE.Vector3(tvSpot.use!.x, 0, tvSpot.use!.z) : new THREE.Vector3((b!.minX + b!.maxX) / 2, 0, (b!.minZ + b!.maxZ) / 2))
+      : new THREE.Vector3(d!.homeDoor.x + 1.4, 0.16, d!.homeDoor.z - (Math.sign(d!.homeDoor.z) || 1) * 1.1);
+    const faceY = this.inside ? 0 : (Math.sign(d!.homeDoor.z) || 1) > 0 ? Math.PI : 0;
+    if (spouseHome && npc) {
+      const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: "wax" }, { key: true });
+      rig.root.position.copy(anchor);
+      rig.root.rotation.y = faceY;
+      group.add(rig.root);
+      people.push({ rig, seat: tvSpot?.use ?? null });
+      if (!this.inside) {
+        const tex = T.label(`${npc.name.split(" ")[0]} 💍`, { bg: "rgba(176,58,98,0.92)" });
+        const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
+        const img = tex.image as HTMLCanvasElement;
+        label.scale.set(0.45 * (img.width / img.height), 0.45, 1);
+        label.position.copy(anchor).add(new THREE.Vector3(0, npc.look.height + 0.5, 0));
+        group.add(label);
+      }
+    }
+    const base = s!.player.look as PersonLook;
+    kids.forEach((c, i) => {
+      const look = randomLook(c.seed % 100000);
+      if (!c.adopted) look.skin = base.skin;
+      look.feminine = c.feminine;
+      look.height = Math.min(1.7, 0.78 + c.age * 0.055);
+      look.build = 0.9;
+      const rig = buildPerson(look);
+      const off = new THREE.Vector3(-0.9 - i * 0.7, 0, this.inside ? 0.9 : 0);
+      rig.root.position.copy(anchor).add(off);
+      rig.root.position.y = this.inside ? 0 : 0.16;
+      rig.root.rotation.y = faceY;
+      group.add(rig.root);
+      people.push({ rig, seat: null });
+    });
+    (this.inside ? this.interiorScene : this.scene).add(group);
+    this.household = { group, people, key, inside: this.inside };
+  }
+
+  private animateHousehold(dt: number, t: number) {
+    if (!this.household) return;
+    for (const h of this.household.people) {
+      animatePerson(h.rig, dt, 0);
+      if (h.seat) { applyPose(h.rig, h.seat, t); continue; }
+      const p = h.rig.root.position;
+      const dx = this.pos.x - p.x, dz = this.pos.z - p.z;
+      if (dx * dx + dz * dz < 64) {
+        let dy = Math.atan2(dx, dz) - h.rig.root.rotation.y;
+        dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        h.rig.root.rotation.y += dy * Math.min(1, dt * 3);
+      }
+    }
   }
 
   private animateEvents(dt: number, t: number, hour: number) {
-    if (this.spouse) {
-      const p = this.spouse.rig.root.position;
-      const dx = this.pos.x - p.x, dz = this.pos.z - p.z;
-      if (dx * dx + dz * dz < 64) {
-        let dy = Math.atan2(dx, dz) - this.spouse.rig.root.rotation.y;
-        dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        this.spouse.rig.root.rotation.y += dy * Math.min(1, dt * 3);
-      }
-      animatePerson(this.spouse.rig, dt, 0);
-    }
     if (!this.eventScene) return;
     for (const c of this.eventScene.crowds) {
       const on = hour >= c.hours[0] && hour < c.hours[1];
@@ -693,6 +736,7 @@ export class World {
     this.camPitch = 0.95;
     this.camDist = THREE.MathUtils.clamp(Math.max(...this.interior.size) * 0.85, 9, 22);
     this.boom = this.camDist;
+    this.updateSpouse();
   }
 
   /** Walk up to your front door (when your home is in this district) and go in. */
@@ -718,6 +762,7 @@ export class World {
     this.inside = false;
     this.interior = null;
     if (this.outsideCam) { this.camYaw = this.outsideCam.yaw; this.camPitch = this.outsideCam.pitch; this.camDist = this.outsideCam.dist; this.outsideCam = null; }
+    this.updateSpouse();
   }
 
   // ---------------------------------------------------------------------------
@@ -1807,9 +1852,11 @@ export class World {
     if (this.inside && this.interior) {
       this.cutWalls(dt);
       this.interiorPower(minute);
+      this.updateSpouse();
     }
     else this.camPos.copy(this.camera.position);
     this.updateLeaving(dt);
+    this.animateHousehold(dt, t);
 
     if (!this.inside && this.district && this.life) {
       this.atmo.update(hour, dt, this.pos, this.camera.position);

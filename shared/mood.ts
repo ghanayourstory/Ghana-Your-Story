@@ -8,6 +8,8 @@ export interface MoodInput {
   comfort: number;
   partnered: boolean;
   married?: boolean;
+  /** Spent time with your children in the last couple of days. */
+  familyTime?: boolean;
   rentArrears: boolean;
   hasCar: boolean;
   helpedFamily?: boolean;
@@ -70,6 +72,7 @@ export function moodOf(m: MoodInput): Mood {
   if (m.comfort >= 4) add("comfy", "🛋️", "Comfy home", "You've furnished it well.", 1);
   if (m.married) add("married", "💍", "Married", "Building a life together.", 2);
   else if (m.partnered) add("in_love", "❤️", "In love", "Someone special in your life.", 2);
+  if (m.familyTime) add("family_time", "🧸", "Family time", "Time with the children.", 1);
   if (m.helpedFamily) add("helped_family", "🤲", "Helped the family", "You came through for someone at home.", 1);
   if (m.illness) add("ill", "🤒", m.illness === "malaria" ? "Malaria" : m.illness === "flu" ? "Flu" : "Running stomach", m.illness === "malaria" ? "Fever and aches. The clinic can test and treat it." : m.illness === "flu" ? "Sniffles and a sore throat. The pharmacy can help; it passes in a few days." : "Too many trips to the toilet. ORS from the pharmacy sorts it.", -2);
   if (m.fellowship) add("fellowship", "🙏", "Fellowship", "Time with your congregation today.", 1);

@@ -110,6 +110,15 @@ MISSIONS.push({
     S("married", "The marriage ceremony", "A few days after the knocking, the families meet again: customary marriage or nikah."),
   ],
 });
+MISSIONS.push({
+  id: "raising_children", icon: "🧒", title: "Raising children", reward: 300, reputation: 4,
+  blurb: "Optional. Babies, adoption, school runs and homework.",
+  steps: [
+    S("parent", "Welcome a child", "Married couples can try for a baby; anyone with their own place can adopt (Phone → Family)."),
+    S("child_named", "Give them a name", "A baby's naming is held from the eighth day."),
+    S("child_close", "Be there for them", "Play, help with homework, show up. Closeness 80."),
+  ],
+});
 export const MISSION_BY_ID = Object.fromEntries(MISSIONS.map((m) => [m.id, m]));
 
 export interface MissionState {

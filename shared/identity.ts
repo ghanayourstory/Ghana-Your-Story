@@ -60,7 +60,7 @@ export function sanitizePriorities(v: unknown): Priority[] {
 
 /** Moodlets that count for more when they're in an area you care about. */
 export const PRIORITY_MOODLETS: Record<Priority, string[]> = {
-  family: ["helped_family", "married"],
+  family: ["helped_family", "married", "family_time"],
   faith: ["fellowship"],
   money: ["productive"],
   friends: ["connected", "in_love"],

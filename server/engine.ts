@@ -8,6 +8,7 @@ import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../sha
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { MISSIONS, type MissionState } from "../shared/missions.ts";
+import { ADOPTION_DAYS, ADOPTION_FEE, DAYS_PER_CHILD_YEAR, GROWN_AGE, NAMING_COST, NAMING_DAY, PREGNANCY_DAYS, SCHOOL_AGE, childAge, childMonthly, namingName, sanitizeChildName, suggestedNames } from "../shared/children.ts";
 import { CELEBRATION_BASE, CUSTOMARY_BASE, KNOCKING_COST, KNOCK_TO_CEREMONY_DAYS, PROPOSAL_RING, customFor, partnerHometown } from "../shared/marriage.ts";
 import { LANGUAGES, PRIORITIES, homeLanguage, languagesOfCity, sanitizeLanguages, sanitizePriorities } from "../shared/identity.ts";
 import { tx, type Db } from "./db.ts";
@@ -78,6 +79,7 @@ export interface PlayerRow {
   productive_day: number;
   chores: string;
   missions: string;
+  family_plan: string;
   helped_day: number;
   last_police_min: number;
   last_gig_day: number;
@@ -145,11 +147,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?, family_plan=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions, p.family_plan,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -354,6 +356,125 @@ function actMarriage(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   }
   throw new GameError("bad_step", "Which step?");
 }
+// ---------------------------------------------------------------------------
+// Children: trying for a baby, adoption, the naming, school, time together.
+
+interface ChildRow { id: number; name: string; feminine: number; born_day: number; seed: number; adopted: number; closeness: number; learning: number; school: string; last_play_day: number }
+type FamilyPlan = { mode: "trying" | "expecting" | "adopting"; since: number; due: number };
+const planOf = (p: PlayerRow): FamilyPlan | null => { try { return p.family_plan ? JSON.parse(p.family_plan) as FamilyPlan : null; } catch { return null; } };
+const spouseOf = (db: Db, p: PlayerRow) => db.get<RelRow>("SELECT * FROM relationships WHERE player_id = ? AND stage = 'married'", p.id);
+
+function householdDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
+  const plan = planOf(p);
+  if (!plan) return;
+  const spouse = spouseOf(ctx.db, p);
+  const sname = spouse ? firstName2(NPC_BY_ID[spouse.npc_id].name) : "";
+  if (plan.mode === "trying" && day >= plan.due) {
+    p.family_plan = JSON.stringify({ mode: "expecting", since: day, due: day + PREGNANCY_DAYS });
+    fb.add(`🤰 You and ${sname} are expecting a baby! Due in about ${PREGNANCY_DAYS} days.`, [], "goal");
+  } else if ((plan.mode === "expecting" || plan.mode === "adopting") && day >= plan.due) {
+    const r = mulberry32(p.id * 977 + day);
+    const feminine = r() < 0.5 ? 1 : 0;
+    const adopted = plan.mode === "adopting";
+    const born = adopted ? day - (2 + Math.floor(r() * 4)) * DAYS_PER_CHILD_YEAR : day;
+    ctx.db.run("INSERT INTO children (player_id, feminine, born_day, seed, adopted, closeness) VALUES (?, ?, ?, ?, ?, ?)", p.id, feminine, born, Math.floor(r() * 1e9), adopted ? 1 : 0, adopted ? 40 : 60);
+    p.family_plan = "";
+    if (adopted) fb.add(`🧒 Social Welfare called: your ${feminine ? "daughter" : "son"} comes home today, ${childAge(born, day)} years old and a bit shy. Give them a name in Phone → Family.`, [], "goal");
+    else fb.add(`👶 A healthy baby ${feminine ? "girl" : "boy"}! Mother and baby are well. The ${namingName(p.hometown).toLowerCase()} can be held from day ${NAMING_DAY}.`, [], "goal");
+    ctx.db.run("UPDATE family SET closeness = MIN(100, closeness + 10) WHERE player_id = ?", p.id);
+  }
+}
+
+function actHousehold(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const db = ctx.db;
+  const day = dayOf(p.game_min);
+  const plan = planOf(p);
+  const child = () => {
+    const c = db.get<ChildRow>("SELECT * FROM children WHERE id = ? AND player_id = ?", Number(a.childId), p.id);
+    if (!c) throw new GameError("bad_child", "Which child?");
+    return c;
+  };
+  switch (a.step) {
+    case "try": {
+      if (!spouseOf(db, p)) throw new GameError("not_married", "Talk it over with a spouse first: this is for married couples. Anyone with their own place can adopt.");
+      if (plan) throw new GameError("already", plan.mode === "trying" ? "You're already trying." : "A baby is already on the way.");
+      const r = mulberry32(p.id * 31 + day);
+      p.family_plan = JSON.stringify({ mode: "trying", since: day, due: day + 4 + Math.floor(r() * 18) });
+      fb.add("❤️ You've decided to try for a baby. It can take a while; nobody's counting.", [], "info");
+      return null;
+    }
+    case "stop": {
+      if (!plan || plan.mode !== "trying") throw new GameError("none", "Nothing to stop.");
+      p.family_plan = "";
+      fb.add("You've decided to wait. That's fine too.", [], "info");
+      return null;
+    }
+    case "adopt": {
+      if (plan) throw new GameError("already", "Your family is already growing.");
+      if (homeSpecFor(db, p).tier === "compound_room") throw new GameError("home", "Social Welfare wants to see a home with room for a child: a self-contained place or bigger.");
+      if (p.district !== homeDistrict(db, p)) throw new GameError("not_here", "Apply at the Social Welfare office near home.");
+      requireAwake(p, 10, "fill in forms");
+      const money = chargeStrict(ctx, p, minor(ADOPTION_FEE), "fees", "Adoption: Social Welfare assessment and court fees");
+      advance(ctx, p, 120, fb, { quiet: true });
+      p.family_plan = JSON.stringify({ mode: "adopting", since: day, due: day + ADOPTION_DAYS });
+      fb.add(`📝 Your adoption application is in. A social worker will visit; a child should come home in about ${ADOPTION_DAYS} days.`, money, "info");
+      return null;
+    }
+    case "name": {
+      const c = child();
+      if (c.name) throw new GameError("already", `${c.name} already has a name.`);
+      const name = sanitizeChildName(a.name);
+      if (!name) throw new GameError("bad_name", "Pick a name of 2 to 20 letters.");
+      if (!c.adopted && day < c.born_day + NAMING_DAY - 1) throw new GameError("too_soon", `The naming is held from the eighth day: ${c.born_day + NAMING_DAY - 1 - day} more day(s).`);
+      if (DISTRICTS[p.district].city !== DISTRICTS[homeDistrict(db, p)].city && DISTRICTS[p.district].city !== p.hometown) throw new GameError("not_here", "Hold the naming at home or in your hometown, with family around.");
+      requireAwake(p, 10, "host a naming");
+      const money = c.adopted ? [] : chargeStrict(ctx, p, minor(NAMING_COST), "ceremony", `${namingName(p.hometown)} for ${name}`);
+      advance(ctx, p, c.adopted ? 30 : 180, fb, { quiet: true });
+      db.run("UPDATE children SET name = ?, closeness = MIN(100, closeness + 10) WHERE id = ?", name, c.id);
+      db.run("UPDATE family SET closeness = MIN(100, closeness + 8), last_contact_day = ? WHERE player_id = ?", day, p.id);
+      applyEffects(p, c.adopted ? { social: 10 } : { social: 30, fun: 15, hunger: 30, reputation: 3 }, fb, c.adopted ? `💛 You've named your child ${name}.` : `🌅 ${namingName(p.hometown)}: at dawn the elders bring the baby out, touch water and drink to the tongue, and say the name: ${name}. Family and neighbours come with gifts.`, money);
+      return null;
+    }
+    case "school": {
+      const c = child();
+      if (a.school !== "public" && a.school !== "private") throw new GameError("bad_school", "Public or private?");
+      db.run("UPDATE children SET school = ? WHERE id = ?", a.school, c.id);
+      fb.add(a.school === "private" ? `🏫 ${c.name || "Your child"} will go to a private school: GH₵${childMonthly(SCHOOL_AGE, "private")}/month, smaller classes.` : `🏫 ${c.name || "Your child"} will go to the public school: no fees, books and uniform about GH₵${childMonthly(SCHOOL_AGE, "public")}/month.`, [], "info");
+      return null;
+    }
+    case "play": {
+      const c = child();
+      if (p.district !== homeDistrict(db, p)) throw new GameError("not_here", "Your children are at home.");
+      if (c.last_play_day === day) throw new GameError("already", "You've spent time together today. Tomorrow!");
+      const age = childAge(c.born_day, day);
+      if (age >= GROWN_AGE) throw new GameError("grown", `${c.name} is grown and has their own life now. Call them.`);
+      const gd = toGameDate(p.game_min);
+      if (age >= SCHOOL_AGE && gd.weekdayIndex >= 1 && gd.weekdayIndex <= 5 && gd.hour >= 7 && gd.hour < 14) throw new GameError("school", `${c.name || "Your child"} is at school until 2.`);
+      requireAwake(p, 8, "play");
+      advance(ctx, p, 60, fb, { quiet: true });
+      const homework = age >= SCHOOL_AGE;
+      db.run("UPDATE children SET closeness = MIN(100, closeness + 8), learning = learning + ?, last_play_day = ? WHERE id = ?", homework ? 2 : 0, day, c.id);
+      applyEffects(p, { fun: 12, social: 10, energy: -6 }, fb, homework ? `📚 Homework with ${c.name || "your child"}: fractions, spelling, and a long story about a friend at school.` : `🧸 Playtime with ${c.name || "the baby"}: songs, peekaboo and a lot of laughing.`);
+      return null;
+    }
+  }
+  throw new GameError("bad_step", "Which step?");
+}
+
+function childrenView(db: Db, p: PlayerRow) {
+  const day = dayOf(p.game_min);
+  return db.all<ChildRow>("SELECT * FROM children WHERE player_id = ? ORDER BY born_day", p.id).map((c) => {
+    const age = childAge(c.born_day, day);
+    return {
+      id: c.id, name: c.name, feminine: c.feminine === 1, age, adopted: c.adopted === 1, closeness: Math.round(c.closeness), learning: Math.round(c.learning),
+      school: c.school as "public" | "private", playedToday: c.last_play_day === day, monthly: age >= GROWN_AGE ? 0 : childMonthly(age, c.school as "public" | "private"),
+      namingFrom: c.name || c.adopted ? null : c.born_day + NAMING_DAY - 1,
+      suggestions: c.name ? [] : suggestedNames(p.hometown, c.feminine === 1, toGameDate(c.born_day * MINUTES_PER_DAY).weekdayIndex, c.seed),
+      seed: c.seed,
+    };
+  });
+}
+
 const firstName2 = (name: string) => (["Auntie", "Mr.", "Dr.", "Uncle", "Nurse", "Hajia", "Madam", "Nana", "Alhaji"].includes(name.split(" ")[0]) ? name.split(" ").slice(0, 2).join(" ") : name.split(" ")[0]);
 
 /** Passive needs over time. */
@@ -571,6 +692,7 @@ function eventMultiplier(db: Db, playerId: number, day: number): number {
 function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   spoilStock(ctx, p, fb);
   familyDay(ctx, p, day, fb);
+  householdDay(ctx, p, day, fb);
   illnessDay(ctx, p, day, fb);
   // The prepaid meter ticks down.
   if (p.power_units > 0) {
@@ -744,6 +866,15 @@ function monthlyBills(ctx: Ctx, p: PlayerRow, fb: Feedback, monthName: string) {
   if (ub.unpaid > 0) {
     applyEffects(p, { social: -4, health: -3 }, null);
     fb.add("🚰 The water bill went unpaid; the landlord is asking.", [], "bad");
+  }
+  // Children: food, clothes, health and school. A spouse pays half.
+  const kids = childrenView(db, p).filter((c) => c.monthly > 0);
+  if (kids.length) {
+    const share = spouseOf(db, p) ? 0.5 : 1;
+    const amt = minor(Math.round(kids.reduce((s2, c) => s2 + c.monthly, 0) * share));
+    const kc = chargeFlexible(ctx, p, amt, "children", `${monthName}: the children (food, clothes, health${kids.some((c) => c.age >= SCHOOL_AGE) ? ", school" : ""})${share < 1 ? ", your half" : ""}`);
+    total += amt - kc.unpaid;
+    items.push("children");
   }
   const loan = balance(db, p.id, "loan");
   if (loan > 0) {
@@ -976,6 +1107,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
     case "family_chore": return actFamilyChore(ctx, p, a, fb);
     case "marriage": return actMarriage(ctx, p, a, fb);
+    case "household": return actHousehold(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
     case "settings": return actSettings(p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
@@ -2372,6 +2504,9 @@ function missionChecks(ctx: Ctx, p: PlayerRow): Record<string, () => boolean> {
     engaged: () => has("SELECT 1 FROM relationships WHERE player_id = ? AND stage IN ('engaged', 'knocked', 'married')"),
     knocked: () => has("SELECT 1 FROM relationships WHERE player_id = ? AND stage IN ('knocked', 'married')"),
     married: () => isMarried(db, p.id),
+    parent: () => has("SELECT 1 FROM children WHERE player_id = ?"),
+    child_named: () => has("SELECT 1 FROM children WHERE player_id = ? AND name != ''"),
+    child_close: () => has("SELECT 1 FROM children WHERE player_id = ? AND closeness >= 80"),
   };
 }
 
@@ -2796,6 +2931,7 @@ function moodFor(db: Db, p: PlayerRow) {
     comfort: homeComfort(db, p),
     partnered: isPartnered(db, p.id),
     married: isMarried(db, p.id),
+    familyTime: !!db.get("SELECT 1 FROM children WHERE player_id = ? AND last_play_day >= ?", p.id, dayOf(p.game_min) - 1),
     rentArrears: p.rent_arrears > 0,
     hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
     helpedFamily: p.helped_day >= dayOf(p.game_min) - 2,
@@ -2913,6 +3049,8 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       hometown: p.hometown,
       languages: JSON.parse(p.languages || "[]") as string[],
       missions: missionsView(p),
+      children: childrenView(db, p),
+      familyPlan: planOf(p),
       priorities: JSON.parse(p.priorities || "[]") as string[],
       family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ where: familyWhereabouts(m, m.town, toGameDate(p.game_min).weekdayIndex, toGameDate(p.game_min).hour), id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
       stock: stockOf(db, p).map((r) => ({ id: r.good_id, qty: r.qty, avgCost: Math.round(r.cost / r.qty) })),
