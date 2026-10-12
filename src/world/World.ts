@@ -1,6 +1,11 @@
 // The 3D runtime: renderer, camera, player controller, district streaming,
 // city life, atmosphere, interactions, interiors and sound.
 import * as THREE from "three";
+import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
+import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
+import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
@@ -131,6 +136,8 @@ export class World {
   private doing: Doing | null = null;
   private raycaster = new THREE.Raycaster();
   private outsideCam: { yaw: number; pitch: number; dist: number } | null = null;
+  /** High quality: ambient occlusion (contact shadows in corners and under things) and a soft bloom on lights. */
+  private fx: { composer: EffectComposer; render: RenderPass; ao: GTAOPass; bloom: UnrealBloomPass } | null = null;
   private rideApplying = false;
   private leaving: { rig: VehicleRig; dir: number; speed: number }[] = [];
   private fadeEl: HTMLDivElement;
@@ -165,14 +172,34 @@ export class World {
     this.fadeEl = document.createElement("div");
     Object.assign(this.fadeEl.style, { position: "fixed", inset: "0", background: "#07060a", opacity: "0", pointerEvents: "none", zIndex: "4" });
     document.body.appendChild(this.fadeEl);
+    this.setupFx();
     this.bindInput();
     this.resize();
     window.addEventListener("resize", this.resize);
     this.loop();
   }
 
+  private setupFx() {
+    this.fx?.composer.dispose();
+    this.fx = null;
+    if (this.quality !== "high") return;
+    const composer = new EffectComposer(this.renderer);
+    const render = new RenderPass(this.scene, this.camera);
+    const ao = new GTAOPass(this.scene, this.camera, 1, 1);
+    ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.6, thickness: 1.2, scale: 1.2, samples: 12 });
+    ao.blendIntensity = 0.6;
+    const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.92);
+    composer.addPass(render);
+    composer.addPass(ao);
+    composer.addPass(bloom);
+    composer.addPass(new OutputPass());
+    this.fx = { composer, render, ao, bloom };
+  }
+
   setQuality(q: Quality) {
+    const changed = q !== this.quality;
     this.quality = q;
+    if (changed) this.setupFx();
     setHumanMode(q === "low" ? "key" : "all");
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q === "high" ? 2 : q === "medium" ? 1.5 : 1));
     this.renderer.shadowMap.enabled = q !== "low";
@@ -183,6 +210,11 @@ export class World {
     const w = this.canvas.clientWidth || window.innerWidth;
     const h = this.canvas.clientHeight || window.innerHeight;
     this.renderer.setSize(w, h, false);
+    if (this.fx) {
+      const pr = this.renderer.getPixelRatio();
+      this.fx.composer.setPixelRatio(pr);
+      this.fx.composer.setSize(w, h);
+    }
     this.camera.aspect = w / h;
     this.camera.fov = w < h ? 62 : 50;
     this.camera.updateProjectionMatrix();
@@ -1024,7 +1056,14 @@ export class World {
         }
       }
     }
-    this.renderer.render(this.inside ? this.interiorScene : this.scene, this.camera);
+    const scene = this.inside ? this.interiorScene : this.scene;
+    if (this.fx) {
+      this.fx.render.scene = scene;
+      this.fx.ao.scene = scene;
+      // Lights bloom more at night.
+      this.fx.bloom.strength = this.inside ? 0.25 : 0.2 + this.atmo.night * 0.5;
+      this.fx.composer.render();
+    } else this.renderer.render(scene, this.camera);
   };
 
   private updateNearby() {

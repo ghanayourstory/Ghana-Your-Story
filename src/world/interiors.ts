@@ -149,6 +149,7 @@ const MAT = {
   color: (c: string, rough = 0.7, metal = 0) => std(`c:${c}:${rough}:${metal}`, { color: c, roughness: rough, metalness: metal }),
   skyline: () => mat("skyline", () => new THREE.MeshBasicMaterial({ map: canvasTex("skyline", 1024, 512, skyline) })),
   bars: () => std("bars", { color: "#2b2b2b", roughness: 0.5, metalness: 0.6 }),
+  glow: (c: string, i = 2.2) => std(`glow:${c}:${i}`, { color: c, emissive: c, emissiveIntensity: i, roughness: 0.4 }),
 };
 
 // ---------------------------------------------------------------------------
@@ -398,6 +399,90 @@ function fittedKitchen(r: Room, x0: number, z0: number, lenX: number, lenZ: numb
     }
   }
 }
+// ---------------------------------------------------------------------------
+// Small things that make a place look lived in.
+
+/** The fluorescent tube on the wall that lights every Ghanaian room. Faces +z from a back wall at z. */
+function tubeLight(r: Room, x: number, y: number, z: number) {
+  r.box(MAT.white(), x, y, z + 0.03, 1.25, 0.08, 0.06);
+  r.box(MAT.glow("#f4fbff", 2.6), x, y - 0.01, z + 0.07, 1.15, 0.05, 0.04);
+}
+function wallClock(r: Room, x: number, y: number, z: number) {
+  r.cyl(MAT.white(), x, y, z + 0.02, 0.17, 0.03, Math.PI / 2);
+  r.cyl(MAT.color("#c8452c", 0.5), x, y, z + 0.01, 0.19, 0.02, Math.PI / 2);
+  r.box(MAT.black(), x, y + 0.05, z + 0.04, 0.012, 0.1, 0.01);
+  r.box(MAT.black(), x + 0.04, y, z + 0.04, 0.08, 0.012, 0.01);
+}
+/** A church or shop calendar with a big photo. */
+function calendar(r: Room, x: number, y: number, z: number, tint = "#1F5AA6") {
+  r.box(MAT.white(), x, y, z + 0.01, 0.42, 0.62, 0.01);
+  r.box(MAT.fabric("wax", tint), x, y + 0.14, z + 0.02, 0.38, 0.3, 0.005);
+  r.box(MAT.color("#c8452c", 0.6), x, y + 0.33, z + 0.02, 0.42, 0.04, 0.01);
+}
+function radio(r: Room, x: number, y: number, z: number) {
+  r.box(MAT.color("#2a2a2a", 0.5), x, y + 0.1, z, 0.36, 0.2, 0.12);
+  r.cyl(MAT.color("#777", 0.6), x - 0.09, y + 0.1, z + 0.065, 0.06, 0.01, Math.PI / 2);
+  r.cyl(MAT.color("#777", 0.6), x + 0.09, y + 0.1, z + 0.065, 0.06, 0.01, Math.PI / 2);
+  r.box(MAT.steel(), x + 0.14, y + 0.35, z, 0.01, 0.35, 0.01);
+}
+/** Mortar and pestle for fufu. */
+function mortarPestle(r: Room, x: number, z: number) {
+  r.cyl(MAT.color("#7a4a28", 0.8), x, 0.25, z, 0.28, 0.5);
+  r.cyl(MAT.color("#4a2a14", 0.9), x, 0.5, z, 0.23, 0.02);
+  r.b.add(G.cyl8, MAT.color("#a3784e", 0.8), [x + 0.05, 0.95, z], [0, 0, 0.12], [0.05, 1.5, 0.05]);
+}
+function basins(r: Room, x: number, z: number) {
+  const cols = ["#2E86AB", "#F2B705", "#c8452c"];
+  cols.forEach((c, i) => r.cyl(MAT.color(c, 0.5), x + i * 0.55, 0.09 + (i === 2 ? 0.18 : 0), z, 0.26 - i * 0.03, 0.18));
+}
+function charcoalSack(r: Room, x: number, z: number) {
+  r.b.add(G.sphere, MAT.color("#d9cfb5", 1), [x, 0.3, z], [0, 0, 0], [0.32, 0.38, 0.28]);
+  r.b.add(G.sphere, MAT.color("#1d1d1d", 1), [x, 0.6, z], [0, 0, 0], [0.22, 0.08, 0.2]);
+}
+function chicken(r: Room, x: number, z: number, ry = 0, hen = true) {
+  const c = hen ? "#a8673a" : "#f2efe8";
+  r.b.add(G.sphere, MAT.color(c, 0.9), [x, 0.22, z], [0, ry, 0], [0.16, 0.14, 0.22]);
+  r.b.add(G.sphere, MAT.color(c, 0.9), [x + Math.sin(ry) * 0.17, 0.36, z + Math.cos(ry) * 0.17], [0, 0, 0], [0.08, 0.09, 0.08]);
+  r.b.add(G.sphere, MAT.color("#c8152c", 0.7), [x + Math.sin(ry) * 0.17, 0.45, z + Math.cos(ry) * 0.17], [0, 0, 0], [0.02, 0.04, 0.05]);
+  r.box(MAT.color("#e8a33a", 0.7), x, 0.06, z, 0.12, 0.12, 0.02);
+}
+function waterDrum(r: Room, x: number, z: number) {
+  r.cyl(MAT.color("#1F5AA6", 0.5), x, 0.45, z, 0.32, 0.9);
+  r.cyl(MAT.color("#163f75", 0.5), x, 0.91, z, 0.2, 0.03);
+}
+function potsOnHob(r: Room, x: number, y: number, z: number) {
+  r.cyl(MAT.steel(), x - 0.15, y + 0.1, z, 0.14, 0.18);
+  r.cyl(MAT.color("#2b2b2b", 0.4), x + 0.2, y + 0.04, z, 0.14, 0.04); // frying pan
+}
+function fruitBowl(r: Room, x: number, y: number, z: number) {
+  r.cyl(MAT.color("#7a4a28", 0.5), x, y + 0.04, z, 0.2, 0.08);
+  for (const [dx, dz, c] of [[0, 0, "#f2b705"], [0.08, 0.05, "#e85d2a"], [-0.07, 0.04, "#3f8f2a"], [0.02, -0.08, "#f2b705"]] as const)
+    r.b.add(G.sphere, MAT.color(c, 0.6), [x + dx, y + 0.12, z + dz], [0, 0, 0], [0.06, 0.06, 0.06]);
+}
+function pendantLamp(r: Room, x: number, y: number, z: number, h = 2.9) {
+  r.box(MAT.black(), x, (y + h) / 2, z, 0.01, h - y, 0.01);
+  r.cyl(MAT.color("#c8a86a", 0.4, 0.6), x, y, z, 0.22, 0.18);
+  r.cyl(MAT.glow("#ffe2a8", 3), x, y - 0.1, z, 0.12, 0.02);
+}
+function sideTableLamp(r: Room, x: number, z: number) {
+  r.box(MAT.darkWood(), x, 0.28, z, 0.45, 0.56, 0.45, true);
+  r.cyl(MAT.color("#c8a86a", 0.4, 0.6), x, 0.7, z, 0.04, 0.28);
+  r.cyl(MAT.glow("#fff0cc", 1.2), x, 0.95, z, 0.17, 0.24);
+}
+function books(r: Room, x: number, y: number, z: number) {
+  const cols = ["#c8452c", "#1F5AA6", "#2E7D4F", "#F2B705", "#3a2418"];
+  cols.forEach((c, i) => r.box(MAT.color(c, 0.8), x - 0.16 + i * 0.075, y + 0.12, z, 0.06, 0.24 - (i % 2) * 0.04, 0.18));
+}
+function shoeRack(r: Room, x: number, z: number) {
+  r.box(MAT.lightWood(), x, 0.25, z, 0.8, 0.5, 0.3, true);
+  const cols = ["#151515", "#8a5a3b", "#ffffff", "#c8452c"];
+  cols.forEach((c, i) => r.box(MAT.color(c, 0.6), x - 0.28 + i * 0.19, 0.55, z, 0.12, 0.08, 0.25));
+}
+function floorLamp(r: Room, x: number, z: number) {
+  r.cyl(MAT.black(), x, 0.8, z, 0.025, 1.6);
+  r.cyl(MAT.glow("#fff0cc", 1.4), x, 1.7, z, 0.22, 0.3);
+}
+
 function plant(r: Room, x: number, z: number, big = false) {
   r.cyl(MAT.color("#5a3a22", 0.9), x, 0.25, z, big ? 0.3 : 0.2, 0.5);
   r.b.add(G.ico, MAT.color("#3f6f2a", 0.9), [x, big ? 1.3 : 0.85, z], [0, 0, 0], [big ? 0.6 : 0.4, big ? 1.0 : 0.6, big ? 0.6 : 0.4]);
@@ -447,6 +532,9 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.wall(wallM, -roomW / 2, z1, roomW / 2, z1, 1.0, [-0.5, 0.5]); // front wall (cut away)
       r.door(0, z1, "x");
       r.window(-roomW / 4, z0, 0.9);
+      tubeLight(r, roomW / 4 - 0.1, 2.55, z0 + 0.07);
+      wallClock(r, roomW / 4 + 0.4, 2.05, z0 + 0.07);
+      calendar(r, -roomW / 4 - 0.85, 1.55, z0 + 0.07, hall ? "#2E7D4F" : "#1F5AA6");
       if (hall) {
         // Chamber (left) and hall (right) split by a partition with a doorway.
         r.wall(wallM, -0.4, z0, -0.4, z1, 1.1, [z0 + 2.2, z0 + 3.1]);
@@ -469,11 +557,20 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         r.box(MAT.color("#ddd"), -1.85, 1.9, z0 + 2.2, 0.01, 0.01, 2.2); // rope wardrobe
         for (let i = 0; i < 4; i++) r.box(MAT.color(["#C8452C", "#1F5AA6", "#F2B705", "#fff"][i]), -1.83, 1.55, z0 + 1.4 + i * 0.45, 0.02, 0.6, 0.38);
         fan(r, 1.4, z0 + 2.9);
+        radio(r, 1.35, 0.7, z0 + 0.4);
       }
       bucketAndKettle(r, roomW / 2 - 0.5, z1 - 0.5);
       // Courtyard: coal pot by your door (or gas cylinder on a chamber & hall veranda).
       if (hall) gasCylinderCooker(r, 1.6, z1 + 0.6); else coalPot(r, 1.3, z1 + 0.7);
       plasticChairs(r, -2.2, z1 + 1.2, 2);
+      // Courtyard life: fufu mortar, basins, charcoal, chickens, the water drum, a radio on the bench.
+      mortarPestle(r, -0.9, z1 + 1.9);
+      basins(r, 3.1, z1 + 1.0);
+      if (!hall) charcoalSack(r, 2.0, z1 + 0.45);
+      chicken(r, -1.3, 4.9, 0.6);
+      chicken(r, 0.7, 5.3, -2.2, false);
+      chicken(r, 1.6, 4.7, 2.4);
+      waterDrum(r, -6.5, 3.9);
       r.spot(hall ? "kitchen" : "coalpot", hall ? 2.1 : 1.3, z1 + 1.4, hall ? "Cook on the gas" : "Coal pot");
       if (hall) r.use("kitchen", 1.6, 0, z1 + 1.25, [1.6, z1 + 0.6], "stand");
       else r.use("coalpot", 1.3, 0, z1 + 1.3, [1.3, z1 + 0.7], "squat");
@@ -498,6 +595,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       for (let i = 0; i < 3; i++) r.cyl(MAT.color("#F2B705", 0.5), -5.6 + i * 0.4, 0.25, 5.1, 0.15, 0.5);
       clothesLine(r, -5.8, -1.2, 2.2);
       r.box(MAT.darkWood(), -3.5, 0.4, 4.4, 2.2, 0.08, 0.4, true);
+      radio(r, -2.8, 0.44, 4.4);
       r.spot("neighbours", -3.5, 3.9, "Neighbours");
       r.use("neighbours", -3.5, 0.44, 4.4, [-3.5, 2.5], "sit");
       r.cutBox(MAT.plaster("#cdbf9f"), -W / 4 - 0.4, 1.25, cz1 + 0.1, W / 2 - 0.8, 2.5, 0.2); // front compound wall
@@ -540,6 +638,11 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       for (let i = 0; i < 3; i++) r.cyl(MAT.color("#7a3f22", 0.95), -1.5 + i * 0.6, 0.35, 0.8, 0.3, 0.7);
       r.box(MAT.darkWood(), 3.5, 0.3, 3, 2, 0.08, 0.5, true);
       r.spot("neighbours", 3.5, 3.6, "Sit with the family");
+      mortarPestle(r, 2.6, 0.6);
+      basins(r, -1.6, 2.4);
+      chicken(r, 0.4, 3.8, 1.2);
+      chicken(r, -0.6, 4.4, -2.0);
+      chicken(r, 5.4, 0.6, 0.3, false);
       r.use("neighbours", 3.5, 0.34, 3, [3.5, 5], "sit");
       r.wall(MAT.mud(), -7, 6, 7, 6, 1.4, [-0.8, 0.8]);
       door = new THREE.Vector3(0, 0, 5.4);
@@ -594,6 +697,11 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         fan(r, 1.6, 0.6);
       }
       r.window(-W / 4, -D / 2, 1.2);
+      tubeLight(r, -W / 4 + 1.6, 2.55, -D / 2 + 0.07);
+      wallClock(r, -W / 4 - 1.2, 2.1, -D / 2 + 0.07);
+      calendar(r, flat ? -0.2 : 0.9, 1.55, -D / 2 + 0.07);
+      potsOnHob(r, -W / 2 + 0.4, 0.95, (flat ? 1.2 : 0.8) + 0.45);
+      shoeRack(r, 1.6, D / 2 - 0.3);
       ownedExtras(r, items, { tv: [flat ? 1.6 : 0.2, flat ? -0.2 : -D / 2 + 0.35], fridge: [-W / 2 + 0.45, flat ? 2.8 : 2.2], gen: [W / 2 - 0.5, D / 2 - 0.5] });
       if (has("tv32") || has("smart_tv65")) r.spot("tv", flat ? 1.6 : 0.2, flat ? 1.2 : -1, "TV");
       if (flat) { r.box(MAT.bars(), 0, 1.0, D / 2 + 0.9, W, 1.0, 0.04); r.floor(MAT.floorTiles(), -W / 2, D / 2, W / 2, D / 2 + 1); r.spot("terrace", 2.5, D / 2 + 0.5, "Balcony"); r.use("terrace", 2.5, 0, D / 2 + 0.7, [2.5, D / 2 + 4], "stand"); }
@@ -637,6 +745,13 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.spot("kitchen", -W / 2 + 2.0, back + 2.0, "Kitchen");
       r.use("kitchen", -W / 2 + 1.0, 0, back + 1.4, [-W / 2, back + 1.4], "stand");
       diningSet(r, -W / 2 + 2.4, D / 2 - 1.3, 6);
+      fruitBowl(r, -W / 2 + 2.4, 0.78, D / 2 - 1.3);
+      pendantLamp(r, -W / 2 + 2.4, 2.2, D / 2 - 1.3);
+      potsOnHob(r, -W / 2 + 0.15 + 3.4 * 0.55, 0.95, back + 0.5);
+      sideTableLamp(r, W / 2 - 0.6, D / 2 - 1.0);
+      books(r, W / 2 - 0.6, 0.56, D / 2 - 1.0);
+      wallClock(r, -W / 2 + 4.6, 2.2, back + 0.07);
+      shoeRack(r, 1.4, D / 2 - 0.3);
       sofaSet(r, W / 2 - 3.0, D / 2 - 1.0, has("leather_sofa") || big ? "l_shape" : "fabric", -1);
       coffeeTable(r, W / 2 - 3.0, D / 2 - 2.2);
       rug(r, W / 2 - 3.0, D / 2 - 2.1, 3.0, 2.2, "#1F7A4D");
@@ -727,13 +842,41 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       coffeeTable(r, lx, 1.2);
       rug(r, lx - 0.4, 1.3, 4, 3, "#1F3A5F");
       tvWall(r, lx, -1.8, true);
+      floorLamp(r, lx + 2.3, 3.2);
+      // Armchairs, a drinks cabinet, a console with a vase by the door, art on the walls.
+      for (const dz of [-0.2, 1.2]) {
+        r.box(MAT.color("#c9b28c", 0.9), lx + 3.2, 0.22, dz, 0.8, 0.44, 0.8, true);
+        r.box(MAT.color("#d8c4a0", 0.95), lx + 3.2, 0.5, dz, 0.72, 0.14, 0.72);
+        r.box(MAT.color("#c9b28c", 0.9), lx + 3.55, 0.75, dz, 0.14, 0.6, 0.8);
+      }
+      r.box(MAT.darkWood(), lx + 1.2, 0.9, -D / 2 + 0.3, 1.6, 1.8, 0.45, true);
+      for (let i = 0; i < 5; i++) r.cyl(MAT.color(["#3a5f2a", "#6b1d1d", "#d9b65a", "#2a2a2a", "#9a6b2a"][i], 0.1), lx + 0.6 + i * 0.3, 1.95, -D / 2 + 0.3, 0.05, 0.32);
+      r.box(MAT.darkWood(), -1.6, 0.45, D / 2 - 0.35, 1.4, 0.9, 0.4, true);
+      r.cyl(MAT.color("#1F5AA6", 0.2), -1.6, 1.15, D / 2 - 0.35, 0.14, 0.5);
+      frame(r, lx - 2.5, 2.0, -D / 2 + 0.08, 1.4, 1.0);
+      frame(r, lx + 3.5, 2.0, -D / 2 + 0.08, 1.0, 1.2);
+      rug(r, mansion ? -W / 2 + 4.5 : -W / 2 + 2.6, mansion ? 2.6 : D / 2 - 1.4, mansion ? 6.5 : 4.5, 2.6, "#7a2e2e");
+      if (mansion) {
+        // A grand piano by the window.
+        r.box(MAT.black(), W / 2 - 4.5, 0.75, D / 2 - 2.2, 1.5, 0.25, 2.0, true);
+        r.box(MAT.black(), W / 2 - 4.5, 0.85, D / 2 - 1.15, 1.5, 0.3, 0.3);
+        r.box(MAT.white(), W / 2 - 4.5, 0.75, D / 2 - 1.1, 1.3, 0.04, 0.18);
+        for (const dx of [-0.6, 0.6]) r.box(MAT.black(), W / 2 - 4.5 + dx, 0.32, D / 2 - 2.2, 0.08, 0.64, 0.08);
+      }
+      sideTableLamp(r, lx - 2.2, 2.6);
+      books(r, lx - 2.2, 0.56, 2.6);
+      fruitBowl(r, lx, 0.44, 1.2);
       r.spot("tv", lx, 0.6, "TV");
       r.use("tv", lx, 0.5, 2.6, [lx, -1.8], "sit");
       // Chef's kitchen.
       fittedKitchen(r, -W / 2 + 0.15, -D / 2 + (mansion ? 5 : 3.6), mansion ? 5 : 4.2, 2.2, true);
       r.spot("kitchen", -W / 2 + 2.4, -D / 2 + (mansion ? 8.3 : 6.9), "Kitchen");
       r.use("kitchen", -W / 2 + 1.0, 0, -D / 2 + (mansion ? 6.5 : 5.2), [-W / 2, -D / 2 + (mansion ? 6.5 : 5.2)], "stand");
-      if (!mansion) diningSet(r, -W / 2 + 2.6, D / 2 - 1.4, 8, MAT.darkMarble());
+      if (!mansion) {
+        diningSet(r, -W / 2 + 2.6, D / 2 - 1.4, 8, MAT.darkMarble());
+        for (const dx of [-0.8, 0.8]) pendantLamp(r, -W / 2 + 2.6 + dx, 2.3, D / 2 - 1.4, H);
+      }
+      potsOnHob(r, -W / 2 + 0.15 + (mansion ? 5 : 4.2) * 0.55, 0.95, -D / 2 + (mansion ? 5 : 3.6) + 0.5);
       // Master suite back-left with an ensuite and a freestanding tub.
       const sx0 = -W / 2, sx1 = -W / 2 + (mansion ? 7 : 6.5), sz1 = -D / 2 + 3.4;
       r.wall(wallM, sx0, sz1, sx1, sz1, 1.1, [sx1 - 1.4, sx1 - 0.5]);
