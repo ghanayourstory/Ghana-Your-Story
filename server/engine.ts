@@ -1,5 +1,6 @@
 // The authoritative game engine. Every state change happens here, inside a
 // single SQL transaction per action, with money moving only through the ledger.
+import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { tx, type Db } from "./db.ts";
 import { balance, ensureAccount, GameError, post, recentLedger, type Leg } from "./ledger.ts";
@@ -58,6 +59,8 @@ export interface PlayerRow {
   fun: number;
   hygiene: number;
   bladder: number;
+  daily: string;
+  needs_pace: number;
   reputation: number;
   work: number;
   fitness: number;
@@ -117,11 +120,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -247,7 +250,8 @@ function isPartnered(db: Db, playerId: number) {
 
 /** Passive needs over time. */
 function decay(p: PlayerRow, minutes: number, sleeping: boolean, partnered: boolean) {
-  const h = minutes / 60;
+  // Players can slow needs down or switch them off in settings.
+  const h = (minutes / 60) * (p.needs_pace ?? 1);
   p.hunger = clamp(p.hunger - h * (sleeping ? 2.2 : 4.2), 0, 100);
   if (!sleeping) p.energy = clamp(p.energy - h * 3, 0, 100);
   if (!sleeping) p.social = clamp(p.social - h * (partnered ? 0.45 : 0.9), 0, 100);
@@ -755,7 +759,9 @@ export function perform(ctx: Ctx, playerId: number, idemKey: string, action: Act
       const p = loadPlayer(ctx.db, playerId);
       const fb = new Feedback();
       catchUp(ctx, p, fb);
+      const discoveredBefore = p.discovered;
       const data = dispatch(ctx, p, action, fb);
+      trackDaily(ctx, p, action, fb, discoveredBefore !== p.discovered);
       evaluateGoals(ctx, p, fb);
       savePlayer(ctx.db, p);
       for (const item of fb.items) {
@@ -816,6 +822,8 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "course_attend": return actCourseAttend(ctx, p, a, fb);
     case "social_post": return actSocialPost(ctx, p, a, fb);
     case "event_choose": return actEventChoose(ctx, p, a, fb);
+    case "daily_swap": return actDailySwap(ctx, p, a, fb);
+    case "settings": return actSettings(p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
     case "dev_skip": return actDevSkip(ctx, p, a, fb);
     default:
@@ -1856,6 +1864,138 @@ export function netWorth(db: Db, p: PlayerRow) {
   return { cash, bank, usd, usdInGhs, tbill, loan, land, buildings, businesses: biz, vehicles, goods, payroll: p.payroll_accrued, arrears: p.rent_arrears, total };
 }
 
+// ---------------------------------------------------------------------------
+// Today's hustle
+
+function dailyContext(db: Db, p: PlayerRow): DailyContext {
+  return {
+    hasJob: !!p.job_id,
+    hasBusiness: !!db.get("SELECT 1 FROM businesses WHERE player_id = ?", p.id),
+    hasFarm: !!db.get("SELECT 1 FROM farms WHERE player_id = ?", p.id),
+    enrolled: !!db.get("SELECT 1 FROM courses WHERE player_id = ? AND status != 'done'", p.id),
+    hasKitchen: true,
+    hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
+  };
+}
+
+/** Today's goals, rolled over to a fresh set each game day. */
+function dailyState(db: Db, p: PlayerRow): DailyState {
+  const day = dayOf(p.game_min);
+  let st: DailyState | null = null;
+  try { st = p.daily ? (JSON.parse(p.daily) as DailyState) : null; } catch { st = null; }
+  if (!st || st.day !== day) {
+    const prev = st;
+    st = {
+      day,
+      goals: pickDaily(p.id, day, dailyContext(db, p)).map((id) => ({ id, progress: 0, done: false })),
+      swapped: false,
+      bonusPaid: false,
+      streak: prev && prev.lastFullDay === day - 1 ? prev.streak : 0,
+      lastFullDay: prev?.lastFullDay ?? -1,
+    };
+    p.daily = JSON.stringify(st);
+  }
+  return st;
+}
+
+const CLEAN_ACTS = ["shower", "shared_bath", "bucket_bath"];
+const FUN_ACTS = ["watch_tv", "watch_football", "music", "neighbours", "pool_swim", "terrace"];
+
+/** Which of today's goals did this action move forward? */
+function dailyHits(a: Action, discovered: boolean): string[] {
+  const hits: string[] = [];
+  const act = typeof a.activity === "string" ? a.activity : "";
+  switch (a.type) {
+    case "work": hits.push("shift"); break;
+    case "job_apply": hits.push("job_hunt"); break;
+    case "talk": hits.push("talk"); break;
+    case "travel": if (a.mode === "trotro") hits.push("trotro"); if (a.mode === "car") hits.push("drive"); break;
+    case "deposit": if (Number(a.amount) >= 5000) hits.push("save"); break;
+    case "home_activity":
+      if (CLEAN_ACTS.includes(act)) hits.push("clean");
+      if (act.startsWith("cook")) hits.push("cook");
+      if (FUN_ACTS.includes(act)) hits.push("fun");
+      break;
+    case "cook": hits.push("cook"); break;
+    case "service": {
+      const s = SERVICES[String(a.serviceId)];
+      if (s && (s.effects.hunger ?? 0) >= 15) hits.push("eat_local");
+      if (s && (s.effects.fun ?? 0) > 0) hits.push("fun");
+      break;
+    }
+    case "biz_collect": hits.push("business"); break;
+    case "course_attend": hits.push("class"); break;
+    case "farm_plant": case "farm_harvest": hits.push("farm"); break;
+    case "social_post": hits.push("post"); break;
+  }
+  if (discovered) hits.push("explore");
+  return hits;
+}
+
+function trackDaily(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback, discovered: boolean) {
+  const st = dailyState(ctx.db, p);
+  const hits = dailyHits(a, discovered);
+  let changed = false;
+  for (const g of st.goals) {
+    if (g.done || !hits.includes(g.id)) continue;
+    const def = DAILY_GOALS[g.id];
+    g.progress += 1;
+    changed = true;
+    if (g.progress >= def.target) {
+      g.done = true;
+      const money = credit(ctx, p, "cash", minor(def.reward), "daily_goal", `Today's hustle: ${def.label}`, `daily:${p.id}:${st.day}:${g.id}`);
+      fb.add(`🎯 Done: ${def.label}.`, money, "goal");
+    }
+  }
+  if (changed && !st.bonusPaid && st.goals.every((g) => g.done)) {
+    st.bonusPaid = true;
+    st.streak = st.lastFullDay === st.day - 1 ? st.streak + 1 : 1;
+    st.lastFullDay = st.day;
+    const money = credit(ctx, p, "cash", minor(DAILY_BONUS), "daily_goal", "Today's hustle: all three done", `daily:${p.id}:${st.day}:bonus`);
+    fb.add(`🏆 All of today's goals done${st.streak > 1 ? ` · ${st.streak}-day streak` : ""}.`, money, "goal");
+  }
+  p.daily = JSON.stringify(st);
+}
+
+function actSettings(p: PlayerRow, a: Action, fb: Feedback) {
+  if (a.needsPace !== undefined) {
+    const v = Number(a.needsPace);
+    if (![0, 0.5, 1].includes(v)) throw new GameError("bad_setting", "Needs pace is off, slow or normal.");
+    p.needs_pace = v;
+    fb.add(v === 0 ? "Needs paused: they won't run down." : v === 0.5 ? "Needs run down at half speed." : "Needs run at normal speed.", [], "info");
+  }
+  return null;
+}
+
+function actDailySwap(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const st = dailyState(ctx.db, p);
+  if (st.swapped) throw new GameError("swapped", "You've already swapped a goal today. Fresh ones tomorrow.");
+  const g = st.goals.find((x) => x.id === a.goalId);
+  if (!g || g.done) throw new GameError("bad_goal", "Pick one of today's unfinished goals.");
+  const next = swapCandidate(p.id, st.day, dailyContext(ctx.db, p), st.goals.map((x) => x.id));
+  if (!next) throw new GameError("no_swap", "Nothing else to swap in today.");
+  Object.assign(g, { id: next, progress: 0, done: false });
+  st.swapped = true;
+  p.daily = JSON.stringify(st);
+  fb.add(`🔁 Swapped in: ${DAILY_GOALS[next].label}.`, [], "info");
+  return null;
+}
+
+function dailyView(ctx: Ctx, p: PlayerRow) {
+  const st = dailyState(ctx.db, p);
+  return {
+    day: st.day,
+    swapped: st.swapped,
+    streak: st.streak,
+    bonus: DAILY_BONUS,
+    bonusPaid: st.bonusPaid,
+    goals: st.goals.map((g) => {
+      const d = DAILY_GOALS[g.id];
+      return { id: g.id, icon: d.icon, label: d.label, hint: d.hint, progress: g.progress, target: d.target, reward: d.reward, done: g.done };
+    }),
+  };
+}
+
 function moodFor(db: Db, p: PlayerRow) {
   return moodOf({
     stats: { energy: p.energy, hunger: p.hunger, health: p.health, social: p.social, fun: p.fun, hygiene: p.hygiene, bladder: p.bladder },
@@ -1957,6 +2097,8 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       district: p.district, pos: { x: p.pos_x, z: p.pos_z },
       stats: { energy: p.energy, hunger: p.hunger, health: p.health, social: p.social, fun: p.fun, hygiene: p.hygiene, bladder: p.bladder },
       mood: moodFor(db, p),
+      daily: dailyView(ctx, p),
+      settings: { needsPace: p.needs_pace },
       skills: { work: round1(p.work), fitness: round1(p.fitness), charisma: round1(p.charisma), business: round1(p.business) },
       reputation: round1(p.reputation), creditScore: p.credit_score,
       job: p.job_id ? { id: p.job_id, rank: p.job_rank, rankTitle: RANK_TITLES[p.job_rank], shifts: p.job_shifts, nextRankAt: p.job_rank < MAX_RANK ? SHIFTS_PER_RANK * (p.job_rank + 1) : null, payPerShift: minor(rankPay(JOBS[p.job_id].pay, p.job_rank)) } : null,

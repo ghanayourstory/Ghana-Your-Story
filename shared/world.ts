@@ -343,6 +343,9 @@ for (const p of PLACES) {
 PLACES.push(...REGIONAL_PLACES);
 Object.assign(JOBS, REGIONAL_JOBS);
 
+// Going out is fun as well as social: anything sociable lifts Fun too.
+for (const s of Object.values(SERVICES)) if (!s.effects.fun && (s.effects.social ?? 0) >= 10) s.effects.fun = Math.round((s.effects.social ?? 0) * 1.2);
+
 // Lorry stations, markets and malls all have a pay toilet (and the mall's is free).
 for (const p of PLACES) if ((p.kind === "transport" || p.kind === "market" || p.kind === "mall") && !p.services.includes("public_toilet")) p.services.push("public_toilet");
 export const PLACE_BY_ID: Record<string, Place> = Object.fromEntries(PLACES.map((p) => [p.id, p]));

@@ -249,3 +249,8 @@ canvas.world { position: fixed; inset: 0; width: 100%; height: 100%; display: bl
 .speedo b { font-size: 30px; font-weight: 900; line-height: 1; }
 .speedo .tiny { flex-basis: 100%; }
 @media (min-width: 900px) and (pointer: fine) { .speedo { left: 16px; transform: none; bottom: 18px; } }
+.today-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 10px; border-radius: 12px; background: rgba(255,255,255,0.05); }
+.today-row > span { font-size: 22px; width: 28px; text-align: center; }
+.today-row .grow { flex: 1; }
+.svc.goal .goal-icon { font-size: 22px; width: 30px; text-align: center; }
+.svc.goal.done { opacity: 0.65; }

@@ -69,6 +69,7 @@ export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: str
       </div>
       <div className="hud-chips">
         <button className={`chip ${net >= 0 ? "green" : ""}`} onClick={() => onOpen("money")}>{net >= 0 ? "+" : "−"}{money(Math.abs(net), true)} a month ›</button>
+        <button className={`chip ${state.player.daily.goals.every((g) => g.done) ? "green" : ""}`} onClick={() => onOpen("today")}>🎯 Today {state.player.daily.goals.filter((g) => g.done).length}/3</button>
         <span className="chip">⭐ {Math.round(state.player.reputation)} standing</span>
         {state.event && <button className="chip alert" onClick={() => onOpen("event")}>📱 {state.event.title}</button>}
         {nextDate && <button className="chip" onClick={() => onOpen("people")}>📅 Date with {NPC_BY_ID[nextDate.npcId].name.split(" ")[0]} · {toGameDate(nextDate.startMin).clock}</button>}

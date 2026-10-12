@@ -742,6 +742,11 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
       </div>
       <SoundSettings />
       <div className="card col" style={{ marginTop: 10 }}>
+        <b>Needs</b>
+        <div className="seg">{([[1, "Normal"], [0.5, "Slow"], [0, "Off"]] as const).map(([v, label]) => <button key={v} className={state.player.settings.needsPace === v ? "on" : ""} disabled={busy} onClick={() => act({ type: "settings", needsPace: v })}>{label}</button>)}</div>
+        <div className="tiny muted">How fast hunger, energy, bladder, hygiene, fun and social run down. Off keeps them where they are.</div>
+      </div>
+      <div className="card col" style={{ marginTop: 10 }}>
         <b>Save</b>
         <div className="tiny muted">{backend.mode === "server" ? "Your progress is saved on the game server after every action." : "Offline demo: your progress is saved in this browser. The full game uses an authoritative server."}</div>
         <div className="kv"><span>Character</span><span>{state.player.name}</span></div>

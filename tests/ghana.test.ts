@@ -261,6 +261,40 @@ test("needs: bladder, hygiene and fun run down; the toilet, a bath and TV fix th
   assert.ok(p.hygiene < 60);
 });
 
+test("today's hustle: three goals that fit your life, rewards once each, one swap, settings pause needs", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 9);
+  let d = buildState(ctx, loadPlayer(ctx.db, id)).player.daily;
+  assert.equal(d.goals.length, 3);
+  // No job yet: never asked to work a shift.
+  assert.ok(!d.goals.some((g) => g.id === "shift"));
+  const cashBefore = bal(ctx, id, "cash");
+  // Swap one goal once.
+  const target = d.goals.find((g) => !g.done)!;
+  assert.ok(act(ctx, id, { type: "daily_swap", goalId: target.id }).ok);
+  assert.equal(act(ctx, id, { type: "daily_swap", goalId: d.goals[1].id === target.id ? d.goals[0].id : d.goals[1].id }).code, "swapped");
+  // Do a bath: if it's a goal, it pays exactly once.
+  ctx.db.run("UPDATE players SET daily = ? WHERE id = ?", JSON.stringify({ day: d.day, goals: [{ id: "clean", progress: 0, done: false }, { id: "talk", progress: 0, done: false }, { id: "fun", progress: 0, done: false }], swapped: false, bonusPaid: false, streak: 0, lastFullDay: -1 }), id);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "shared_bath" }).ok);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "shared_bath" }).ok);
+  d = buildState(ctx, loadPlayer(ctx.db, id)).player.daily;
+  assert.equal(d.goals.find((g) => g.id === "clean")!.done, true);
+  assert.equal(bal(ctx, id, "cash") - cashBefore, 15 * 100 - 0); // shared bath is free; one reward only
+  // Fun via the neighbours, then the bonus once all three are done... talk still pending, so no bonus yet.
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "neighbours" }).ok);
+  d = buildState(ctx, loadPlayer(ctx.db, id)).player.daily;
+  assert.equal(d.bonusPaid, false);
+  // Pause needs: a long nap doesn't drain them.
+  assert.ok(act(ctx, id, { type: "settings", needsPace: 0 }).ok);
+  const before = ctx.db.get<{ bladder: number; hygiene: number }>("SELECT bladder, hygiene FROM players WHERE id = ?", id)!;
+  assert.ok(act(ctx, id, { type: "sleep", hours: 2 }).ok);
+  const after = ctx.db.get<{ bladder: number; hygiene: number }>("SELECT bladder, hygiene FROM players WHERE id = ?", id)!;
+  assert.equal(after.bladder, before.bladder);
+  assert.equal(after.hygiene, before.hygiene);
+  assert.equal(act(ctx, id, { type: "settings", needsPace: 3 }).code, "bad_setting");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
 test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {
   const env = makeCtx({ devTools: true });
   const id = newPlayer(env.ctx, "graduate", true);

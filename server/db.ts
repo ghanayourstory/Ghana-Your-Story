@@ -316,6 +316,8 @@ const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
   ["players", "fun", "REAL NOT NULL DEFAULT 70"],
   ["players", "hygiene", "REAL NOT NULL DEFAULT 80"],
   ["players", "bladder", "REAL NOT NULL DEFAULT 80"],
+  ["players", "daily", "TEXT NOT NULL DEFAULT ''"],
+  ["players", "needs_pace", "REAL NOT NULL DEFAULT 1"],
 ];
 
 export function migrate(db: Db) {

@@ -6,6 +6,7 @@ import { CharacterCreate } from "./ui/CharacterCreate.tsx";
 import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
 import { Phone, readMix } from "./ui/phone.tsx";
+import { TodaySheet } from "./ui/today.tsx";
 import { World, type Nearby, type Quality } from "./world/World.ts";
 import { loadHumans } from "./world/humans.ts";
 import { loadCarModels } from "./world/carmodels.ts";
@@ -88,6 +89,7 @@ type Panel =
   | { kind: "phone"; app?: string }
   | { kind: "event" }
   | { kind: "bed"; focus?: string }
+  | { kind: "today" }
   | null;
 
 function Game() {
@@ -181,6 +183,19 @@ function Game() {
     return () => clearInterval(t);
   }, [act]);
 
+  // Each new game day starts with the morning card (once a day, not over other panels).
+  const day = state?.player.daily.day;
+  useEffect(() => {
+    if (day === undefined || !state || news || intro) return;
+    const k = `sika.brief.${state.player.id}`;
+    let seen = "";
+    try { seen = localStorage.getItem(k) ?? ""; } catch { /* private mode */ }
+    if (seen === String(day)) return;
+    try { localStorage.setItem(k, String(day)); } catch { /* ignore */ }
+    setPanel((p) => p ?? { kind: "today" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [day, news, intro]);
+
   // Pop up new life events once.
   useEffect(() => {
     if (state?.event && state.event.id !== lastEvent.current) {
@@ -259,6 +274,7 @@ function Game() {
 
   const open = (what: string) => {
     if (what === "home") return void goHome();
+    if (what === "today") return setPanel({ kind: "today" });
     if (what === "map") return setPanel({ kind: "travel", ctx: "phone" });
     if (what === "event") return setPanel({ kind: "event" });
     if (what === "phone") return setPanel({ kind: "phone" });
@@ -304,6 +320,7 @@ function Game() {
       {panel?.kind === "travel" && <TravelSheet context={panel.ctx} initialScope={panel.scope} world={world} onClose={() => setPanel(null)} />}
       {panel?.kind === "phone" && <Phone world={world} initialApp={panel.app} onClose={() => setPanel(null)} onTravel={() => setPanel({ kind: "travel", ctx: "phone" })} quality={quality} setQuality={setQuality} />}
       {panel?.kind === "event" && <EventModal onClose={() => setPanel(null)} />}
+      {panel?.kind === "today" && <TodaySheet onClose={() => setPanel(null)} />}
       {panel?.kind === "bed" && <HomeSheet world={world} focus={panel.focus} onClose={() => setPanel(null)} />}
       {news && !intro && (
         <div className="modal-wrap" onClick={closeNews}>
@@ -315,6 +332,7 @@ function Game() {
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>☀️ <b>Your day:</b> each game day opens with a morning card: weather, your shift, money, how you feel, and <b>Today's hustle</b>, three small goals that fit your life (swap one, skip any). Tap 🎯 Today any time. Needs can be slowed or paused in Phone → Settings.</div>
               <div>🚗 <b>Drive your own car:</b> walk up to it and press Drive. W/S or the stick to drive, A/D to steer, Shift to speed up. Park anywhere. Drive to the end of the road to pick where to go next.</div>
               <div>🏡 <b>Homes feel lived in:</b> tube lights, wall clocks, radios, fufu mortars, basins, chickens in the compound; pendant lamps, art and a piano in bigger homes. Softer shadows on High quality.</div>
               <div>🚻 Pay toilets at lorry stations, markets and malls. The green 🏠 button takes you home from anywhere.</div>
