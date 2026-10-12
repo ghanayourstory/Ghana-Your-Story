@@ -258,3 +258,9 @@ canvas.world { position: fixed; inset: 0; width: 100%; height: 100%; display: bl
 :root { --ui-scale: 1; }
 .hud-top, .rail, .sheet, .phone, .modal, .ride-banner, .action-bar, .toasts, .minimap, .speedo { zoom: var(--ui-scale); }
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { transition: none !important; animation: none !important; }
+.confirm-wrap { z-index: 120; }
+.modal.confirm { max-width: 420px; zoom: var(--ui-scale); }
+.confirm-line { padding: 8px 10px; border-radius: 10px; background: rgba(255,255,255,0.05); }
+.captions { position: fixed; left: 50%; transform: translateX(-50%); bottom: 150px; z-index: 22; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; zoom: var(--ui-scale); }
+.captions div { background: rgba(0,0,0,0.78); color: #fff; padding: 4px 10px; border-radius: 8px; font-size: 14px; font-weight: 600; }
+.modal.confirm { background: rgba(18, 19, 24, 0.98); }

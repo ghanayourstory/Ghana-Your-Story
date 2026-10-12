@@ -1,5 +1,6 @@
 import { REGIONAL_AVATAR_COLORS } from "../../shared/people-regional.ts";
 import { useEffect, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { formatMoney } from "../../shared/money.ts";
 import { NPC_BY_ID } from "../../shared/people.ts";
 import type { Effects } from "../../shared/world.ts";
@@ -128,13 +129,55 @@ export function initials(name: string) {
 }
 
 /** Two-tap confirmation built into the button (browser confirm() dialogs aren't available everywhere). */
-export function ConfirmButton({ className, disabled, onConfirm, children, ask }: { className?: string; disabled?: boolean; onConfirm: () => void; children: ReactNode; ask: string }) {
+/** What a decision costs and changes, shown before you commit (the five questions). */
+export interface Consequences {
+  /** Where it happens, if not obvious. */
+  where?: string;
+  time?: string;
+  cost?: string;
+  changes: string;
+  /** Can it be undone, and how? */
+  undo: string;
+}
+
+/**
+ * A button for decisions that matter. With `details`, a confirmation card says
+ * what happens, how long it takes, what it costs, what changes and whether it
+ * can be undone; without, it asks for a second tap.
+ */
+export function ConfirmButton({ className, disabled, onConfirm, children, ask, details }: { className?: string; disabled?: boolean; onConfirm: () => void; children: ReactNode; ask: string; details?: Consequences }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
-    if (!armed) return;
+    if (!armed || details) return;
     const t = setTimeout(() => setArmed(false), 4000);
     return () => clearTimeout(t);
-  }, [armed]);
+  }, [armed, details]);
+  if (details) {
+    return (
+      <>
+        <button className={className ?? "btn sm"} disabled={disabled} onClick={() => setArmed(true)}>{children}</button>
+        {armed && createPortal(
+          <div className="modal-wrap confirm-wrap" onClick={() => setArmed(false)}>
+            <div className="modal confirm" onClick={(e) => e.stopPropagation()}>
+              <h3 style={{ marginTop: 0 }}>{ask}</h3>
+              <div className="col" style={{ gap: 6 }}>
+                {details.where && <div className="kv"><span>📍 Where</span><span>{details.where}</span></div>}
+                {details.time && <div className="kv"><span>⏱️ Time</span><span>{details.time}</span></div>}
+                {details.cost && <div className="kv"><span>💵 Cost</span><span className="num">{details.cost}</span></div>}
+                <div className="confirm-line"><b>What changes</b><div className="small muted">{details.changes}</div></div>
+                <div className="confirm-line"><b>Can I undo it?</b><div className="small muted">{details.undo}</div></div>
+              </div>
+              <div className="row" style={{ marginTop: 12, gap: 8 }}>
+                <button className="btn ghost grow" onClick={() => setArmed(false)}>Not now</button>
+                <button className="btn primary grow" onClick={() => { setArmed(false); onConfirm(); }}>Confirm</button>
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
+      </>
+    );
+  }
   return (
     <button className={`${className ?? "btn sm"} ${armed ? "danger" : ""}`} disabled={disabled} title={ask} onClick={() => (armed ? (setArmed(false), onConfirm()) : setArmed(true))}>
       {armed ? `${ask} Tap again` : children}

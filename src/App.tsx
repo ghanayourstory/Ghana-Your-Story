@@ -7,6 +7,9 @@ import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
 import { Phone, readMix } from "./ui/phone.tsx";
 import { TodaySheet } from "./ui/today.tsx";
+import { getCaptions } from "./ui/a11y.ts";
+import { FamilyApp } from "./ui/family.tsx";
+import { Sheet } from "./ui/common.tsx";
 import { World, type Nearby, type Quality } from "./world/World.ts";
 import { loadHumans } from "./world/humans.ts";
 import { loadCarModels } from "./world/carmodels.ts";
@@ -90,6 +93,7 @@ type Panel =
   | { kind: "event" }
   | { kind: "bed"; focus?: string }
   | { kind: "today" }
+  | { kind: "family" }
   | null;
 
 function Game() {
@@ -99,6 +103,8 @@ function Game() {
   const [nearby, setNearby] = useState<Nearby | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [ride, setRide] = useState<{ label: string; icon: string } | null>(null);
+  const [police, setPolice] = useState<string | null>(null);
+  const [captionsList, setCaptionsList] = useState<{ id: number; text: string }[]>([]);
   const [driving, setDriving] = useState<{ name: string; kmh: number } | null>(null);
   const [doing, setDoing] = useState<{ label: string; icon: string; p: number } | null>(null);
   const [road, setRoad] = useState("");
@@ -125,6 +131,13 @@ function Game() {
       onSpot: (id) => (id === "exit" ? w.exitHome() : setPanel({ kind: "bed", focus: id })),
       onActivity: setDoing,
       onDrive: setDriving,
+      onPolice: setPolice,
+      onCaption: (text) => {
+        if (!getCaptions()) return;
+        const id = Math.random();
+        setCaptionsList((l) => [...l.slice(-2), { id, text }]);
+        setTimeout(() => setCaptionsList((l) => l.filter((c) => c.id !== id)), 3500);
+      },
       onDriveEdge: () => {
         toast({ text: "🗺️ End of the road here. Pick where to drive.", changes: [], tone: "info" });
         setPanel({ kind: "travel", ctx: "phone" });
@@ -236,6 +249,7 @@ function Game() {
         return;
       case "bed": return setPanel({ kind: "bed" });
       case "car": return void world.enterCar(nearby.id);
+      case "family": return setPanel({ kind: "family" });
       case "car_exit": return world.exitCar();
       case "exit": return world.exitHome();
     }
@@ -301,6 +315,17 @@ function Game() {
           <button className="btn small" onClick={() => world?.stopActivity()}>Stop</button>
         </div>
       )}
+      {captionsList.length > 0 && <div className="captions" aria-live="polite">{captionsList.map((c) => <div key={c.id}>{c.text}</div>)}</div>}
+      {police && (
+        <div className="modal-wrap">
+          <div className="modal">
+            <div className="pill">👮 Police checkpoint</div>
+            <h2 style={{ margin: "10px 0 4px" }}>"Good day. Licence, please."</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>An officer waves you to the side of the road. If your licence is in order you'll be on your way; driving without one means a fine (game money) and a little lost standing.</p>
+            <button className="btn primary block" onClick={async () => { await act({ type: "police_check", vehicleType: police }); setPolice(null); world?.releasePolice(); }}>Hand over your papers</button>
+          </div>
+        </div>
+      )}
       {driving && !ride && (
         <div className="speedo">
           <b className="num">{driving.kmh}</b><small>km/h</small>
@@ -321,6 +346,7 @@ function Game() {
       {panel?.kind === "phone" && <Phone world={world} initialApp={panel.app} onClose={() => setPanel(null)} onTravel={() => setPanel({ kind: "travel", ctx: "phone" })} quality={quality} setQuality={setQuality} />}
       {panel?.kind === "event" && <EventModal onClose={() => setPanel(null)} />}
       {panel?.kind === "today" && <TodaySheet onClose={() => setPanel(null)} />}
+      {panel?.kind === "family" && <Sheet title="🏡 Home" sub="Your family is happy to see you. Sit with them, catch up, or help with something." onClose={() => setPanel(null)}><div style={{ marginTop: 10 }}><FamilyApp onTravel={() => setPanel({ kind: "travel", ctx: "phone", scope: "ghana" })} /></div></Sheet>}
       {panel?.kind === "bed" && <HomeSheet world={world} focus={panel.focus} onClose={() => setPanel(null)} />}
       {news && !intro && (
         <div className="modal-wrap" onClick={closeNews}>
@@ -332,6 +358,8 @@ function Game() {
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>✅ <b>Know before you commit:</b> buying land, vehicles, businesses, furniture, renting, loans, T-bills, jobs and sales now show the time, the cost, what changes and whether you can undo it before you confirm.</div>
+              <div>🏡 <b>Go home to see them:</b> in your hometown your family waits outside the family house: walk up to greet them. 👮 <b>On the road:</b> traffic gives your car room, you stop for people, and police checkpoints check your licence. 💬 Sound captions in Settings.</div>
               <div>👪 <b>Family:</b> pick a hometown when you create a character. Your parents, grandmother and siblings live there with their own lives: call them, send MoMo when they ask for help (only if you can), or travel home to visit. Phone → Family.</div>
               <div>🧺 <b>Market hustle:</b> buy sachet water, oranges, bread, tomatoes or second-hand clothes at a market, carry them and sell at lorry stations and markets. Rush hours pay more, buyers run out, fruit goes off.</div>
               <div>📱 <b>MoMo wallet:</b> separate from cash and bank. Cash-in is free, cash-out costs a small agent fee. Plus bigger text and reduced motion in Settings.</div>

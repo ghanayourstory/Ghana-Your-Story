@@ -9,7 +9,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, EXTENT_Z, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
-import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook } from "./people.ts";
+import { animatePerson, buildPerson, randomLook, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildSite } from "./construction.ts";
 import { buildHomeInterior, type Interior, type InteriorSpot, type SpotUse } from "./interiors.ts";
 import { activityFx, applyPose, clearPose, findPath, fxFor, type Fx } from "./homelife.ts";
@@ -18,7 +18,8 @@ import { buildAircraft, buildVehicle, spinWheels, vehicleKindForModel, type Airc
 import { VEHICLES } from "../../shared/life.ts";
 import { CityAudio } from "./audio.ts";
 import { setMaxAnisotropy } from "./textures.ts";
-import { PLACE_BY_ID, DISTRICTS, type DistrictId } from "../../shared/world.ts";
+import { PLACE_BY_ID, DISTRICTS, districtsIn, type DistrictId } from "../../shared/world.ts";
+import * as T from "./textures.ts";
 import { PLOTS } from "../../shared/economy.ts";
 import { toGameDate, type Weather } from "../../shared/calendar.ts";
 import type { GameState } from "../../server/engine.ts";
@@ -26,7 +27,7 @@ import type { GameState } from "../../server/engine.ts";
 export type Quality = "low" | "medium" | "high";
 
 export interface Nearby {
-  kind: "npc" | "place" | "home" | "stop" | "plot" | "taxi" | "bed" | "exit" | "homespot" | "car" | "car_exit";
+  kind: "npc" | "place" | "home" | "stop" | "plot" | "taxi" | "bed" | "exit" | "homespot" | "car" | "car_exit" | "family";
   id: string;
   label: string;
 }
@@ -46,6 +47,10 @@ export interface WorldCallbacks {
   onDriveEdge?: () => void;
   /** Driving state changed (speed in km/h, or null when you get out). */
   onDrive?: (d: { name: string; kmh: number } | null) => void;
+  /** Pulled over at a police checkpoint (vehicle type). */
+  onPolice?: (vehicleType: string) => void;
+  /** A caption for an important sound. */
+  onCaption?: (text: string) => void;
 }
 
 /** You, at the wheel of your own car. */
@@ -58,6 +63,12 @@ interface Driving {
   steer: number;
   edgeCooldown: number;
   lastReport: number;
+  /** Metres driven, and when the next police checkpoint comes up. */
+  driven?: number;
+  nextCheck?: number;
+  /** Stopped at a checkpoint: an officer by the window. */
+  police?: THREE.Group | null;
+  honkCool?: number;
 }
 
 interface Doing {
@@ -137,6 +148,9 @@ export class World {
   private parkedKey = "";
   private parkedCars: { rig: VehicleRig; type: string }[] = [];
   private drive: Driving | null = null;
+  /** Your family, outside the family house when you're in your hometown. */
+  private family: { group: THREE.Group; spot: THREE.Vector3; people: { rig: Person; seated: SpotUse | null; pos: THREE.Vector3 }[] } | null = null;
+  private familyKey = "";
   private discovered = new Set<string>();
   private reported = new Set<string>();
   private nearby: Nearby | null = null;
@@ -195,6 +209,7 @@ export class World {
     Object.assign(this.fadeEl.style, { position: "fixed", inset: "0", background: "#07060a", opacity: "0", pointerEvents: "none", zIndex: "4" });
     document.body.appendChild(this.fadeEl);
     this.setupFx();
+    this.audio.onVoice = (spot) => this.caption(spot.kind === "market" ? "🧺 Market voices and calls nearby" : `🎶 ${spot.genre ? spot.genre[0].toUpperCase() + spot.genre.slice(1) : "Music"} playing nearby`);
     this.bindInput();
     this.resize();
     window.addEventListener("resize", this.resize);
@@ -264,6 +279,7 @@ export class World {
     }
     this.state = s;
     this.setClock(s.time.minute);
+    if ((s.time.weather === "rain" || s.time.weather === "storm") && this.weather !== s.time.weather) this.caption(s.time.weather === "storm" ? "⛈️ Thunder and heavy rain" : "🌧️ Rain starts falling");
     this.weather = s.time.weather;
     this.atmo.setWeather(s.time.weather);
     for (const r of s.relationships) this.tiers.set(r.npcId, r.tier);
@@ -285,6 +301,7 @@ export class World {
     }
     this.updateSite(s);
     this.updateParked(s);
+    this.updateFamily(s);
     if (this.district) this.district.homeLabel.visible = s.player.home.district === this.district.id;
     if (this.life) this.lastNpcHour = -1; // re-sync NPC labels with new tiers
   }
@@ -303,6 +320,7 @@ export class World {
     this.rings = [];
     for (const l of this.leaving) l.rig.group.removeFromParent();
     this.leaving = [];
+    if (this.family) { this.scene.remove(this.family.group); this.family = null; this.familyKey = ""; }
     this.site = null;
     this.siteKey = "";
     this.parked = null;
@@ -313,7 +331,11 @@ export class World {
     this.scene.add(d.group);
     const gd = toGameDate(Math.floor(this.minuteNow));
     this.life = new CityLife(d);
-    this.life.onHonk = (p) => this.audio.horn(p.distanceTo(this.pos));
+    this.life.onHonk = (p) => {
+      const dist = p.distanceTo(this.pos);
+      this.audio.horn(dist);
+      if (dist < 30) this.caption(`📢 Car horn ${this.sideOf(p)}`);
+    };
     this.life.populate(gd.hour, gd.weekdayIndex);
     this.scene.add(this.life.group);
     this.audio.setSpots(d.soundSpots);
@@ -351,6 +373,77 @@ export class World {
     this.scene.add(this.site);
     // Once construction starts the site is solid.
     this.siteBox = building ? { minX: d.plotSpot.x - 7.5, maxX: d.plotSpot.x + 7.5, minZ: d.plotSpot.z - 6.5, maxZ: d.plotSpot.z + 6.5 } : null;
+  }
+
+  private updateFamily(s: GameState) {
+    const d = this.district;
+    if (!d) return;
+    const here = DISTRICTS[d.id].city === s.player.hometown && districtsIn(DISTRICTS[d.id].city)[0] === d.id;
+    const members = here ? s.player.family.filter((m) => m.town === s.player.hometown) : [];
+    const key = `${d.id}:${members.map((m) => m.id).join(",")}`;
+    if (key === this.familyKey) return;
+    this.familyKey = key;
+    if (this.family) { this.scene.remove(this.family.group); this.family = null; }
+    if (!members.length) return;
+    // The family house: across the road from the lorry stop, a little way along.
+    const side = -(Math.sign(d.spawn.z) || 1);
+    const x0 = THREE.MathUtils.clamp(d.spawn.x + 26, -EXTENT_X + 12, EXTENT_X - 16);
+    const z = side * (WALK_IN + 1.7);
+    const group = new THREE.Group();
+    const spot = new THREE.Vector3(x0 + 1.5, 0, z);
+    const base = (s.player.look as PersonLook);
+    const people: { rig: Person; seated: SpotUse | null; pos: THREE.Vector3 }[] = [];
+    // A wooden bench for grandma.
+    const benchMat = new THREE.MeshStandardMaterial({ color: "#6b4528", roughness: 0.8 });
+    const bench = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.08, 0.45), benchMat);
+    bench.position.set(x0 - 0.6, 0.45, z + side * 0.9);
+    group.add(bench);
+    for (const lx of [-0.6, 0.6]) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.45, 0.4), benchMat);
+      leg.position.set(x0 - 0.6 + lx, 0.22, z + side * 0.9);
+      group.add(leg);
+    }
+    members.forEach((m, i) => {
+      const look = randomLook(m.id * 101 + 7);
+      look.skin = base.skin;
+      look.feminine = m.feminine;
+      if (m.age >= 60) look.hair = m.age >= 70 ? "#d8d4ce" : "#8a8580";
+      if (look.face) look.face[12] = THREE.MathUtils.clamp((m.age - 25) / 50, 0, 1);
+      if (m.age < 18) look.height = look.feminine ? 1.58 : 1.64;
+      if (m.role === "grandmother") { look.headwear = "headwrap"; look.hairStyle = "wrap"; }
+      const rig = buildPerson(look, { key: true });
+      const pos = new THREE.Vector3(x0 + i * 0.9, 0.16, z);
+      let seated: SpotUse | null = null;
+      if (m.role === "grandmother") seated = { x: x0 - 0.6, y: 0.5, z: z + side * 0.9, look: [x0 - 0.6, z - side * 3], pose: "sit" };
+      rig.root.position.copy(pos);
+      rig.root.rotation.y = side > 0 ? Math.PI : 0;
+      group.add(rig.root);
+      people.push({ rig, seated, pos });
+    });
+    const tex = T.label(`${s.player.name.split(" ").slice(-1)[0]} family house`, { icon: "🏡", bg: "rgba(31,122,77,0.92)" });
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
+    const aspect = (tex.image as HTMLCanvasElement).width / (tex.image as HTMLCanvasElement).height;
+    label.scale.set(0.65 * aspect, 0.65, 1);
+    label.position.set(spot.x, 3.1, spot.z);
+    group.add(label);
+    this.scene.add(group);
+    this.family = { group, spot, people };
+  }
+
+  private animateFamily(dt: number, t: number) {
+    if (!this.family) return;
+    for (const f of this.family.people) {
+      animatePerson(f.rig, dt, 0);
+      if (f.seated) { applyPose(f.rig, f.seated, t); continue; }
+      // Turn to greet you when you come close.
+      const dx = this.pos.x - f.pos.x, dz = this.pos.z - f.pos.z;
+      if (dx * dx + dz * dz < 64) {
+        const want = Math.atan2(dx, dz);
+        let dy = want - f.rig.root.rotation.y;
+        dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        f.rig.root.rotation.y += dy * Math.min(1, dt * 3);
+      }
+    }
   }
 
   private updateParked(s: GameState) {
@@ -564,8 +657,10 @@ export class World {
       let x = this.pos.x;
       if (road && this.drive && mode === "car") {
         // Already at the wheel: just keep driving.
+        this.releasePolice();
         const dv = this.drive;
         this.drive = null;
+        if (this.life) this.life.playerCarLength = 0;
         rig = dv.rig;
         this.cb.onDrive?.(null);
         x = rig.group.position.x;
@@ -782,7 +877,8 @@ export class World {
     rig.group.removeFromParent();
     this.scene.add(rig.group);
     this.player.root.visible = false;
-    this.drive = { rig, type, name: VEHICLES[type]?.name ?? "Your car", speed: 0, heading: rig.group.rotation.y, steer: 0, edgeCooldown: 0, lastReport: -1 };
+    this.drive = { rig, type, name: VEHICLES[type]?.name ?? "Your car", speed: 0, heading: rig.group.rotation.y, steer: 0, edgeCooldown: 0, lastReport: -1, driven: 0, nextCheck: 300 + Math.random() * 500 };
+    if (this.life) this.life.playerCarLength = rig.length;
     this.camPos.copy(this.camera.position);
     this.cb.onDrive?.({ name: this.drive.name, kmh: 0 });
     return true;
@@ -792,7 +888,9 @@ export class World {
   exitCar() {
     const d = this.drive;
     if (!d || !this.player) return;
+    this.releasePolice();
     this.drive = null;
+    if (this.life) this.life.playerCarLength = 0;
     const g = d.rig.group;
     g.removeFromParent();
     this.parked?.add(g);
@@ -822,6 +920,7 @@ export class World {
     }
     throttle = THREE.MathUtils.clamp(throttle, -1, 1);
     steer = THREE.MathUtils.clamp(steer, -1, 1);
+    if (d.police) { throttle = 0; steer = 0; d.speed = 0; }
     const max = this.keys.has("shift") ? 22 : 15; // ~55 km/h in town, 80 with your foot down
     // Accelerate, brake (S while moving forward), reverse slowly, roll to a stop.
     if (throttle > 0) d.speed += (d.speed < 0 ? 9 : 4.2) * throttle * dt;
@@ -856,10 +955,28 @@ export class World {
       if (c.distanceToSquared(was) > 1e-6) { hit = true; g.position.add(c.sub(was)); }
     }
     if (hit) {
-      if (Math.abs(d.speed) > 6) this.audio.horn(0);
+      if (Math.abs(d.speed) > 6) { this.audio.horn(0); this.caption("💥 Bump!"); }
       d.speed *= -0.25;
     }
+    // Stop for people in the road (and give them a toot).
+    d.honkCool = Math.max(0, (d.honkCool ?? 0) - dt);
+    const nose = g.position.clone().addScaledVector(fwd, (d.rig.length / 2) * Math.sign(d.speed || 1));
+    for (const o of this.life?.peoplePositions() ?? []) {
+      if (Math.hypot(o.x - nose.x, o.z - nose.z) < 1.3 && Math.abs(d.speed) > 0.3) {
+        g.position.copy(before);
+        d.speed = 0;
+        if (!d.honkCool) { this.audio.horn(0); this.caption("📢 You hoot: someone's in the road"); d.honkCool = 2.5; }
+        break;
+      }
+    }
     spinWheels(d.rig, g.position.distanceTo(before) * Math.sign(d.speed));
+    // Police checkpoints come up now and then on the road.
+    d.driven = (d.driven ?? 0) + g.position.distanceTo(before);
+    if (!d.police && d.driven > (d.nextCheck ?? 500) && Math.abs(g.position.z) < ROAD_HALF + 1) {
+      d.driven = 0;
+      d.nextCheck = 400 + Math.random() * 700;
+      this.pullOver(d);
+    }
     this.pos.set(g.position.x, 0, g.position.z);
     // The edge of the area: choose where to drive next.
     d.edgeCooldown = Math.max(0, d.edgeCooldown - dt);
@@ -874,6 +991,34 @@ export class World {
     if (kmh !== d.lastReport) { d.lastReport = kmh; this.cb.onDrive?.({ name: d.name, kmh }); }
   }
 
+  /** An officer steps up to the driver's window; the server decides how it goes. */
+  private pullOver(d: Driving) {
+    const g = d.rig.group;
+    const left = new THREE.Vector3(Math.cos(d.heading), 0, -Math.sin(d.heading));
+    const fwd = new THREE.Vector3(Math.sin(d.heading), 0, Math.cos(d.heading));
+    const police = new THREE.Group();
+    const officer = buildPerson({ skin: "#5a3a26", shirt: "#1d2733", pants: "#1d2733", hair: "#0f0c0a", feminine: Math.random() < 0.3, height: 1.76, build: 1.05, hairStyle: "cap", headwear: "cap", pattern: "plain" }, { key: true });
+    officer.root.position.copy(g.position).addScaledVector(left, d.rig.width / 2 + 0.7).addScaledVector(fwd, 0.4).setY(0.03);
+    officer.root.rotation.y = Math.atan2(-left.x, -left.z);
+    police.add(officer.root);
+    const car = buildVehicle("sedan", 4242);
+    car.group.position.copy(g.position).addScaledVector(fwd, d.rig.length / 2 + 5).addScaledVector(left, -0.3).setY(0.02);
+    car.group.rotation.y = d.heading + Math.PI;
+    police.add(car.group);
+    this.scene.add(police);
+    d.police = police;
+    d.speed = 0;
+    this.cb.onPolice?.(d.type);
+  }
+
+  /** Back on the road after the checkpoint. */
+  releasePolice() {
+    const d = this.drive;
+    if (!d?.police) return;
+    this.scene.remove(d.police);
+    d.police = null;
+  }
+
   private driveCamera(dt: number) {
     const d = this.drive!;
     const car = d.rig.group.position;
@@ -884,6 +1029,23 @@ export class World {
     this.camera.lookAt(car.x - back.x * 4, 1.2, car.z - back.z * 4);
     // Keep the walking camera behind the car for when you get out.
     this.camYaw = Math.atan2(back.x, back.z);
+  }
+
+  private lastCaption = new Map<string, number>();
+  private caption(text: string) {
+    const now = performance.now();
+    if ((this.lastCaption.get(text) ?? -1e9) > now - 4000) return;
+    this.lastCaption.set(text, now);
+    this.cb.onCaption?.(text);
+  }
+
+  /** "behind you", "to your left"… relative to where the camera looks. */
+  private sideOf(p: THREE.Vector3) {
+    const a = Math.atan2(p.x - this.pos.x, p.z - this.pos.z) - this.camYaw;
+    const r = ((a % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2) - Math.PI; // 0 = behind (camera side)
+    if (Math.abs(r) < Math.PI / 4) return "behind you";
+    if (Math.abs(r) > (Math.PI * 3) / 4) return "ahead";
+    return r > 0 ? "to your left" : "to your right";
   }
 
   hailTaxi() {
@@ -1045,7 +1207,7 @@ export class World {
       p.z = g.position.z - nx * sin + nz * cos;
     }
     // People: nobody walks through anybody.
-    for (const o of this.life?.peoplePositions() ?? []) {
+    for (const o of [...(this.life?.peoplePositions() ?? []), ...(this.family?.people.map((f) => ({ x: f.pos.x, z: f.pos.z })) ?? [])]) {
       const dx = p.x - o.x, dz = p.z - o.z;
       const d = Math.hypot(dx, dz), min = r + 0.28;
       if (d > 0.0001 && d < min) {
@@ -1195,6 +1357,7 @@ export class World {
         this.life.syncNpcs(gd.weekdayIndex, gd.hour, this.tiers);
       }
       this.life.update(dt, t, this.pos, night > 0.55, this.camera);
+      this.animateFamily(dt, t);
       if (this.life.hailedTaxi) {
         const c = this.life.hailedTaxi;
         if (c.speed < 0.3 && c.rig.group.position.distanceTo(this.pos) < 9) {
@@ -1279,6 +1442,7 @@ export class World {
         }
       }
       if (!best && this.life.taxiNear(this.pos)) best = { kind: "taxi", id: "taxi", label: "Stop this taxi" };
+      if (this.family && this.family.spot.distanceTo(new THREE.Vector3(this.pos.x, 0, this.pos.z)) < 3.2) best = { kind: "family", id: "family", label: "Your family" };
       // Your own car: get in and drive.
       for (const c of this.parkedCars) {
         if (c.rig.group.position.distanceTo(this.pos) < Math.max(2.6, c.rig.length / 2 + 1)) best = { kind: "car", id: c.type, label: VEHICLES[c.type]?.name ?? "car" };

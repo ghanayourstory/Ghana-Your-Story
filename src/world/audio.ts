@@ -165,8 +165,12 @@ export class CityAudio {
     void dt;
   }
 
+  /** Told when a nearby sound source starts (for captions). */
+  onVoice: ((spot: SoundSpot) => void) | null = null;
+
   private makeVoice(spot: SoundSpot, beds: { crowd: number }): Voice {
     const ctx = this.ctx!;
+    this.onVoice?.(spot);
     const panner = ctx.createPanner();
     panner.panningModel = "HRTF";
     panner.distanceModel = "inverse";

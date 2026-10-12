@@ -1,5 +1,5 @@
 import { BUILD_VERSION } from "../version.ts";
-import { getReduceMotion, getUiScale, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
+import { getCaptions, getReduceMotion, getUiScale, setCaptions, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
 import { FamilyApp } from "./family.tsx";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useGame } from "../store.tsx";
@@ -229,8 +229,8 @@ function HustleApp() {
                 {b.neglected && <div className="notice warn" style={{ marginTop: 6 }}>Staff haven't seen you in a week. Visit {DISTRICTS[t.district].name}.</div>}
                 <div className="row" style={{ marginTop: 8 }}>
                   <button className="btn sm green" disabled={busy || b.till <= 0} onClick={() => act({ type: "biz_collect", businessId: b.id })}>Collect</button>
-                  {b.upgradeCost !== null && <button className="btn sm primary" disabled={busy || !!b.upgradingUntil} onClick={() => act({ type: "biz_upgrade", businessId: b.id })}>Upgrade · {money(b.upgradeCost, true)}</button>}
-                  <ConfirmButton className="btn sm ghost" disabled={busy} ask={`Sell for ${money(Math.round(b.value * 0.85), true)}?`} onConfirm={() => act({ type: "biz_sell", businessId: b.id })}>Sell</ConfirmButton>
+                  {b.upgradeCost !== null && <ConfirmButton className="btn sm primary" disabled={busy || !!b.upgradingUntil} ask="Upgrade this business?" details={{ cost: money(b.upgradeCost), time: "Takes a few days; the business keeps trading", changes: "More customers and a bigger daily till, with higher running costs.", undo: "No, but the upgrade adds to what the business sells for." }} onConfirm={() => act({ type: "biz_upgrade", businessId: b.id })}>Upgrade · {money(b.upgradeCost, true)}</ConfirmButton>}
+                  <ConfirmButton className="btn sm ghost" disabled={busy} ask="Sell this business?" details={{ cost: `You get about ${money(Math.round(b.value * 0.85))}`, changes: "Its till and staff go with it; no more daily takings.", undo: "No. Buying again costs the full price and starts at level 1." }} onConfirm={() => act({ type: "biz_sell", businessId: b.id })}>Sell</ConfirmButton>
                 </div>
               </div>
             );
@@ -252,7 +252,7 @@ function HustleApp() {
               {!repOk && <div className="tiny bad">Needs {t.requiresRep} standing</div>}
               {!unlockOk && <div className="tiny bad">Needs a trade certificate ({t.requiresUnlock?.replace("cert_", "")})</div>}
             </div>
-            <button className="btn primary sm" disabled={busy || !visited || !repOk || !unlockOk} onClick={() => act({ type: "biz_buy", bizType: t.id })}>{money(t.price * 100, true)}</button>
+            <ConfirmButton className="btn primary sm" disabled={busy || !visited || !repOk || !unlockOk} ask={`Buy ${t.name}?`} details={{ where: DISTRICTS[t.district].name, cost: money(t.price * 100), changes: "Staff run it every day and the takings build up in its till. It earns more when you show up and collect in person; neglect it and sales slip.", undo: "Sell it any time for about 85% of its value." }} onConfirm={() => act({ type: "biz_buy", bizType: t.id })}>{money(t.price * 100, true)}</ConfirmButton>
           </div>
         );
       })}
@@ -278,7 +278,7 @@ function WorkApp() {
           <div className="kv"><span>Paid</span><span>{JOBS[job.id].salaried ? "Monthly on the 28th" : "Cash, every shift"}</span></div>
           {state.money.payroll > 0 && <div className="kv"><span>Salary earned this month</span><b className="good">{money(state.money.payroll)}</b></div>}
           {job.nextRankAt && <><div className="tiny muted" style={{ marginTop: 6 }}>Promotion: {job.shifts}/{job.nextRankAt} shifts</div><Bar value={(job.shifts / job.nextRankAt) * 100} color="#7c83ff" /></>}
-          <div style={{ marginTop: 8 }}><ConfirmButton className="btn ghost sm" disabled={busy} ask="Quit this job?" onConfirm={() => act({ type: "job_quit" })}>Quit</ConfirmButton></div>
+          <div style={{ marginTop: 8 }}><ConfirmButton className="btn ghost sm" disabled={busy} ask="Quit this job?" details={{ changes: "No more shifts or pay from here; your rank and promotion progress are lost.", undo: "You can apply again if they're hiring, but you start from the bottom." }} onConfirm={() => act({ type: "job_quit" })}>Quit</ConfirmButton></div>
         </div>
       ) : <div className="notice warn">No job yet. Walk into a workplace to apply — Kaneshie Market and the trotro station take anyone.</div>}
       <h3 className="muted small" style={{ marginTop: 14 }}>Your skills</h3>
@@ -385,7 +385,7 @@ function MoneyApp() {
             {Object.values(TBILLS).map((t) => (
               <div className="list-item" key={t.id}>
                 <div className="grow"><b>{t.name}</b><div className="tiny muted">{(t.rate * 100).toFixed(1)}% p.a. · min {money(t.min * 100)} · returns {money(minor + Math.floor((minor * t.rate * t.days) / 365))}</div></div>
-                <button className="btn primary sm" disabled={busy || minor < t.min * 100} onClick={() => act({ type: "tbill_buy", product: t.id, amount: minor })}>Buy</button>
+                <ConfirmButton className="btn primary sm" disabled={busy || minor < t.min * 100} ask={`Buy a ${t.name}?`} details={{ cost: `${money(minor)} from your bank`, time: `${t.days} days`, changes: `You get ${money(minor + Math.floor((minor * t.rate * t.days) / 365))} back at maturity. Game money only.`, undo: "No early exit: the money is locked until it matures." }} onConfirm={() => act({ type: "tbill_buy", product: t.id, amount: minor })}>Buy</ConfirmButton>
               </div>
             ))}
           </div>
@@ -404,7 +404,7 @@ function MoneyApp() {
           <div className="tiny muted">10% of the balance is debited from your bank on the 1st. Missed instalments hurt your credit score and standing.</div>
           <div className="row"><input className="input num" inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} /><span className="muted">GH₵</span></div>
           <div className="row">
-            <button className="btn primary grow" disabled={busy || minor <= 0} onClick={() => act({ type: "loan_take", amount: minor })}>Borrow</button>
+            <ConfirmButton className="btn primary grow" disabled={busy || minor <= 0} ask={`Borrow ${money(minor)}?`} details={{ cost: `Interest about ${(m.loanRate * 100).toFixed(0)}% a year, plus an arrangement fee`, changes: "The money lands in your bank. 10% of what you owe is debited on the 1st of each month; missing it hurts your credit score and standing.", undo: "Repay early at any time with no penalty." }} onConfirm={() => act({ type: "loan_take", amount: minor })}>Borrow</ConfirmButton>
             <button className="btn green grow" disabled={busy || minor <= 0 || m.loan <= 0} onClick={() => act({ type: "loan_repay", amount: minor })}>Repay</button>
           </div>
         </div>
@@ -584,7 +584,7 @@ function PropertyApp({ minute }: { minute: number }) {
               {!repOk && <div className="tiny bad">Needs {p.requiresRep} standing</div>}
               {!unlockOk && <div className="tiny bad">Family land — an elder must speak for you</div>}
             </div>
-            <button className="btn primary sm" disabled={busy || ownedTypes.has(p.id) || !visited || !repOk || !unlockOk} onClick={() => act({ type: "plot_buy", plotId: p.id })}>{ownedTypes.has(p.id) ? "Yours" : money(price * 100, true)}</button>
+            <ConfirmButton className="btn primary sm" disabled={busy || ownedTypes.has(p.id) || !visited || !repOk || !unlockOk} ask={`Buy ${p.name}?`} details={{ where: DISTRICTS[p.district].name, cost: money(price * 100), changes: p.ready ? "It comes finished: move in or let it to tenants straight away." : "The land is yours. Plan a building, then pay for it stage by stage (foundation, walls, roof, finishing) as it goes up.", undo: "Land and buildings can't be sold back in this version; they count towards your net worth and can earn rent." }} onConfirm={() => act({ type: "plot_buy", plotId: p.id })}>{ownedTypes.has(p.id) ? "Yours" : money(price * 100, true)}</ConfirmButton>
           </div>
         );
       })}
@@ -599,7 +599,7 @@ function PropertyApp({ minute }: { minute: number }) {
               <div className="tiny muted">{r.blurb}</div>
               {!visited && <div className="tiny bad">Visit {DISTRICTS[r.district].name} first</div>}
             </div>
-            {here ? <span className="pill green">Home</span> : <ConfirmButton className="btn sm primary" disabled={busy || !visited} ask={`Pay ${money(r.rent * Math.max(1, r.deposit) * 100, true)}?`} onConfirm={() => act({ type: "rent_move", rentalId: r.id })}>Move</ConfirmButton>}
+            {here ? <span className="pill green">Home</span> : <ConfirmButton className="btn sm primary" disabled={busy || !visited} ask={`Move to ${r.name}?`} details={{ where: DISTRICTS[r.district].name, cost: `${money(r.rent * Math.max(1, r.deposit) * 100)} now (${Math.max(1, r.deposit)} month${Math.max(1, r.deposit) > 1 ? "s" : ""} advance), then ${money(r.rent * 100)}/month plus ~${money(r.utilities * 100)} utilities`, changes: "This becomes home: where you sleep, bath and cook, and what you can do there.", undo: "You can move again, but months you've already paid here are lost when you leave." }} onConfirm={() => act({ type: "rent_move", rentalId: r.id })}>Move</ConfirmButton>}
           </div>
         );
       })}
@@ -648,7 +648,7 @@ function BuildingCard({ b, plotPrice, minute }: { b: GameState["buildings"][numb
           <div className="seg" style={{ marginTop: 6 }}>
             {(d.kind === "home" ? ["live", "rent", "vacant"] : ["rent", "vacant"]).map((u) => <button key={u} className={b.use === u ? "on" : ""} disabled={busy} onClick={() => b.use !== u && act({ type: "building_use", buildingId: b.id, use: u })}>{{ live: "Live here", rent: "Let to tenants", vacant: "Vacant" }[u]}</button>)}
           </div>
-          {b.upgrade && <button className="btn sm" style={{ marginTop: 8 }} disabled={busy} onClick={() => act({ type: "building_upgrade", buildingId: b.id })}>Upgrade to {QUALITY[b.upgrade.to].label} · {money(b.upgrade.cost, true)} · {b.upgrade.days}d</button>}
+          {b.upgrade && <ConfirmButton className="btn sm" disabled={busy} ask={`Upgrade to ${QUALITY[b.upgrade.to].label}?`} details={{ cost: money(b.upgrade.cost), time: `${b.upgrade.days} game days`, changes: "Better finishes: more comfort, higher rent and value.", undo: "No, but it adds to the building's value." }} onConfirm={() => act({ type: "building_upgrade", buildingId: b.id })}>Upgrade to {QUALITY[b.upgrade.to].label} · {money(b.upgrade.cost, true)} · {b.upgrade.days}d</ConfirmButton>}
         </>
       )}
       <div className="tiny muted" style={{ marginTop: 6 }}>Spent so far {money(b.spent, true)} · {b.stage}/{total} stages</div>
@@ -794,6 +794,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
 function A11ySettings() {
   const [scale, setScale] = useState<UiScale>(getUiScale());
   const [reduce, setReduce] = useState(getReduceMotion());
+  const [caps, setCaps] = useState(getCaptions());
   return (
     <div className="card col" style={{ marginTop: 10 }}>
       <b>Accessibility</b>
@@ -805,6 +806,12 @@ function A11ySettings() {
         <button className={reduce ? "on" : ""} onClick={() => { setReduceMotion(true); setReduce(true); }}>Reduced</button>
       </div>
       <div className="tiny muted">Reduced motion turns off menu and screen animations.</div>
+      <div className="tiny muted">Sound captions</div>
+      <div className="seg">
+        <button className={!caps ? "on" : ""} onClick={() => { setCaptions(false); setCaps(false); }}>Off</button>
+        <button className={caps ? "on" : ""} onClick={() => { setCaptions(true); setCaps(true); }}>On</button>
+      </div>
+      <div className="tiny muted">Short text for horns, music, markets and rain, with which side they come from.</div>
     </div>
   );
 }

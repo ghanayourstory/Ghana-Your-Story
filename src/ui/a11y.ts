@@ -16,5 +16,9 @@ export function applyA11y(scale = getUiScale(), reduce = getReduceMotion()) {
   document.documentElement.style.setProperty("--ui-scale", String(scale));
   document.documentElement.classList.toggle("reduce-motion", reduce);
 }
+export function getCaptions(): boolean {
+  return read("sika.captions") === "1";
+}
+export function setCaptions(on: boolean) { write("sika.captions", on ? "1" : "0"); }
 export function setUiScale(s: UiScale) { write("sika.uiScale", String(s)); applyA11y(); }
 export function setReduceMotion(on: boolean) { write("sika.reduceMotion", on ? "1" : "0"); applyA11y(); }

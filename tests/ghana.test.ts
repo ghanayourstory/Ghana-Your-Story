@@ -6,6 +6,7 @@ import { REGIONS, TOWNS, routeBetween } from "../shared/ghana.ts";
 import { intercityQuote } from "../shared/cities.ts";
 import { DISTRICTS, PLACES, SERVICES } from "../shared/world.ts";
 import { SITES } from "../shared/regional.ts";
+import { VEHICLES } from "../shared/life.ts";
 import { MINUTES_PER_DAY, toGameDate } from "../shared/calendar.ts";
 import { buildState, createPlayer, loadPlayer, type Ctx } from "../server/engine.ts";
 import { districtsIn } from "../shared/world.ts";
@@ -374,6 +375,29 @@ test("family: a hometown family with local names; call, send MoMo for a request,
   const r = act(ctx, id, { type: "travel", to: districtsIn("tamale")[0], mode: "bus" });
   assert.ok(r.ok, r.error);
   assert.ok(act(ctx, id, { type: "family_visit", memberId: mum.id }).ok);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("police checkpoint: no licence means a fine, a licence means a safe journey, and checks are rate-limited", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 9);
+  assert.equal(act(ctx, id, { type: "police_check", vehicleType: "sedan_used" }).code, "no_vehicle");
+  // Give the player a car directly (dealers are tested elsewhere).
+  ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, 'compact', 9000000, 0)", id);
+  const lic = VEHICLES.compact.licence!;
+  const cash0 = bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo");
+  const r = act(ctx, id, { type: "police_check", vehicleType: "compact" });
+  assert.ok(r.ok, r.error);
+  assert.equal((r.data as { fined: boolean }).fined, true);
+  assert.equal(cash0 - (bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo")), 30000);
+  // Again straight away: no second stop.
+  assert.equal((act(ctx, id, { type: "police_check", vehicleType: "compact" }).data as { stopped: boolean }).stopped, false);
+  // With a licence, later: waved on.
+  const p = loadPlayer(ctx.db, id);
+  ctx.db.run("UPDATE players SET unlocks = ? WHERE id = ?", JSON.stringify([...JSON.parse(p.unlocks), lic]), id);
+  assert.ok(act(ctx, id, { type: "sleep", hours: 3 }).ok);
+  const r2 = act(ctx, id, { type: "police_check", vehicleType: "compact" });
+  assert.equal((r2.data as { fined: boolean }).fined, false);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
 

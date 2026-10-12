@@ -151,7 +151,7 @@ export function StorePanel({ place, open }: { place: Place; open: boolean }) {
               <div className="tiny muted">{it.blurb}</div>
               {it.effects && <EffectsPreview effects={it.effects} />}
             </div>
-            <button className="btn primary sm" disabled={busy || !open || !!full} onClick={() => act({ type: "shop_buy", placeId: place.id, itemId: it.id })}>{full ? "Owned" : "Buy"}</button>
+            <ConfirmButton className="btn primary sm" disabled={busy || !open || !!full} ask={`Buy ${it.name}?`} details={{ where: place.name, cost: money(price * 100), changes: `It goes in your home${it.comfort ? ` (+${it.comfort} comfort)` : ""} and shows up in 3D.`, undo: `Sell it second-hand any time for about ${money(Math.round(price * 40))} (40%).` }} onConfirm={() => act({ type: "shop_buy", placeId: place.id, itemId: it.id })}>{full ? "Owned" : "Buy"}</ConfirmButton>
           </div>
         );
       })}
@@ -183,7 +183,7 @@ export function DealerPanel({ place, open }: { place: Place; open: boolean }) {
               <div className="tiny muted">{v.blurb}</div>
               {lic && <div className="tiny bad">Needs {v.licence === "licence_a" ? "a riding (A)" : "a driving (B)"} licence to drive</div>}
             </div>
-            <ConfirmButton className="btn primary sm" disabled={busy || !open || owned >= max || !repOk} ask={`Pay ${money(v.price * 100, true)}?`} onConfirm={() => act({ type: "vehicle_buy", vehicleId: v.id, placeId: place.id })}>{owned >= max ? "Owned" : "Buy"}</ConfirmButton>
+            <ConfirmButton className="btn primary sm" disabled={busy || !open || owned >= max || !repOk} ask={`Buy the ${v.name}?`} details={{ where: place.name, cost: money(v.price * 100), changes: `It's yours: drive it yourself, travel by car${v.workPay ? ", or put it on work-and-pay for daily income" : ""}. Fuel is paid per trip.${lic ? " You'll need a licence before you can drive it." : ""}`, undo: "Sell it back any time; it loses value with age and wear (about 85% of its current value)." }} onConfirm={() => act({ type: "vehicle_buy", vehicleId: v.id, placeId: place.id })}>{owned >= max ? "Owned" : "Buy"}</ConfirmButton>
           </div>
         );
       })}
@@ -213,7 +213,7 @@ export function CoursesPanel({ place, open }: { place: Place; open: boolean }) {
               {mine && <div className="tiny good">{mine.status === "done" ? "✓ Certificate earned" : `Progress ${mine.sessions}/${c.sessions}${doneToday ? " · next session tomorrow" : ""}`}</div>}
             </div>
             {!mine ? (
-              <ConfirmButton className="btn sm primary" disabled={busy || !open} ask={`Pay ${money(c.fee * 100)} fees?`} onConfirm={() => act({ type: "course_enrol", courseId: c.id, placeId: place.id })}>Enrol</ConfirmButton>
+              <ConfirmButton className="btn sm primary" disabled={busy || !open} ask={`Enrol in ${c.name}?`} details={{ where: place.name, cost: money(c.fee * 100), time: `${c.sessions} sessions, one a day`, changes: "Attend sessions here to earn the certificate and the skills and jobs it unlocks.", undo: "Fees aren't refunded. You can stop attending at any time." }} onConfirm={() => act({ type: "course_enrol", courseId: c.id, placeId: place.id })}>Enrol</ConfirmButton>
             ) : mine.status === "enrolled" ? (
               <button className="btn sm primary" disabled={busy || !open || !inHours || doneToday} onClick={() => act({ type: "course_attend", courseId: c.id, placeId: place.id })}>Attend</button>
             ) : <span className="pill green">Done</span>}
@@ -345,7 +345,7 @@ export function FarmApp() {
             <div className="tiny muted">{l.blurb}</div>
             {here !== l.district && <div className="tiny bad">Buy in person at {DISTRICTS[l.district].name}</div>}
           </div>
-          <ConfirmButton className="btn primary sm" disabled={busy || owned.has(l.id) || here !== l.district} ask={`Pay ${money(l.price * 100, true)}?`} onConfirm={() => act({ type: "farm_buy", farmId: l.id })}>{owned.has(l.id) ? "Yours" : money(l.price * 100, true)}</ConfirmButton>
+          <ConfirmButton className="btn primary sm" disabled={busy || owned.has(l.id) || here !== l.district} ask={`Buy ${l.name}?`} details={{ where: DISTRICTS[l.district].name, cost: money(l.price * 100), changes: "You can plant and harvest here in season; harvests sell at the market.", undo: "Farmland can't be sold back in this version. It counts towards your net worth." }} onConfirm={() => act({ type: "farm_buy", farmId: l.id })}>{owned.has(l.id) ? "Yours" : money(l.price * 100, true)}</ConfirmButton>
         </div>
       ))}
     </>
@@ -368,7 +368,7 @@ export function GarageApp() {
             <div className="tiny muted">Worth ~{money(v.value, true)} · condition {v.condition}%{v.status === "workpay" ? " · on work-and-pay" : ""}</div>
             <div className="row" style={{ marginTop: 8 }}>
               {def.workPay && <button className="btn sm" disabled={busy} onClick={() => act({ type: "vehicle_workpay", vehicleRowId: v.id, on: v.status !== "workpay" })}>{v.status === "workpay" ? "Take it back" : `Work-and-pay (~${money(def.workPay * 100)}/day)`}</button>}
-              <ConfirmButton className="btn sm danger" disabled={busy} ask={`Sell for ~${money(Math.round(v.value * 0.85), true)}?`} onConfirm={() => act({ type: "vehicle_sell", vehicleRowId: v.id })}>Sell</ConfirmButton>
+              <ConfirmButton className="btn sm danger" disabled={busy} ask="Sell this vehicle?" details={{ cost: `You get about ${money(Math.round(v.value * 0.85))}`, changes: "The money goes to your bank and the vehicle is gone (and any work-and-pay driver with it).", undo: "No. You'd have to buy one again at full price." }} onConfirm={() => act({ type: "vehicle_sell", vehicleRowId: v.id })}>Sell</ConfirmButton>
             </div>
           </div>
         );
@@ -378,7 +378,7 @@ export function GarageApp() {
       {state.items.map((i) => (
         <div className="list-item" key={i.id}>
           <div className="grow"><b>{SLOT_ICON[ITEMS[i.itemId]?.slot] ?? ""} {ITEMS[i.itemId]?.name}</b><div className="tiny muted">Paid {money(i.price)}</div></div>
-          <ConfirmButton className="btn sm" disabled={busy} ask={`Sell second-hand for ${money(Math.round(i.price * 0.4))}?`} onConfirm={() => act({ type: "item_sell", itemRowId: i.id })}>Sell</ConfirmButton>
+          <ConfirmButton className="btn sm" disabled={busy} ask={`Sell ${ITEMS[i.itemId]?.name ?? "this"}?`} details={{ cost: `You get ${money(Math.round(i.price * 0.4))} (40%)`, changes: "It leaves your home; comfort may drop.", undo: "Only by buying a new one at full price." }} onConfirm={() => act({ type: "item_sell", itemRowId: i.id })}>Sell</ConfirmButton>
         </div>
       ))}
     </>

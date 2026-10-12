@@ -66,6 +66,7 @@ export interface PlayerRow {
   needs_pace: number;
   hometown: string;
   helped_day: number;
+  last_police_min: number;
   reputation: number;
   work: number;
   fitness: number;
@@ -125,11 +126,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -847,6 +848,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "trade_buy": return actTradeBuy(ctx, p, a, fb);
     case "momo_move": return actMomoMove(ctx, p, a, fb);
     case "family_call": return actFamilyCall(ctx, p, a, fb);
+    case "police_check": return actPoliceCheck(ctx, p, a, fb);
     case "family_send": return actFamilySend(ctx, p, a, fb);
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
@@ -2173,6 +2175,26 @@ function familyDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   }
 }
 
+/** A fictional fine for driving without the right licence (game money). */
+export const NO_LICENCE_FINE = 300;
+
+/** A police checkpoint while you drive: licence please. Rate-limited so it can't be farmed or spammed. */
+function actPoliceCheck(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const t = String(a.vehicleType);
+  const v = VEHICLES[t];
+  if (!v || !ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND type = ? AND status = 'personal'", p.id, t)) throw new GameError("no_vehicle", "That isn't your vehicle.");
+  if (p.game_min - p.last_police_min < 120) return { stopped: false };
+  p.last_police_min = p.game_min;
+  advance(ctx, p, 10, fb, { quiet: true });
+  if (!v.licence || hasUnlock(p, v.licence)) {
+    fb.add(`👮 Police checkpoint. The officer looks at your licence, waves you on: "Safe journey."`, [], "info");
+    return { stopped: true, fined: false };
+  }
+  const { unpaid, changes } = chargeFlexible(ctx, p, minor(NO_LICENCE_FINE), "fine", `Fine: driving without a ${v.licence === "licence_a" ? "riding (A)" : "driving (B)"} licence`);
+  applyEffects(p, { reputation: -1 }, fb, `👮 Police checkpoint. No ${v.licence === "licence_a" ? "riding" : "driving"} licence: ${unpaid ? "you can't pay the full fine, so you get a stern warning and a note in the book" : `fined ${formatMoney(minor(NO_LICENCE_FINE))}`}. A driving school can sort out the licence.`, changes);
+  return { stopped: true, fined: true };
+}
+
 function actSettings(p: PlayerRow, a: Action, fb: Feedback) {
   if (a.needsPace !== undefined) {
     const v = Number(a.needsPace);
@@ -2321,7 +2343,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       daily: dailyView(ctx, p),
       settings: { needsPace: p.needs_pace },
       hometown: p.hometown,
-      family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
+      family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
       stock: stockOf(db, p).map((r) => ({ id: r.good_id, qty: r.qty, avgCost: Math.round(r.cost / r.qty) })),
       carryCap: carryCapacity(!!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)),
       tradeSold: Object.fromEntries(db.all<{ place_id: string; good_id: string; sold: number }>("SELECT place_id, good_id, sold FROM trade_sales WHERE player_id = ? AND day = ?", p.id, dayOf(p.game_min)).map((r) => [`${r.place_id}:${r.good_id}`, r.sold])),

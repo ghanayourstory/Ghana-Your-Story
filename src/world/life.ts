@@ -135,6 +135,8 @@ export class CityLife {
   private rnd = mulberry32(42);
   onHonk: ((pos: THREE.Vector3) => void) | null = null;
   hailedTaxi: Car | null = null;
+  /** Length of the car you're driving (0 when on foot), so traffic gives it room. */
+  playerCarLength = 0;
 
   constructor(private d: DistrictScene) {
     const coastal = DISTRICTS[d.id].style === "coastal";
@@ -356,7 +358,8 @@ export class CityLife {
         const pAlong = lane.axis === "x" ? player.x : player.z;
         const pAcross = lane.axis === "x" ? player.z : player.x;
         const pd = (pAlong - c.s) * lane.dir;
-        if (Math.abs(pAcross - lane.offset) < 1.8 && pd > 0 && pd < c.rig.length / 2 + 8) {
+        const room = this.playerCarLength ? this.playerCarLength / 2 + 3 : 0;
+        if (Math.abs(pAcross - lane.offset) < (this.playerCarLength ? 2.3 : 1.8) && pd > 0 && pd < c.rig.length / 2 + 8 + room) {
           target = 0;
           c.honk -= dt;
           if (c.honk <= 0) {

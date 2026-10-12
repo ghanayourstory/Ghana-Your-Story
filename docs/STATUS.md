@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v11. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v12. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -32,8 +32,8 @@ Last checked: game build v11. This is the Stage 0 "discovery" note from the foun
 | Cash, bank/mobile wallet and a ledger | ✅ cash, MoMo wallet and bank, all in the ledger |
 | Starter property with an upgrade/construction stage | ✅ |
 | Server-backed save, relogin, second device | ❌ **on the playable link saves live in one browser.** The server exists and is tested, but it isn't hosted. |
-| Every action answers what/where/how long/cost/what changes | ⚠️ most actions show cost and time; not all show "what changes / can I undo" |
-| Help, settings, accessibility | ✅ graphics, sound, needs speed, interface size, reduced motion; ⚠️ no captions yet |
+| Every action answers what/where/how long/cost/what changes | ✅ big decisions show time, cost, what changes and whether it can be undone before you confirm |
+| Help, settings, accessibility | ✅ graphics, sound, needs speed, interface size, reduced motion, sound captions |
 
 ## Biggest risks
 
@@ -45,7 +45,6 @@ Last checked: game build v11. This is the Stage 0 "discovery" note from the foun
 ## Next slices, in order
 
 1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner: "we will handle hosting later".)*
-2. "What changes / can I undo" on every confirm button.
-3. Family members you can meet in the 3D world when you visit, not only through the phone.
-4. Traffic that reacts to your car: braking, honking, police stops for driving without a licence.
-5. Captions for important sounds; colour-safe need bars.
+2. Stage 2, "make the city feel inhabited": more employers and job paths, school and clinic visits, weekly routines for NPCs, routine expenses (electricity prepaid, water, data).
+3. Driving school lessons on the road (practical test), fuel stations and refuelling.
+4. Colour-safe need bars (patterns or icons as well as colour).
