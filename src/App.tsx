@@ -87,7 +87,7 @@ type Panel =
   | { kind: "travel"; ctx: "stop" | "taxi" | "phone"; scope?: "city" | "ghana" }
   | { kind: "phone"; app?: string }
   | { kind: "event" }
-  | { kind: "bed" }
+  | { kind: "bed"; focus?: string }
   | null;
 
 function Game() {
@@ -200,7 +200,8 @@ function Game() {
       case "npc": return setPanel({ kind: "talk", id: nearby.id });
       case "place": return setPanel({ kind: "place", id: nearby.id });
       case "stop": return setPanel({ kind: "travel", ctx: "stop" });
-      case "home": return world.enterHome(state.player.home.comfort, state.items.map((i) => i.itemId));
+      case "home": return world.enterHome(state.player.home.spec, state.items.map((i) => i.itemId));
+      case "homespot": return setPanel({ kind: "bed", focus: nearby.id });
       case "plot": return setPanel({ kind: "phone", app: "property" });
       case "taxi":
         if (world.hailTaxi()) toast({ text: "✋ You wave down a taxi. It's pulling over…", changes: [], tone: "info" });
@@ -233,7 +234,7 @@ function Game() {
       {panel?.kind === "travel" && <TravelSheet context={panel.ctx} initialScope={panel.scope} world={world} onClose={() => setPanel(null)} />}
       {panel?.kind === "phone" && <Phone world={world} initialApp={panel.app} onClose={() => setPanel(null)} onTravel={() => setPanel({ kind: "travel", ctx: "phone" })} quality={quality} setQuality={setQuality} />}
       {panel?.kind === "event" && <EventModal onClose={() => setPanel(null)} />}
-      {panel?.kind === "bed" && <HomeSheet world={world} onClose={() => setPanel(null)} />}
+      {panel?.kind === "bed" && <HomeSheet world={world} focus={panel.focus} onClose={() => setPanel(null)} />}
       {news && !intro && (
         <div className="modal-wrap" onClick={closeNews}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>

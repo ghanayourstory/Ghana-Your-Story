@@ -20,6 +20,7 @@ import {
   type Quality,
 } from "../shared/economy.ts";
 import { TOWN_BY_ID } from "../shared/ghana.ts";
+import { HOME_ACTIVITIES, HOME_SPECS, tierForHome } from "../shared/homes.ts";
 import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
 import {
   COURSES, CROPS, DEALER_STOCK, FARMLANDS, FARM_HARVEST_WINDOW_DAYS, ITEMS, POST_TYPES, furnishingScore, influencerDaily, stockFor,
@@ -791,6 +792,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "shop_buy": return actShopBuy(ctx, p, a, fb);
     case "item_sell": return actItemSell(ctx, p, a, fb);
     case "cook": return actCook(ctx, p, fb);
+    case "home_activity": return actHomeActivity(ctx, p, a, fb);
     case "farm_buy": return actFarmBuy(ctx, p, a, fb);
     case "farm_plant": return actFarmPlant(ctx, p, a, fb);
     case "farm_harvest": return actFarmHarvest(ctx, p, a, fb);
@@ -1319,7 +1321,15 @@ function actPlotBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (ctx.db.get("SELECT 1 FROM plots WHERE player_id = ? AND plot_type = ?", p.id, plot.id)) throw new GameError("already", "You already own this plot");
   const price = minor(plot.price * (hasUnlock(p, "yaa_discount") ? 0.9 : 1));
   const money = chargeStrict(ctx, p, price, "land", `Land: ${plot.name}`, true);
-  ctx.db.run("INSERT INTO plots (player_id, plot_type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, plot.id, price, p.game_min);
+  const ins = ctx.db.run("INSERT INTO plots (player_id, plot_type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, plot.id, price, p.game_min);
+  if (plot.ready) {
+    // Turnkey homes: the building comes finished. Its value is part of the price, so the land row carries a fair share.
+    const stages = stagePlan(plot.ready.design, plot.ready.quality).length;
+    const buildShare = Math.min(price * 0.7, minor(DESIGNS[plot.ready.design].baseCost * QUALITY[plot.ready.quality].cost));
+    ctx.db.run("UPDATE plots SET price = ? WHERE id = ?", price - Math.round(buildShare), ins.lastInsertRowid);
+    ctx.db.run("INSERT INTO buildings (player_id, plot_id, design, quality, stage, status, spent, completed_min) VALUES (?, ?, ?, ?, ?, 'complete', ?, ?)",
+      p.id, ins.lastInsertRowid, plot.ready.design, plot.ready.quality, stages, Math.round(buildShare), p.game_min);
+  }
   rememberAcrossDistrict(ctx.db, p, plot.district, `you bought land here in ${DISTRICTS[plot.district].name}`);
   applyEffects(p, { reputation: 3, social: 5 }, fb, `You bought ${plot.name}. The indenture is registered in your name.`, money);
   return null;
@@ -1549,6 +1559,26 @@ function actItemSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   ctx.db.run("DELETE FROM items WHERE id = ?", row.id);
   const money = credit(ctx, p, "cash", value, "item_sale", `Sold ${ITEMS[row.item_id].name} (second-hand)`, `isell:${row.id}`);
   fb.add(`Sold your ${ITEMS[row.item_id].name} to a second-hand buyer for ${formatMoney(value)}.`, money, "info");
+  return null;
+}
+
+export function homeSpecFor(db: Db, p: PlayerRow) {
+  let ref = p.home_ref;
+  if (p.home_kind === "owned") ref = db.get<{ design: string }>("SELECT design FROM buildings WHERE id = ?", Number(p.home_ref))?.design ?? "bungalow";
+  return HOME_SPECS[tierForHome(p.home_kind, ref)];
+}
+
+function actHomeActivity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("wrong_place", "You're not at home.");
+  const act = HOME_ACTIVITIES.find((x) => x.id === a.activity);
+  if (!act) throw new GameError("bad_activity", "Unknown activity");
+  const spec = homeSpecFor(ctx.db, p);
+  const items = ownedItems(ctx.db, p).map((i) => i.item_id);
+  if (!act.when(spec, items)) throw new GameError("not_here", `You can't do that in a ${spec.label.toLowerCase()}.`);
+  if ((act.effects.energy ?? 0) < -5) requireAwake(p, 10, act.verb.toLowerCase());
+  const money = act.cost ? chargeStrict(ctx, p, minor(act.cost), "spend", act.label) : [];
+  advance(ctx, p, act.minutes, fb, { quiet: true });
+  applyEffects(p, act.effects, fb, `${act.label}. ${act.note(spec)}`, money);
   return null;
 }
 
@@ -1890,7 +1920,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       skills: { work: round1(p.work), fitness: round1(p.fitness), charisma: round1(p.charisma), business: round1(p.business) },
       reputation: round1(p.reputation), creditScore: p.credit_score,
       job: p.job_id ? { id: p.job_id, rank: p.job_rank, rankTitle: RANK_TITLES[p.job_rank], shifts: p.job_shifts, nextRankAt: p.job_rank < MAX_RANK ? SHIFTS_PER_RANK * (p.job_rank + 1) : null, payPerShift: minor(rankPay(JOBS[p.job_id].pay, p.job_rank)) } : null,
-      home: { kind: p.home_kind, ref: p.home_ref, district: homeDistrict(db, p), comfort: homeComfort(db, p), rentCredit: p.rent_credit },
+      home: { kind: p.home_kind, ref: p.home_ref, district: homeDistrict(db, p), comfort: homeComfort(db, p), rentCredit: p.rent_credit, spec: homeSpecFor(db, p) },
       unlocks: list(p.unlocks), visited: list(p.visited), discovered: list(p.discovered), isTest: !!p.is_test,
       jobRequirements: Object.fromEntries(Object.keys(JOBS).map((j) => [j, jobRequirements(p, j)])),
     },

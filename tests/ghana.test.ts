@@ -215,3 +215,25 @@ test("offline single-player tester can be granted GH₵500M through the audited 
   const id2 = createPlayer(ctx2, { name: "Other", look: {}, background: "graduate" });
   assert.equal(perform(ctx2, id2, "grantdeniedkey01", { type: "dev_grant", amount: 100 }).code, "forbidden");
 });
+
+test("homes: compound rooms share a bathroom and cook on a coal pot; penthouses come finished", async () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 7);
+  assert.equal(act(ctx, id, { type: "home_activity", activity: "shower" }).code, "not_here");
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "shared_bath" }).ok);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "cook_coalpot" }).ok);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "neighbours" }).ok);
+  // Buy a turnkey penthouse and live there.
+  ctx.db.run("UPDATE players SET reputation = 30 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "travel", to: "east_legon", mode: "taxi" }).ok);
+  const r = act(ctx, id, { type: "plot_buy", plotId: "legon_penthouse_unit" });
+  assert.ok(r.ok, r.error);
+  const b = ctx.db.get<{ id: number; status: string; design: string }>("SELECT * FROM buildings WHERE player_id = ?", id)!;
+  assert.equal(b.status, "complete");
+  assert.equal(b.design, "penthouse_unit");
+  assert.ok(act(ctx, id, { type: "building_use", buildingId: b.id, use: "live" }).ok);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "shower" }).ok);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "terrace" }).ok);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).ok);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

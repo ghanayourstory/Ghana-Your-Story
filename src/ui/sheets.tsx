@@ -5,6 +5,7 @@ import { CITIES } from "../../shared/cities.ts";
 import { projectKm } from "../../shared/geo.ts";
 import { DISTRICTS, districtsIn, JOBS, PLACE_BY_ID, SERVICES, TRAVEL_MODES, isOpenAt, priceFor, rankPay, travelQuote, type DistrictId, type TravelMode } from "../../shared/world.ts";
 import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
+import { HOME_ACTIVITIES } from "../../shared/homes.ts";
 import { CoursesPanel, DealerPanel, HomeGoods, IntercityPanel, StorePanel, placeIsStore, serviceNote } from "./ghana.tsx";
 import { toGameDate } from "../../shared/calendar.ts";
 import type { World } from "../world/World.ts";
@@ -304,18 +305,58 @@ export function EventModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function HomeSheet({ onClose, world }: { onClose: () => void; world: World | null }) {
+const FOCUS: Record<string, string[]> = {
+  bath: ["shower", "shared_bath", "bucket_bath", "toilet_public"],
+  tv: ["watch_tv", "watch_football"],
+  kitchen: ["cook_kitchen", "cook_coalpot"],
+  coalpot: ["cook_coalpot", "cook_kitchen"],
+  neighbours: ["neighbours", "music"],
+  terrace: ["terrace", "music"],
+  pool: ["pool_swim"],
+};
+const BATH_LABEL: Record<string, string> = { none: "No bathroom — bucket baths, public toilet", shared: "Shared compound bathroom", private: "Private bathroom", ensuite: "Ensuite bathrooms" };
+const KITCHEN_LABEL: Record<string, string> = { coalpot: "No kitchen — coal pot outside", shared: "Shared kitchen", kitchenette: "Kitchenette", fitted: "Fitted kitchen", chef: "Chef's kitchen with island" };
+const WATER_LABEL: Record<string, string> = { public_tap: "Water from the public tap", compound_tap: "Compound standpipe", polytank: "Polytank & pump", running: "Running water" };
+
+export function HomeSheet({ onClose, world, focus }: { onClose: () => void; world: World | null; focus?: string }) {
   const { state, act, busy } = useGame();
   if (!state) return null;
   const comfort = state.player.home.comfort;
+  const spec = state.player.home.spec;
+  const items = state.items.map((i) => i.itemId);
+  const list = HOME_ACTIVITIES.filter((a) => (focus && FOCUS[focus] ? FOCUS[focus].includes(a.id) : true));
+  const showSleep = !focus || focus === "bed";
   return (
-    <Sheet title="🛏️ Your bed" sub={`Home comfort ${comfort} — better homes and furniture mean better sleep.`} onClose={onClose}>
-      <div className="col" style={{ marginTop: 12 }}>
-        <button className="btn primary block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 8 }); if (r.ok) onClose(); }}>Sleep 8 hours · ⚡ +{52 + comfort * 6}</button>
-        <button className="btn block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 2 }); if (r.ok) onClose(); }}>Nap 2 hours · ⚡ +{14 + comfort * 2}</button>
-        <button className="btn ghost block" onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
+    <Sheet title={`🏠 ${spec.label}`} sub={`${spec.blurb} Comfort ${comfort}.`} onClose={onClose}>
+      <div className="row" style={{ flexWrap: "wrap", gap: 6, marginTop: 10 }}>
+        <span className="pill">🚿 {BATH_LABEL[spec.bathroom]}</span>
+        <span className="pill">🍳 {KITCHEN_LABEL[spec.kitchen]}</span>
+        <span className="pill">💧 {WATER_LABEL[spec.water]}</span>
+        {spec.bedrooms > 0 && <span className="pill">🛏️ {spec.bedrooms} bedroom{spec.bedrooms > 1 ? "s" : ""}</span>}
       </div>
-      <HomeGoods />
+      {showSleep && (
+        <div className="col" style={{ marginTop: 12 }}>
+          <button className="btn primary block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 8 }); if (r.ok) onClose(); }}>Sleep 8 hours · ⚡ +{52 + comfort * 6}</button>
+          <button className="btn block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 2 }); if (r.ok) onClose(); }}>Nap 2 hours · ⚡ +{14 + comfort * 2}</button>
+        </div>
+      )}
+      <h3>{focus && focus !== "bed" ? "Here" : "At home"}</h3>
+      {list.map((a) => {
+        const ok = a.when(spec, items);
+        if (!ok && focus) return null;
+        return (
+          <div className="svc" key={a.id} style={{ opacity: ok ? 1 : 0.5 }}>
+            <div className="grow">
+              <div className="bold">{a.label}</div>
+              <div className="tiny muted">{ok ? a.note(spec) : "Not in this home"} · {a.minutes >= 60 ? `${Math.round(a.minutes / 6) / 10}h` : `${a.minutes}m`}{a.cost ? ` · ${money(a.cost * 100)}` : ""}</div>
+              <EffectsPreview effects={a.effects} />
+            </div>
+            <button className="btn primary sm" disabled={busy || !ok} onClick={() => act({ type: "home_activity", activity: a.id })}>{a.verb}</button>
+          </div>
+        );
+      })}
+      {!focus && <HomeGoods />}
+      <button className="btn ghost block" style={{ marginTop: 12 }} onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
     </Sheet>
   );
 }

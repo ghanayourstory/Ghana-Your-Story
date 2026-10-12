@@ -1,0 +1,22 @@
+<!doctype html><html><body style="margin:0"><canvas id="c" width="1100" height="700"></canvas>
+<script type="module">
+import * as THREE from "three";
+import { buildHomeInterior } from "/src/world/interiors.ts";
+import { HOME_SPECS } from "/shared/homes.ts";
+const q = new URLSearchParams(location.search);
+const spec = HOME_SPECS[q.get("t")];
+const items = (q.get("i") || "").split(",").filter(Boolean);
+const r = new THREE.WebGLRenderer({ canvas: document.getElementById("c"), antialias: true });
+r.toneMapping = THREE.ACESFilmicToneMapping; r.shadowMap.enabled = true; r.outputColorSpace = THREE.SRGBColorSpace;
+const sc = new THREE.Scene(); sc.background = new THREE.Color("#1a1410");
+sc.add(new THREE.HemisphereLight("#fff1dc", "#3a2a1a", 1.3));
+const d = new THREE.DirectionalLight("#fff", 1.6); d.position.set(4, 10, 8); d.castShadow = true; sc.add(d);
+const it = buildHomeInterior(spec, items);
+sc.add(it.group);
+const b = it.bounds; const W = b.maxX - b.minX, D = b.maxZ - b.minZ;
+const cam = new THREE.PerspectiveCamera(45, 1100/700, 0.1, 300);
+const cz = (b.minZ + b.maxZ) / 2;
+cam.position.set((b.minX + b.maxX) / 2, Math.max(W, D) * 0.75, b.maxZ + Math.max(W, D) * 0.45);
+cam.lookAt((b.minX + b.maxX) / 2, 0, cz - 0.5);
+r.render(sc, cam); window.done = true;
+</script></body></html>

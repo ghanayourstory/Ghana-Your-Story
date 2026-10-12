@@ -48,6 +48,9 @@ for (const r of [
   R("kof_chamber", "koforidua", "Chamber & hall, Koforidua", 650, 6, 2, "Near the bead market."),
   R("wiawso_room", "sefwi_wiawso", "Room in Sefwi Wiawso", 250, 6, 1, "Forest town quiet."),
   R("goaso_room", "goaso", "Room in Goaso", 260, 6, 1, "Mining-town prices, farming-town people."),
+  R("legon_penthouse", "east_legon", "Penthouse, East Legon (furnished)", 26_000, 12, 6, "Top floor, three bedrooms, a terrace over the city and a concierge.", 20),
+  R("osu_penthouse", "osu", "Penthouse, Cantonments", 34_000, 12, 6, "Embassy neighbours, sea glimpses, an island kitchen and a lift that works.", 25),
+  R("trasacco_villa_rent", "trasacco", "Villa in Trasacco Valley", 48_000, 12, 6, "Pool, gatehouse, staff quarters. The guard salutes.", 30),
   R("dambai_room", "dambai", "Room near the ferry, Dambai", 200, 6, 1, "Lake breeze."),
 ]) RENTALS[r.id] = r;
 
@@ -65,6 +68,9 @@ export interface Plot {
   requiresRep?: number;
   requiresUnlock?: string;
   allowed: string[]; // building design ids
+  /** Already built: you buy the finished home (penthouses, estate houses). */
+  ready?: { design: string; quality: Quality };
+  blurb?: string;
 }
 
 export const PLOTS: Record<string, Plot> = {
@@ -98,6 +104,10 @@ for (const p of [
   PL("kof_plot", "koforidua", "Plot in Koforidua", 48_000, "70×100 ft", ["bungalow", "family_house", "guesthouse"]),
   PL("wiawso_plot", "sefwi_wiawso", "Plot in Sefwi Wiawso", 18_000, "70×100 ft", ["chamber_hall", "bungalow", "compound_house"]),
   PL("goaso_plot", "goaso", "Plot in Goaso", 20_000, "70×100 ft", ["chamber_hall", "bungalow", "compound_house"]),
+  { id: "legon_penthouse_unit", district: "east_legon", name: "Penthouse unit, East Legon tower", price: 3_400_000, size: "320 m², top floor", allowed: ["penthouse_unit"], requiresRep: 20, ready: { design: "penthouse_unit", quality: "premium" as const }, blurb: "Turnkey: three ensuite bedrooms, chef's kitchen, terrace." },
+  { id: "osu_penthouse_unit", district: "osu", name: "Penthouse, Cantonments", price: 4_900_000, size: "410 m², top floor", allowed: ["penthouse_unit"], requiresRep: 25, ready: { design: "penthouse_unit", quality: "premium" as const }, blurb: "Sea glimpses, embassy row, private lift." },
+  { id: "trasacco_mansion_ready", district: "trasacco", name: "Finished mansion, Trasacco Valley", price: 14_500_000, size: "1 acre", allowed: ["mansion"], requiresRep: 40, ready: { design: "mansion", quality: "premium" as const }, blurb: "Seven bedrooms, pool, staff quarters, gatehouse. Move in tomorrow." },
+  { id: "spintex_house_ready", district: "spintex", name: "Finished 4-bedroom house, Spintex estate", price: 1_250_000, size: "70×100 ft", allowed: ["family_house"], ready: { design: "family_house", quality: "standard" as const }, blurb: "Gated estate, walled compound, a garden." },
   PL("dambai_plot", "dambai", "Plot in Dambai", 12_000, "70×100 ft", ["chamber_hall", "bungalow", "guesthouse"]),
 ]) PLOTS[p.id] = p;
 
@@ -129,6 +139,7 @@ export const DESIGNS: Record<string, Design> = {
   northern_compound: { id: "northern_compound", name: "Northern compound (round rooms & courtyard)", baseCost: 45_000, stages: [{ name: "Foundation", share: 0.15, days: 1 }, { name: "Mud & cement walls", share: 0.4, days: 1 }, { name: "Thatch & zinc roofs", share: 0.25, days: 1 }, { name: "Plaster & paint", share: 0.2, days: 1 }], comfort: 2, rentYield: 0.008, kind: "home" },
   compound_house: { id: "compound_house", name: "Compound house (10 rooms around a courtyard)", baseCost: 260_000, stages: STD_STAGES([1, 2, 1, 2]), comfort: 2, rentYield: 0.013, kind: "commercial" },
   guesthouse: { id: "guesthouse", name: "12-room guesthouse", baseCost: 650_000, stages: STD_STAGES([2, 3, 2, 3]), comfort: 3, rentYield: 0.013, kind: "commercial" },
+  penthouse_unit: { id: "penthouse_unit", name: "Penthouse", baseCost: 2_400_000, stages: STD_STAGES([1, 1, 1, 1]), comfort: 6, rentYield: 0.007, kind: "home" },
   mansion: { id: "mansion", name: "Mansion (7 bedrooms, pool, gatehouse & boys' quarters)", baseCost: 3_800_000, stages: [...STD_STAGES([3, 5, 3, 5]), { name: "Pool, gardens & gatehouse", share: 0, days: 3 }].map((s, i, arr) => ({ ...s, share: i === arr.length - 1 ? 0.15 : s.share * 0.85 })), comfort: 6, rentYield: 0.0065, kind: "home" },
 };
 

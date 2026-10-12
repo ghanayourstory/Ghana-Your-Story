@@ -172,6 +172,7 @@ const NEARBY_TEXT: Record<Nearby["kind"], (n: Nearby) => string> = {
   taxi: () => "✋ Stop this taxi",
   bed: () => "Sleep",
   exit: () => "Go outside",
+  homespot: (n) => n.label,
 };
 
 export function ActionBar({ nearby, onUse }: { nearby: Nearby | null; onUse: () => void }) {

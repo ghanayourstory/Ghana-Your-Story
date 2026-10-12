@@ -6,6 +6,7 @@ import { Batcher, G, facadeBox, tiledPlane } from "./batch.ts";
 import * as T from "./textures.ts";
 import { DISTRICTS, PLACES, placesIn, type DistrictId, type DistrictStyle, type Place } from "../../shared/world.ts";
 import { mulberry32 } from "../../shared/rng.ts";
+import type { HomeTier } from "../../shared/homes.ts";
 import { createOcean } from "./ocean.ts";
 import type { Genre, SoundSpot } from "./audio.ts";
 
@@ -136,7 +137,7 @@ const FROND = (() => {
   return g;
 })();
 
-export function buildDistrict(id: DistrictId): DistrictScene {
+export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScene {
   const d = DISTRICTS[id];
   const rnd = mulberry32(id.length * 977 + id.charCodeAt(0));
   const group = new THREE.Group();
@@ -1576,7 +1577,83 @@ export function buildDistrict(id: DistrictId): DistrictScene {
 
   // Home building at the reserved spot.
   const homeZ = home.side * (BUILD_LINE + 6);
-  if (id !== "kaneshie") {
+  const hx = home.x, hs = home.side;
+  const front = hs * (BUILD_LINE + 0.4);
+  const gate = (w: number, color: string) => {
+    // Sliding metal gate with a pedestrian door, set in the compound wall.
+    box(colorMat(color, 0.45, 0.5), hx, 1.25, front, w, 2.5, 0.08);
+    for (let i = 0; i < Math.floor(w / 0.25); i++) box(colorMat("#1d1d1f", 0.4, 0.6), hx - w / 2 + 0.12 + i * 0.25, 1.25, front - hs * 0.05, 0.03, 2.4, 0.03);
+  };
+  if (homeTier && id !== "kaneshie") {
+    const wall = (color: string, h = 2.4) => compoundWall(hx - 7, hx + 7, front, h, hx, color);
+    switch (homeTier) {
+      case "compound_room":
+      case "chamber_hall": {
+        // Long single-storey compound house: rooms in a row, zinc roof, courtyard gate.
+        const z = hs * (BUILD_LINE + 6);
+        batch.add(facadeBox(13, 3.2, 9), facadeMat("#D9C9A3", "small"), [hx, 1.6, z]);
+        roofPitched(hx, z, 13, 9, 3.2, true);
+        for (let i = -2; i <= 2; i++) box(colorMat(["#1F7A4D", "#B03A62", "#2E86AB", "#E3A857", "#5b3a29"][i + 2], 0.7), hx + i * 2.4, 1.05, z - hs * 4.52, 0.85, 2.1, 0.05);
+        collide(hx, z, 13, 9, 4);
+        break;
+      }
+      case "northern_room": {
+        for (const [dx, dz, r] of [[-3, 5, 2.2], [2.5, 6.5, 2.4], [0, 9.5, 2]] as const) {
+          const cz = hs * (BUILD_LINE + dz);
+          batch.add(G.cyl, colorMat("#b7834f", 1), [hx + dx, 1.1, cz], [0, 0, 0], [r, 2.2, r]);
+          batch.add(G.cone, colorMat("#c8a86a", 1), [hx + dx, 2.9, cz], [0, 0, 0], [r * 1.25, 1.5, r * 1.25]);
+          collide(hx + dx, cz, r * 2, r * 2, 3);
+        }
+        break;
+      }
+      case "self_contained":
+      case "flat":
+      case "apartment": {
+        // Apartment block: three or four storeys, balconies, a gate.
+        const storeys = homeTier === "apartment" ? 4 : 3, h = storeys * 3, z = hs * (BUILD_LINE + 6.5);
+        batch.add(facadeBox(13, h, 10), facadeMat(homeTier === "apartment" ? "#EFE6D6" : "#E8D5B5", "louvre"), [hx, h / 2, z]);
+        for (let f = 1; f < storeys; f++) {
+          box(colorMat("#d8d0c2", 0.7), hx, f * 3, z - hs * 5.6, 12, 0.15, 1.2);
+          box(colorMat("#2b2b2b", 0.4, 0.6), hx, f * 3 + 0.55, z - hs * 6.15, 12, 1.0, 0.04);
+        }
+        box(colorMat("#2E86AB", 0.5, 0.4), hx + 4, h + 0.8, z, 1.4, 1.6, 1.4); // polytank on the roof
+        collide(hx, z, 13, 10, h);
+        wall("#e9e3d6", 2.2);
+        gate(4, "#2b3440");
+        break;
+      }
+      case "townhouse":
+        wall("#e9e3d6", 2.4);
+        villa(hx, hs * (BUILD_LINE + 8.5), 11, 9, 2, "#F2E2C4", hs);
+        gate(4, "#3a2a22");
+        break;
+      case "villa":
+        wall("#f1e9da", 2.6);
+        villa(hx, hs * (BUILD_LINE + 9), 12, 10, 2, "#FAF7F0", hs);
+        gate(4.5, "#1d1d1f");
+        break;
+      case "mansion": {
+        wall("#f4ede0", 3.2);
+        villa(hx, hs * (BUILD_LINE + 9.5), 13.5, 11, 3, "#FAF7F0", hs);
+        gate(5, "#b08d57");
+        // Gatehouse with a guard light, columns at the porch.
+        box(colorMat("#EDE6D6", 0.8), hx - 5.5, 1.5, hs * (BUILD_LINE + 2), 2.2, 3, 2.2);
+        collide(hx - 5.5, hs * (BUILD_LINE + 2), 2.2, 2.2, 3);
+        for (const dx of [-2.5, 2.5]) batch.add(G.cyl, colorMat("#ffffff", 0.5), [hx + dx, 3, hs * (BUILD_LINE + 3.6)], [0, 0, 0], [0.3, 6, 0.3]);
+        break;
+      }
+      case "penthouse": {
+        // Glass residential tower; your penthouse is the lit top floor.
+        const h = 39, z = hs * (BUILD_LINE + 7);
+        batch.add(facadeBox(13, h, 11), facadeMat("#8DA9C4", "glass"), [hx, h / 2, z]);
+        box(colorMat("#fff2c4", 0.3), hx, h - 1.5, z - hs * 5.52, 12.6, 2.6, 0.05);
+        box(colorMat("#2b2b2b", 0.3, 0.6), hx, h + 0.6, z, 13.4, 0.3, 11.4);
+        collide(hx, z, 13, 11, h);
+        box(colorMat("#cfd3d6", 0.5), hx, 1.6, hs * (BUILD_LINE + 1.4), 6, 0.2, 2.4); // entrance canopy
+        break;
+      }
+    }
+  } else if (id !== "kaneshie") {
     if (upscale) {
       compoundWall(home.x - 7, home.x + 7, home.side * (BUILD_LINE + 0.4), 2.4, home.x, "#e9e3d6");
       villa(home.x, home.side * (BUILD_LINE + 9), 10, 9, 2, "#F2E2C4", home.side);

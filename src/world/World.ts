@@ -5,7 +5,9 @@ import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
 import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook } from "./people.ts";
-import { buildInterior, buildSite } from "./construction.ts";
+import { buildSite } from "./construction.ts";
+import { buildHomeInterior, type Interior } from "./interiors.ts";
+import type { HomeSpec } from "../../shared/homes.ts";
 import { buildVehicle, vehicleKindForModel } from "./vehicles.ts";
 import { VEHICLES } from "../../shared/life.ts";
 import { CityAudio } from "./audio.ts";
@@ -18,7 +20,7 @@ import type { GameState } from "../../server/engine.ts";
 export type Quality = "low" | "medium" | "high";
 
 export interface Nearby {
-  kind: "npc" | "place" | "home" | "stop" | "plot" | "taxi" | "bed" | "exit";
+  kind: "npc" | "place" | "home" | "stop" | "plot" | "taxi" | "bed" | "exit" | "homespot";
   id: string;
   label: string;
 }
@@ -71,7 +73,8 @@ export class World {
   private discovered = new Set<string>();
   private reported = new Set<string>();
   private nearby: Nearby | null = null;
-  private interior: { group: THREE.Group; bed: THREE.Vector3; door: THREE.Vector3; size: [number, number] } | null = null;
+  private interior: Interior | null = null;
+  private homeTierBuilt: HomeSpec["tier"] | "" = "";
   inside = false;
   private raf = 0;
   private tickAcc = 0;
@@ -158,8 +161,11 @@ export class World {
       if (old) old.root.parent?.remove(old.root);
       (this.inside ? this.interiorScene : this.scene).add(this.player.root);
     }
-    if (!this.district || this.district.id !== s.player.district) {
+    const homeTier = s.player.home.district === s.player.district ? s.player.home.spec.tier : "";
+    if (!this.district || this.district.id !== s.player.district || (homeTier !== this.homeTierBuilt && !this.inside)) {
+      const keep = this.district?.id === s.player.district ? this.pos.clone() : null;
       this.loadDistrict(s.player.district, s);
+      if (keep) this.pos.copy(keep);
     }
     this.updateSite(s);
     this.updateParked(s);
@@ -183,7 +189,8 @@ export class World {
     this.siteKey = "";
     this.parked = null;
     this.parkedKey = "";
-    const d = buildDistrict(id);
+    this.homeTierBuilt = s.player.home.district === id ? s.player.home.spec.tier : "";
+    const d = buildDistrict(id, this.homeTierBuilt || undefined);
     this.district = d;
     this.scene.add(d.group);
     const gd = toGameDate(Math.floor(this.minuteNow));
@@ -252,13 +259,13 @@ export class World {
   // ---------------------------------------------------------------------------
   // Interiors
 
-  enterHome(comfort: number, items: string[] = []) {
+  enterHome(spec: HomeSpec, items: string[] = []) {
     if (this.inside || !this.player) return;
-    this.interior = buildInterior(comfort, items);
+    this.interior = buildHomeInterior(spec, items);
     this.interiorScene.add(this.interior.group);
     this.scene.remove(this.player.root);
     this.interiorScene.add(this.player.root);
-    this.pos.copy(this.interior.door).add(new THREE.Vector3(0, 0, -1.4));
+    this.pos.copy(this.interior.door).add(new THREE.Vector3(0, 0, -1.6));
     this.camTarget.copy(this.pos);
     this.inside = true;
   }
@@ -402,9 +409,10 @@ export class World {
 
   private resolve(p: THREE.Vector3, r: number) {
     if (this.inside && this.interior) {
-      const [W, D] = this.interior.size;
-      p.x = THREE.MathUtils.clamp(p.x, -W / 2 + 0.4, W / 2 - 0.4);
-      p.z = THREE.MathUtils.clamp(p.z, -D / 2 + 0.4, D / 2 + 1.2);
+      const b = this.interior.bounds;
+      p.x = THREE.MathUtils.clamp(p.x, b.minX + 0.35, b.maxX - 0.35);
+      p.z = THREE.MathUtils.clamp(p.z, b.minZ + 0.35, b.maxZ - 0.2);
+      for (const c of this.interior.colliders) this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
       return;
     }
     const airborne = this.jumpY > 0.18;
@@ -597,8 +605,11 @@ export class World {
   private updateNearby() {
     let best: Nearby | null = null;
     if (this.inside && this.interior) {
-      if (this.pos.distanceTo(this.interior.bed) < 1.8) best = { kind: "bed", id: "bed", label: "Bed" };
-      else if (this.pos.distanceTo(this.interior.door) < 1.8) best = { kind: "exit", id: "exit", label: "Go outside" };
+      let bd = 1.7;
+      for (const sp of this.interior.spots) {
+        const dd = Math.hypot(sp.pos.x - this.pos.x, sp.pos.z - this.pos.z);
+        if (dd < bd) { bd = dd; best = { kind: sp.id === "bed" ? "bed" : sp.id === "exit" ? "exit" : "homespot", id: sp.id, label: sp.label }; }
+      }
     } else if (this.district && this.life) {
       let bd = 1e9;
       for (const a of this.life.npcs.values()) {
