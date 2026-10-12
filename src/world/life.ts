@@ -519,6 +519,16 @@ export class CityLife {
     return best;
   }
 
+  /** Send cars near x back to the start of their lanes (to clear a spot on the main road). */
+  clearAround(x: number, radius: number) {
+    for (const c of this.cars) {
+      if (c.lane.axis !== "x" || Math.abs(c.s - x) > radius) continue;
+      c.s = c.lane.from;
+      c.speed = 0;
+      this.placeCar(c);
+    }
+  }
+
   /** Take a car out of traffic (the taxi you just stopped becomes your ride). */
   takeCar(c: Car): VehicleRig {
     this.cars = this.cars.filter((x) => x !== c);

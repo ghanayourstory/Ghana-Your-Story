@@ -4,6 +4,8 @@ import { useGame } from "../store.tsx";
 import { Sheet, money, WEATHER_ICON } from "./common.tsx";
 import { JOBS, PLACE_BY_ID } from "../../shared/world.ts";
 import { NEEDS } from "../../shared/mood.ts";
+import { GROUP_NAME, fmtHour, outageWindow, powerGroup } from "../../shared/power.ts";
+import { DISTRICTS } from "../../shared/world.ts";
 
 export function TodaySheet({ onClose }: { onClose: () => void }) {
   const { state, act, busy } = useGame();
@@ -16,6 +18,7 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
   const place = job ? PLACE_BY_ID[job.placeId] : null;
   const low = NEEDS.filter((n) => ((p.stats as Record<string, number>)[n.key] ?? 100) < 35);
   const doneCount = d.goals.filter((g) => g.done).length;
+  const dumsor = outageWindow(p.home.district, d.day);
   return (
     <Sheet title={`${WEATHER_ICON[t.weather]} ${greet}, ${p.name.split(" ")[0]}`} sub={`${t.weekday} ${t.date} ${t.monthName} · ${t.season} · ${t.clock}`} onClose={onClose}>
       <div className="col" style={{ marginTop: 10, gap: 8 }}>
@@ -33,6 +36,13 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
                 <div className="tiny muted">Places that are hiring say so on their door. Markets and lorry stations take anyone.</div>
               </>
             )}
+          </div>
+        </div>
+        <div className="today-row">
+          <span>{dumsor ? "🕯️" : "💡"}</span>
+          <div className="grow">
+            <b>{dumsor ? `Dumsor in ${DISTRICTS[p.home.district]?.name ?? "your area"}: lights off ${fmtHour(dumsor[0])}–${fmtHour(dumsor[1])}` : "Power should stay on at home today"}</b>
+            <div className="tiny muted">Load-shedding group {GROUP_NAME[powerGroup(p.home.district)]}.{dumsor ? (p.generator ? " Your generator will keep the TV on (fuel extra)." : " No TV or laptop at home then; a generator from Melcom helps.") : ""}</div>
           </div>
         </div>
         <div className="today-row">

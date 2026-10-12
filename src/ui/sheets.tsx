@@ -96,7 +96,14 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
       )}
       {p.kind === "dealer" && <DealerPanel place={p} open={open} />}
       {placeIsStore(p) && <StorePanel place={p} open={open} />}
-      <CoursesPanel place={p} open={open} />
+      <CoursesPanel place={p} open={open} onRoadTest={(courseId) => {
+        if (!world) return;
+        onClose();
+        void world.startRoadTest(courseId === "riding_a" ? "bike" : "car").then((r) => {
+          if (r.aborted) return void act({ type: "road_test", courseId, placeId: p.id, faults: 50, seconds: Math.max(20, r.seconds) });
+          void act({ type: "road_test", courseId, placeId: p.id, faults: r.faults, seconds: Math.max(20, r.seconds) });
+        });
+      }} />
       {p.kind === "transport" && (
         <>
           <h3>Rides</h3>
@@ -118,7 +125,9 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
               <div className="bold">{mine ? `${state.player.job!.rankTitle} ${j.title}`.trim() : j.title}</div>
               <div className="tiny muted">{money(rankPay(j.pay, mine ? state.player.job!.rank : 0) * 100)}/shift · {j.hours}h · start {j.shiftWindow[0]}:00–{j.shiftWindow[1]}:00{j.weekdaysOnly ? " · weekdays" : ""}{j.salaried ? " · monthly salary" : " · paid in cash"}</div>
               <div className="tiny" style={{ marginTop: 3 }}>
-                {Object.keys(req).length === 0 ? <span className="good">No requirements</span> : Object.entries(req).map(([k, v]) => {
+                {j.needsUnlock && <span className={state.player.unlocks.includes(j.needsUnlock) ? "good" : "bad"} style={{ marginRight: 8 }}>{state.player.unlocks.includes(j.needsUnlock) ? "✓" : "✗"} {j.needsUnlock === "licence_b" ? "driving licence" : j.needsUnlock === "licence_a" ? "riding licence" : j.needsUnlock}</span>}
+                {j.needsVehicle && <span className="muted" style={{ marginRight: 8 }}>🚗 own {j.needsVehicle}</span>}
+                {Object.keys(req).length === 0 ? (j.needsUnlock ? null : <span className="good">No requirements</span>) : Object.entries(req).map(([k, v]) => {
                   const have = (k === "reputation" ? state.player.reputation : state.player.skills[k as keyof typeof state.player.skills]) ?? 0;
                   return <span key={k} className={have >= (v as number) ? "good" : "bad"} style={{ marginRight: 8 }}>{have >= (v as number) ? "✓" : "✗"} {k} {Math.floor(have)}/{v as number}</span>;
                 })}

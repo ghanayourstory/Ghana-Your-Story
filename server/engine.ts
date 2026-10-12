@@ -1,5 +1,6 @@
 // The authoritative game engine. Every state change happens here, inside a
 // single SQL transaction per action, with money moving only through the ledger.
+import { fmtHour, outageWindow, powerOff } from "../shared/power.ts";
 import { mulberry32 } from "../shared/rng.ts";
 import { ROLE_LABEL, makeFamily, requestFor, type FamilyRequest, type FamilyRole } from "../shared/family.ts";
 import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../shared/trade.ts";
@@ -807,7 +808,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "sleep": return actSleep(ctx, p, a, fb);
     case "order_food": return actOrderFood(ctx, p, a, fb);
     case "travel": return actTravel(ctx, p, a, fb);
-    case "job_apply": return actJobApply(p, a, fb);
+    case "job_apply": return actJobApply(ctx, p, a, fb);
     case "job_quit": return actJobQuit(p, fb);
     case "work": return actWork(ctx, p, fb);
     case "talk": return actTalk(ctx, p, a, fb);
@@ -849,6 +850,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "momo_move": return actMomoMove(ctx, p, a, fb);
     case "family_call": return actFamilyCall(ctx, p, a, fb);
     case "police_check": return actPoliceCheck(ctx, p, a, fb);
+    case "road_test": return actRoadTest(ctx, p, a, fb);
     case "family_send": return actFamilySend(ctx, p, a, fb);
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
@@ -1041,7 +1043,19 @@ function jobRequirements(p: PlayerRow, jobId: string) {
   return req;
 }
 
-function actJobApply(p: PlayerRow, a: Action, fb: Feedback) {
+/** Licence and own-vehicle conditions for gig jobs. */
+function jobGate(db: Db, p: PlayerRow, job: (typeof JOBS)[string]) {
+  if (job.needsUnlock && !hasUnlock(p, job.needsUnlock)) {
+    throw new GameError("needs_licence", `You need a ${job.needsUnlock === "licence_b" ? "driving (B)" : job.needsUnlock === "licence_a" ? "riding (A)" : job.needsUnlock.replace("cert_", "")} ${job.needsUnlock.startsWith("licence") ? "licence" : "certificate"} for this.`);
+  }
+  if (job.needsVehicle) {
+    const cats = job.needsVehicle === "car" ? ["car", "luxury"] : ["motorbike"];
+    const ok = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).some((v) => cats.includes(VEHICLES[v.type]?.category));
+    if (!ok) throw new GameError("needs_vehicle", `You need your own ${job.needsVehicle} (not on work-and-pay).`);
+  }
+}
+
+function actJobApply(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const job = typeof a.jobId === "string" ? JOBS[a.jobId] : undefined;
   if (!job) throw new GameError("bad_job", "Unknown job");
   const place = PLACE_BY_ID[job.placeId];
@@ -1050,6 +1064,7 @@ function actJobApply(p: PlayerRow, a: Action, fb: Feedback) {
   const req = jobRequirements(p, job.id);
   const missing = Object.entries(req).filter(([k, v]) => (p[k as keyof PlayerRow] as number) < (v as number)).map(([k, v]) => `${k} ${v}`);
   if (missing.length) throw new GameError("requirements", `Not yet. You need ${missing.join(", ")}.`);
+  jobGate(ctx.db, p, job);
   const previous = p.job_id ? JOBS[p.job_id].title : null;
   p.job_id = job.id;
   p.job_rank = 0;
@@ -1075,6 +1090,7 @@ function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   if (job.weekdaysOnly && gd.isWeekend) throw new GameError("closed", `${place.name} doesn't run weekend shifts.`);
   if (!isOpenAt(job.shiftWindow, gd.hour)) throw new GameError("shift_time", `Shifts start between ${job.shiftWindow[0]}:00 and ${job.shiftWindow[1]}:00.`);
   requireAwake(p, Math.round(job.energyCost * 0.6), "work a shift");
+  jobGate(ctx.db, p, job);
   // Tired, hungry, smelly or miserable people don't do their best work.
   const performance = clamp(0.75 + p.energy / 400 + p.health / 400 + p.hunger / 800 + (p.hygiene - 50) / 1500 + moodFor(ctx.db, p).score / 100, 0.72, 1.15);
   const pay = minor(rankPay(job.pay, p.job_rank) * performance);
@@ -1641,10 +1657,26 @@ function actHomeActivity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const items = ownedItems(ctx.db, p).map((i) => i.item_id);
   if (!act.when(spec, items)) throw new GameError("not_here", `You can't do that in a ${spec.label.toLowerCase()}.`);
   if ((act.effects.energy ?? 0) < -5) requireAwake(p, 10, act.verb.toLowerCase());
-  const money = act.cost ? chargeStrict(ctx, p, minor(act.cost), "spend", act.label) : [];
+  // Dumsor: screens need power. A generator keeps them going, for the price of fuel.
+  let genFuel = 0;
+  if (POWERED.includes(act.id) && powerOff(p.district, p.game_min)) {
+    if (!hasGenerator(ctx.db, p)) {
+      const w = outageWindow(p.district, dayOf(p.game_min))!;
+      throw new GameError("dumsor", `Lights off (dumsor) until ${fmtHour(w[1])}. A generator would keep the TV on.`);
+    }
+    genFuel = minor(Math.max(5, Math.round(act.minutes / 60) * 8));
+  }
+  const money = act.cost || genFuel ? chargeStrict(ctx, p, minor(act.cost) + genFuel, "spend", `${act.label}${genFuel ? " (generator fuel)" : ""}`) : [];
   advance(ctx, p, act.minutes, fb, { quiet: true });
-  applyEffects(p, act.effects, fb, `${act.label}. ${act.note(spec)}`, money);
+  applyEffects(p, act.effects, fb, `${act.label}. ${act.note(spec)}${genFuel ? " The generator roars outside." : ""}`, money);
   return null;
+}
+
+/** Activities that need mains power (or a generator). */
+const POWERED = ["watch_tv", "watch_football", "work_from_home"];
+
+function hasGenerator(db: Db, p: PlayerRow) {
+  return homeSpecFor(db, p).extras.includes("generator") || ownedItems(db, p).some((i) => i.item_id === "generator");
 }
 
 function actCook(ctx: Ctx, p: PlayerRow, fb: Feedback) {
@@ -1740,7 +1772,7 @@ function actFarmHarvest(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
 // ---------------------------------------------------------------------------
 // Schools
 
-interface CourseRow { course_id: string; sessions: number; status: string; enrolled_min: number; last_session_day: number; completed_min: number | null }
+interface CourseRow { course_id: string; sessions: number; status: string; enrolled_min: number; last_session_day: number; completed_min: number | null; test_day: number }
 
 function actCourseEnrol(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const c = typeof a.courseId === "string" ? COURSES[a.courseId] : undefined;
@@ -1768,6 +1800,13 @@ function actCourseAttend(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   requireAwake(p, 20, "concentrate in class");
   advance(ctx, p, c.minutes, fb, { quiet: true });
   const sessions = row.sessions + 1;
+  const licence = c.unlock === "licence_a" || c.unlock === "licence_b";
+  // Licences end with a practical road test you drive yourself.
+  if (licence && sessions >= c.sessions) {
+    ctx.db.run("UPDATE courses SET sessions = ?, last_session_day = ?, status = 'test' WHERE player_id = ? AND course_id = ?", sessions, dayOf(p.game_min), p.id, c.id);
+    applyEffects(p, { energy: -16, hunger: -8, ...c.perSession }, fb, `📋 ${c.name}: lessons done. The examiner is ready for your road test: tap "Road test" here.`);
+    return null;
+  }
   const done = sessions >= c.sessions;
   ctx.db.run("UPDATE courses SET sessions = ?, last_session_day = ?, status = ?, completed_min = ? WHERE player_id = ? AND course_id = ?", sessions, dayOf(p.game_min), done ? "done" : "enrolled", done ? p.game_min : null, p.id, c.id);
   applyEffects(p, { energy: -16, hunger: -8, ...c.perSession }, fb, `📚 ${c.name}: session ${sessions}/${c.sessions}.`);
@@ -1776,6 +1815,41 @@ function actCourseAttend(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
     applyEffects(p, { ...c.onComplete, social: 8 }, fb, `🎓 Certificate earned: ${c.name}!${c.unlock === "licence_b" ? " Your DVLA licence card arrives in the post (eventually)." : ""}`);
   }
   return null;
+}
+
+/** Fictional retest fee (game money). */
+export const RETEST_FEE = 150;
+/** At most this many faults to pass. */
+export const MAX_FAULTS = 3;
+
+/**
+ * The practical road test. The drive itself happens in the 3D world; the
+ * server checks it's the right place, the right stage of the course, one
+ * attempt a day and a plausible result before granting the licence.
+ */
+function actRoadTest(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const c = typeof a.courseId === "string" ? COURSES[a.courseId] : undefined;
+  if (!c || (c.unlock !== "licence_a" && c.unlock !== "licence_b")) throw new GameError("bad_course", "That course has no road test.");
+  const place = requirePlace(p, a.placeId);
+  if (!c.places.includes(place.id)) throw new GameError("not_here", `${place.name} doesn't run that test.`);
+  const row = ctx.db.get<CourseRow>("SELECT * FROM courses WHERE player_id = ? AND course_id = ?", p.id, c.id);
+  if (!row || row.status !== "test") throw new GameError("not_ready", "Finish your lessons first.");
+  const day = dayOf(p.game_min);
+  if (row.test_day === day) throw new GameError("tomorrow", "One road test a day. The examiner has other candidates.");
+  const faults = Math.floor(Number(a.faults));
+  const seconds = Number(a.seconds);
+  if (!Number.isFinite(faults) || faults < 0 || faults > 50 || !Number.isFinite(seconds) || seconds < 20 || seconds > 3600) throw new GameError("bad_result", "That test result doesn't look right.");
+  ctx.db.run("UPDATE courses SET test_day = ? WHERE player_id = ? AND course_id = ?", day, p.id, c.id);
+  advance(ctx, p, 30, fb, { quiet: true });
+  if (faults <= MAX_FAULTS) {
+    ctx.db.run("UPDATE courses SET status = 'done', completed_min = ? WHERE player_id = ? AND course_id = ?", p.game_min, p.id, c.id);
+    addToList(p, "unlocks", c.unlock);
+    applyEffects(p, { ...c.onComplete, social: 10, fun: 10 }, fb, `🎓 Passed the road test with ${faults} fault${faults === 1 ? "" : "s"}! The examiner signs your form: ${c.unlock === "licence_b" ? "driving" : "riding"} licence granted.`);
+    return { passed: true, faults };
+  }
+  const { changes } = chargeFlexible(ctx, p, minor(RETEST_FEE), "course", `${c.name}: retest fee`);
+  applyEffects(p, { fun: -5 }, fb, `📋 ${faults} faults: not this time (pass is ${MAX_FAULTS} or fewer). Retest from tomorrow; the fee is ${formatMoney(minor(RETEST_FEE))}.`, changes);
+  return { passed: false, faults };
 }
 
 // ---------------------------------------------------------------------------
@@ -2243,6 +2317,7 @@ function moodFor(db: Db, p: PlayerRow) {
     rentArrears: p.rent_arrears > 0,
     hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
     helpedFamily: p.helped_day >= dayOf(p.game_min) - 2,
+    dumsor: p.district === homeDistrict(db, p) && powerOff(p.district, p.game_min) && !hasGenerator(db, p),
     missingHome: (() => {
       const last = db.get<{ d: number | null }>("SELECT MAX(last_contact_day) AS d FROM family WHERE player_id = ?", p.id)?.d;
       return last !== null && last !== undefined && dayOf(p.game_min) - last > 10;
@@ -2342,6 +2417,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       mood: moodFor(db, p),
       daily: dailyView(ctx, p),
       settings: { needsPace: p.needs_pace },
+      generator: hasGenerator(db, p),
       hometown: p.hometown,
       family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
       stock: stockOf(db, p).map((r) => ({ id: r.good_id, qty: r.qty, avgCost: Math.round(r.cost / r.qty) })),
@@ -2396,7 +2472,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       id: f.id, type: f.farm_type, price: f.price, crop: f.crop, plantedMin: f.planted_min, readyMin: f.ready_min, status: f.status, harvests: f.harvests, totalIncome: f.total_income,
       estimate: f.status === "growing" && f.crop && f.planted_min !== null && f.ready_min !== null ? harvestValue({ ...f, crop: f.crop, planted_min: f.planted_min, ready_min: f.ready_min }, p, Math.max(p.game_min, f.ready_min)) : null,
     })),
-    courses: db.all<CourseRow>("SELECT * FROM courses WHERE player_id = ?", p.id).map((c) => ({ id: c.course_id, sessions: c.sessions, status: c.status, lastSessionDay: c.last_session_day })),
+    courses: db.all<CourseRow>("SELECT * FROM courses WHERE player_id = ?", p.id).map((c) => ({ id: c.course_id, sessions: c.sessions, status: c.status, lastSessionDay: c.last_session_day, testDay: c.test_day })),
     social: (() => {
       const s = db.get<SocialRow>("SELECT * FROM social WHERE player_id = ?", p.id);
       const today = dayOf(p.game_min);

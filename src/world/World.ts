@@ -1,5 +1,6 @@
 // The 3D runtime: renderer, camera, player controller, district streaming,
 // city life, atmosphere, interactions, interiors and sound.
+import { powerOff } from "../../shared/power.ts";
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -49,6 +50,8 @@ export interface WorldCallbacks {
   onDrive?: (d: { name: string; kmh: number } | null) => void;
   /** Pulled over at a police checkpoint (vehicle type). */
   onPolice?: (vehicleType: string) => void;
+  /** Driving test progress (null when it ends). */
+  onExam?: (e: ExamStatus | null) => void;
   /** A caption for an important sound. */
   onCaption?: (text: string) => void;
 }
@@ -69,7 +72,28 @@ interface Driving {
   /** Stopped at a checkpoint: an officer by the window. */
   police?: THREE.Group | null;
   honkCool?: number;
+  /** Driving test in progress. */
+  exam?: Exam;
 }
+
+interface Exam {
+  rings: number[];
+  idx: number;
+  box: number;
+  faults: number;
+  log: string[];
+  t: number;
+  speedT: number;
+  wrongT: number;
+  stillT: number;
+  hitCool: number;
+  lastX: number;
+  group: THREE.Group;
+  back: THREE.Vector3;
+  resolve: (r: { faults: number; seconds: number; log: string[]; aborted: boolean }) => void;
+}
+
+export interface ExamStatus { faults: number; next: string; last: string | null; seconds: number }
 
 interface Doing {
   use: SpotUse;
@@ -488,6 +512,7 @@ export class World {
     this.path = [];
     this.arriveCb = null;
     this.interior = buildHomeInterior(spec, items);
+    this.lastPower = "";
     this.interiorScene.add(this.interior.group);
     this.scene.remove(this.player.root);
     this.interiorScene.add(this.player.root);
@@ -616,6 +641,34 @@ export class World {
       this.cb.onActivity?.(null);
       d.resolve(true);
     }
+  }
+
+  /** Lights at home follow the power: candle-dim during dumsor unless there's a generator. */
+  private lastPower = "";
+  private interiorPower(minute: number) {
+    const s = this.state;
+    if (!s || !this.interior) return;
+    const dark = powerOff(s.player.home.district as DistrictId, minute) && !s.player.generator;
+    const key = `${dark}`;
+    if (key === this.lastPower) return;
+    this.lastPower = key;
+    this.interior.group.traverse((o) => {
+      const l = o as THREE.PointLight;
+      if (l.isPointLight) {
+        l.userData.base ??= l.intensity;
+        l.intensity = dark ? l.userData.base * 0.12 : l.userData.base;
+        l.color.set(dark ? "#ff9a40" : "#ffe2b0");
+      }
+      const m = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+      if (m && (o as THREE.Mesh).isMesh && m.emissiveIntensity > 1) {
+        m.userData.base ??= m.emissiveIntensity;
+        m.emissiveIntensity = dark ? 0 : m.userData.base;
+      }
+    });
+    this.interiorScene.children.forEach((c) => {
+      const h = c as THREE.HemisphereLight;
+      if (h.isHemisphereLight) h.intensity = dark ? 0.7 : 1.9;
+    });
   }
 
   /** Walls between the camera and you drop to a stub, like a dollhouse. */
@@ -972,7 +1025,7 @@ export class World {
     spinWheels(d.rig, g.position.distanceTo(before) * Math.sign(d.speed));
     // Police checkpoints come up now and then on the road.
     d.driven = (d.driven ?? 0) + g.position.distanceTo(before);
-    if (!d.police && d.driven > (d.nextCheck ?? 500) && Math.abs(g.position.z) < ROAD_HALF + 1) {
+    if (!d.police && !d.exam && d.driven > (d.nextCheck ?? 500) && Math.abs(g.position.z) < ROAD_HALF + 1) {
       d.driven = 0;
       d.nextCheck = 400 + Math.random() * 700;
       this.pullOver(d);
@@ -983,12 +1036,124 @@ export class World {
     const gp = g.position;
     const outX = Math.abs(gp.x) > EXTENT_X - 7 && fwd.x * Math.sign(gp.x) > 0.3;
     const outZ = Math.abs(gp.z) > EXTENT_Z - 7 && fwd.z * Math.sign(gp.z) > 0.3;
-    if ((outX || outZ) && throttle > 0.2) {
+    if ((outX || outZ) && throttle > 0.2 && !d.exam) {
       d.speed = Math.min(d.speed, 1);
       if (!d.edgeCooldown) { d.edgeCooldown = 4; this.cb.onDriveEdge?.(); }
     }
+    if (d.exam) this.updateExam(d, dt, hit);
     const kmh = Math.round(Math.abs(d.speed) * 3.6);
     if (kmh !== d.lastReport) { d.lastReport = kmh; this.cb.onDrive?.({ name: d.name, kmh }); }
+  }
+
+  // ---------------------------------------------------------------------------
+  // The practical driving test.
+
+  /**
+   * Drive the examiner down the road: through the checkpoints in your own lane,
+   * under the speed limit, stopping at red, into the box at the end.
+   */
+  startRoadTest(kind: "car" | "bike"): Promise<{ faults: number; seconds: number; log: string[]; aborted: boolean }> {
+    return new Promise((resolve) => {
+      if (!this.player || this.drive || this.ride || !this.district) return resolve({ faults: 99, seconds: 0, log: ["Can't start the test right now."], aborted: true });
+      if (this.inside) this.exitHome();
+      const start = -EXTENT_X + 15;
+      // Clear the start: traffic near it goes back to the end of its lane.
+      this.life?.clearAround(start, 35);
+      const rig = buildVehicle(kind === "bike" ? "motorbike" : "sedan", 31337);
+      rig.group.position.set(start, 0.02, 2.8);
+      rig.group.rotation.y = Math.PI / 2;
+      this.scene.add(rig.group);
+      const group = new THREE.Group();
+      const ringMat = new THREE.MeshBasicMaterial({ color: "#F2B705", transparent: true, opacity: 0.85 });
+      const rings = [start + 30, start + 60, 22, 48];
+      for (const x of rings) {
+        const r = new THREE.Mesh(new THREE.TorusGeometry(2.1, 0.09, 8, 40), ringMat);
+        r.position.set(x, 2.1, 2.8);
+        r.rotation.y = Math.PI / 2;
+        group.add(r);
+      }
+      const box = Math.min(EXTENT_X - 18, 74);
+      const boxMat = new THREE.MeshBasicMaterial({ color: "#F2B705" });
+      for (const [dx, dz, w, dd] of [[0, -1.4, 5.5, 0.15], [0, 1.4, 5.5, 0.15], [-2.75, 0, 0.15, 2.95], [2.75, 0, 0.15, 2.95]]) {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.02, dd), boxMat);
+        m.position.set(box + dx, 0.05, 2.8 + dz);
+        group.add(m);
+      }
+      this.scene.add(group);
+      this.player.root.visible = false;
+      const back = this.pos.clone();
+      this.drive = { rig, type: "test", name: kind === "bike" ? "Test motorbike" : "Driving school car", speed: 0, heading: Math.PI / 2, steer: 0, edgeCooldown: 0, lastReport: -1, driven: 0, nextCheck: 1e9 };
+      this.drive.exam = { rings, idx: 0, box, faults: 0, log: [], t: 0, speedT: 0, wrongT: 0, stillT: 0, hitCool: 0, lastX: start, group, back, resolve };
+      if (this.life) this.life.playerCarLength = rig.length;
+      this.pos.set(start, 0, 2.8);
+      this.camPos.set(start - 8, 3.4, 5);
+      this.cb.onDrive?.({ name: this.drive.name, kmh: 0 });
+      this.reportExam();
+    });
+  }
+
+  abandonRoadTest() {
+    const d = this.drive;
+    if (d?.exam) this.endExam(d, true);
+  }
+
+  private fault(e: Exam, why: string, n = 1) {
+    e.faults += n;
+    e.log.push(why);
+    this.caption(`📋 Fault: ${why}`);
+  }
+
+  private reportExam() {
+    const e = this.drive?.exam;
+    if (!e) return;
+    this.cb.onExam?.({ faults: e.faults, next: e.idx < e.rings.length ? `Drive through checkpoint ${e.idx + 1} of ${e.rings.length}` : "Stop inside the yellow box", last: e.log[e.log.length - 1] ?? null, seconds: Math.round(e.t) });
+  }
+
+  private updateExam(d: Driving, dt: number, hit: boolean) {
+    const e = d.exam!;
+    const g = d.rig.group.position;
+    const before = e.faults;
+    e.t += dt;
+    e.hitCool = Math.max(0, e.hitCool - dt);
+    if (hit && !e.hitCool) { this.fault(e, "Hit something"); e.hitCool = 1.5; }
+    // 50 km/h in town.
+    e.speedT = Math.abs(d.speed) * 3.6 > 50 ? e.speedT + dt : 0;
+    if (e.speedT > 2) { this.fault(e, "Over the 50 km/h limit"); e.speedT = 0; }
+    // Ghana drives on the right: stay in the right-hand lane.
+    e.wrongT = g.z < 0.4 && Math.abs(d.speed) > 1 ? e.wrongT + dt : 0;
+    if (e.wrongT > 2) { this.fault(e, "On the wrong side of the road"); e.wrongT = 0; }
+    // Red light at the junction.
+    const stopLine = -(CROSS_HALF + 3.6);
+    if (e.lastX < stopLine && g.x >= stopLine && this.district && this.district.trafficLight.phase() !== "ew") this.fault(e, "Ran a red light", 2);
+    // Checkpoints.
+    while (e.idx < e.rings.length && g.x >= e.rings[e.idx]) {
+      if (Math.abs(g.z - 2.8) > 2.2) this.fault(e, `Missed checkpoint ${e.idx + 1}`);
+      e.idx++;
+    }
+    e.lastX = g.x;
+    // Stop in the box.
+    if (e.idx >= e.rings.length) {
+      const inBox = Math.abs(g.x - e.box) < 2.4 && Math.abs(g.z - 2.8) < 1.2;
+      e.stillT = inBox && Math.abs(d.speed) < 0.3 ? e.stillT + dt : 0;
+      if (e.stillT > 1.2) return this.endExam(d, false);
+      if (g.x > e.box + 6) { this.fault(e, "Overshot the stop box"); return this.endExam(d, false); }
+    }
+    if (e.t > 300) { this.fault(e, "Took far too long", 3); return this.endExam(d, false); }
+    if (e.faults !== before || Math.floor(e.t) !== Math.floor(e.t - dt)) this.reportExam();
+  }
+
+  private endExam(d: Driving, aborted: boolean) {
+    const e = d.exam!;
+    this.scene.remove(e.group);
+    d.rig.group.removeFromParent();
+    this.drive = null;
+    if (this.life) this.life.playerCarLength = 0;
+    if (this.player) this.player.root.visible = true;
+    this.pos.copy(e.back);
+    this.vel.set(0, 0, 0);
+    this.cb.onDrive?.(null);
+    this.cb.onExam?.(null);
+    e.resolve({ faults: e.faults, seconds: Math.round(e.t), log: e.log, aborted });
   }
 
   /** An officer steps up to the driver's window; the server decides how it goes. */
@@ -1338,19 +1503,24 @@ export class World {
     this.camera.lookAt(this.camTarget.x, this.camTarget.y + 1.3, this.camTarget.z);
     if (this.ride) this.updateRide(dt);
     else if (this.drive) this.driveCamera(dt);
-    if (this.inside && this.interior) this.cutWalls(dt);
+    if (this.inside && this.interior) {
+      this.cutWalls(dt);
+      this.interiorPower(minute);
+    }
     else this.camPos.copy(this.camera.position);
     this.updateLeaving(dt);
 
     if (!this.inside && this.district && this.life) {
       this.atmo.update(hour, dt, this.pos, this.camera.position);
       const night = this.atmo.night;
-      for (const n of this.district.night) n.mat.emissiveIntensity = THREE.MathUtils.lerp(n.off, n.on, THREE.MathUtils.smoothstep(night, 0.35, 0.8));
+      // Dumsor: no street lights and most windows dark (a few on generators).
+      const cut = powerOff(this.district.id, minute);
+      for (const n of this.district.night) n.mat.emissiveIntensity = THREE.MathUtils.lerp(n.off, cut ? n.off + (n.on - n.off) * 0.15 : n.on, THREE.MathUtils.smoothstep(night, 0.35, 0.8));
       if (this.tickAcc === 0 || this.lampPool[0].intensity === 0) {
         const spots = [...this.district.lampSpots].sort((a, b) => a.distanceToSquared(this.pos) - b.distanceToSquared(this.pos));
         this.lampPool.forEach((l, i) => spots[i] && l.position.copy(spots[i]));
       }
-      for (const l of this.lampPool) l.intensity = night > 0.5 ? 160 : 0;
+      for (const l of this.lampPool) l.intensity = night > 0.5 && !cut ? 160 : 0;
       this.district.ocean?.update(t, this.atmo.sunDir, this.atmo.skyColor, night);
       if (gd.hour !== this.lastNpcHour) {
         this.lastNpcHour = gd.hour;
@@ -1410,7 +1580,9 @@ export class World {
 
   private updateNearby() {
     let best: Nearby | null = null;
-    if (this.drive) {
+    if (this.drive?.exam) {
+      // The examiner decides when you get out.
+    } else if (this.drive) {
       best = { kind: "car_exit", id: "car", label: "Get out" };
     } else if (this.ride) {
       // Nothing to press while you're in a car.

@@ -225,6 +225,10 @@ export interface Job {
   energyCost: number;
   skillGain: Partial<Record<SkillKey, number>>;
   blurb: string;
+  /** A licence or certificate you must hold (unlock id). */
+  needsUnlock?: string;
+  /** Gig work on your own wheels. */
+  needsVehicle?: "car" | "motorbike";
 }
 
 export const JOBS: Record<string, Job> = {
@@ -236,6 +240,16 @@ export const JOBS: Record<string, Job> = {
   bank_teller: { id: "bank_teller", title: "Bank officer", placeId: "coastline_bank_hq", pay: 420, hours: 8, shiftWindow: [7, 10], weekdaysOnly: true, salaried: true, requires: { work: 30, reputation: 10 }, energyCost: 28, skillGain: { work: 2, business: 1 }, blurb: "Accounts, transfers and very particular customers." },
   property_agent: { id: "property_agent", title: "Property agent", placeId: "boateng_realty", pay: 330, hours: 7, shiftWindow: [8, 12], requires: { charisma: 25, business: 10 }, energyCost: 26, skillGain: { charisma: 2, business: 2 }, blurb: "Show houses, close deals, earn trust." },
   software_dev: { id: "software_dev", title: "Software developer", placeId: "kente_labs", pay: 720, hours: 8, shiftWindow: [8, 12], weekdaysOnly: true, salaried: true, requires: { work: 50 }, energyCost: 30, skillGain: { work: 3, business: 1 }, blurb: "Ship features for fintechs across West Africa." },
+  // Stage 2: trades, care, night work and gigs on your own wheels.
+  chop_cook: { id: "chop_cook", title: "Chop bar cook", placeId: "mama_adwoa", pay: 115, hours: 7, shiftWindow: [9, 12], requires: {}, energyCost: 30, skillGain: { work: 1, business: 1 }, blurb: "Pound fufu, stir the light soup, keep the pots going for the lunch crowd." },
+  barber_apprentice: { id: "barber_apprentice", title: "Barbering apprentice", placeId: "nima_barber", pay: 85, hours: 7, shiftWindow: [8, 13], requires: {}, energyCost: 18, skillGain: { charisma: 1, work: 1 }, blurb: "Sweep, line up the clippers, and learn the fades from the master." },
+  tailor_apprentice: { id: "tailor_apprentice", title: "Tailoring apprentice", placeId: "nima_tailor", pay: 85, hours: 8, shiftWindow: [8, 12], requires: {}, energyCost: 16, skillGain: { work: 1, business: 1 }, blurb: "Cut kaba patterns, hem trousers, and run to the market for buttons." },
+  night_watchman: { id: "night_watchman", title: "Night security", placeId: "sankofa_clinic", pay: 140, hours: 10, shiftWindow: [18, 22], requires: {}, energyCost: 30, skillGain: { fitness: 1 }, blurb: "A torch, a stool by the clinic gate and a long night. Paid every morning." },
+  nursing_aide: { id: "nursing_aide", title: "Nursing aide", placeId: "mamobi_polyclinic", pay: 170, hours: 8, shiftWindow: [6, 9], requires: { work: 10 }, energyCost: 30, skillGain: { work: 1, charisma: 1 }, blurb: "Take vitals, help patients to the ward, keep the queue moving." },
+  pupil_teacher: { id: "pupil_teacher", title: "Evening class tutor", placeId: "kaneshie_school", pay: 120, hours: 4, shiftWindow: [16, 18], weekdaysOnly: true, requires: { work: 15 }, energyCost: 18, skillGain: { charisma: 1, work: 1 }, blurb: "Teach WASSCE maths to adults resitting the exam after their day jobs." },
+  fitting_mechanic: { id: "fitting_mechanic", title: "Fitting-shop mechanic", placeId: "tokunbo_lot", pay: 150, hours: 8, shiftWindow: [8, 10], requires: { work: 8, fitness: 5 }, energyCost: 34, skillGain: { work: 1, fitness: 1 }, blurb: "Under the bonnet of home-used cars all day. Oil to your elbows." },
+  delivery_rider: { id: "delivery_rider", title: "Food delivery rider", placeId: "oxford_grill", pay: 160, hours: 6, shiftWindow: [11, 18], requires: {}, energyCost: 26, skillGain: { fitness: 1, work: 1 }, needsUnlock: "licence_a", needsVehicle: "motorbike", blurb: "Your own motorbike, a box on the back, and Oxford Street orders to the whole of Osu." },
+  ride_driver: { id: "ride_driver", title: "Ride-app driver", placeId: "airport_stop", pay: 260, hours: 8, shiftWindow: [5, 16], requires: {}, energyCost: 28, skillGain: { charisma: 1, work: 1 }, needsUnlock: "licence_b", needsVehicle: "car", blurb: "Your own car, the app on your phone, and airport runs that pay the most." },
   hotel_manager: { id: "hotel_manager", title: "Hotel general manager", placeId: "royal_palm", pay: 1300, hours: 9, shiftWindow: [7, 11], salaried: true, requires: { work: 70, business: 40, reputation: 40 }, energyCost: 32, skillGain: { business: 3, charisma: 1 }, blurb: "Run the finest small hotel in the Valley." },
 };
 

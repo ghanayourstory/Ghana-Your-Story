@@ -353,6 +353,7 @@ const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
   ["players", "hometown", "TEXT NOT NULL DEFAULT ''"],
   ["players", "helped_day", "INTEGER NOT NULL DEFAULT -99"],
   ["players", "last_police_min", "INTEGER NOT NULL DEFAULT -9999"],
+  ["courses", "test_day", "INTEGER NOT NULL DEFAULT -1"],
 ];
 
 export function migrate(db: Db) {

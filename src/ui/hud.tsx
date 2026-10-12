@@ -6,6 +6,7 @@ import { toGameDate } from "../../shared/calendar.ts";
 import { DISTRICTS, type DistrictId } from "../../shared/world.ts";
 import { NPC_BY_ID } from "../../shared/people.ts";
 import { NEEDS } from "../../shared/mood.ts";
+import { fmtHour, outageWindow, powerOff } from "../../shared/power.ts";
 
 export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: string) => void }) {
   const { state, football } = useGame();
@@ -69,6 +70,7 @@ export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: str
       </div>
       <div className="hud-chips">
         <button className={`chip ${net >= 0 ? "green" : ""}`} onClick={() => onOpen("money")}>{net >= 0 ? "+" : "−"}{money(Math.abs(net), true)} a month ›</button>
+        {powerOff(state.player.district, minute) && <span className="chip alert" title="Scheduled power cut (dumsor)">🕯️ Lights off till {fmtHour(outageWindow(state.player.district, Math.floor(minute / 1440))![1])}</span>}
         <button className={`chip ${state.player.daily.goals.every((g) => g.done) ? "green" : ""}`} onClick={() => onOpen("today")}>🎯 Today {state.player.daily.goals.filter((g) => g.done).length}/3</button>
         <span className="chip">⭐ {Math.round(state.player.reputation)} standing</span>
         {state.event && <button className="chip alert" onClick={() => onOpen("event")}>📱 {state.event.title}</button>}

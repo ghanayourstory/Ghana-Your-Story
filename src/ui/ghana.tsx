@@ -191,7 +191,7 @@ export function DealerPanel({ place, open }: { place: Place; open: boolean }) {
   );
 }
 
-export function CoursesPanel({ place, open }: { place: Place; open: boolean }) {
+export function CoursesPanel({ place, open, onRoadTest }: { place: Place; open: boolean; onRoadTest?: (courseId: string) => void }) {
   const { state, act, busy } = useGame();
   if (!state) return null;
   const courses = Object.values(COURSES).filter((c) => c.places.includes(place.id));
@@ -216,6 +216,8 @@ export function CoursesPanel({ place, open }: { place: Place; open: boolean }) {
               <ConfirmButton className="btn sm primary" disabled={busy || !open} ask={`Enrol in ${c.name}?`} details={{ where: place.name, cost: money(c.fee * 100), time: `${c.sessions} sessions, one a day`, changes: "Attend sessions here to earn the certificate and the skills and jobs it unlocks.", undo: "Fees aren't refunded. You can stop attending at any time." }} onConfirm={() => act({ type: "course_enrol", courseId: c.id, placeId: place.id })}>Enrol</ConfirmButton>
             ) : mine.status === "enrolled" ? (
               <button className="btn sm primary" disabled={busy || !open || !inHours || doneToday} onClick={() => act({ type: "course_attend", courseId: c.id, placeId: place.id })}>Attend</button>
+            ) : mine.status === "test" ? (
+              <ConfirmButton className="btn sm primary" disabled={busy || !open || mine.testDay === state.time.day} ask="Take the road test now?" details={{ where: `${place.name}, then out on the road`, time: "A few minutes of driving; 30 game minutes", cost: "Free the first time; a retest costs GH₵150", changes: "Drive through the yellow checkpoints in the right-hand lane, keep under 50 km/h, stop at red, and stop inside the box at the end. 3 faults or fewer and the licence is yours.", undo: "If you fail, try again from tomorrow." }} onConfirm={() => onRoadTest?.(c.id)}>{mine.testDay === state.time.day ? "Retest tomorrow" : "Road test"}</ConfirmButton>
             ) : <span className="pill green">Done</span>}
           </div>
         );

@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v12. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v13. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -42,9 +42,16 @@ Last checked: game build v12. This is the Stage 0 "discovery" note from the foun
 3. **Art quality.** Buildings and props are procedural. Real car models are CC BY; real trotro, okada and building models need asset sources (blocked network hosts) or commissioned art.
 4. **Performance on low-end phones.** High quality (ambient occlusion, bloom) is desktop-only; medium and low need regular testing on a mid-range Android.
 
+## Stage 2 progress ("make the city feel inhabited")
+
+- ✅ Dumsor: a deterministic load-shedding timetable by area; outages darken streets and homes, block screens without a generator, and add a mood.
+- ✅ Practical driving/riding test driven in 3D; server checks place, course stage, one attempt a day and plausible results. *Known limit:* the fault count comes from the player's browser, so a determined cheat could fake a pass; fine for a single-player demo, to be hardened before multiplayer (e.g. server replay of the route).
+- ✅ Nine new jobs across trades, care, night work and licence-gated gig work.
+- ⏳ Weekly NPC routines beyond the current daily schedules; school and clinic visits as activities; routine bills (prepaid electricity, water, data) as their own lines.
+
 ## Next slices, in order
 
-1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner: "we will handle hosting later".)*
-2. Stage 2, "make the city feel inhabited": more employers and job paths, school and clinic visits, weekly routines for NPCs, routine expenses (electricity prepaid, water, data).
-3. Driving school lessons on the road (practical test), fuel stations and refuelling.
-4. Colour-safe need bars (patterns or icons as well as colour).
+1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner.)*
+2. Gig work you actually drive: ride-app and delivery shifts as driving missions (pick-up, drop-off) instead of a timed shift.
+3. Clinic visits (consultation, prescriptions) and school routines for younger family members.
+4. Traffic lights that go dark during dumsor, with a warden directing traffic.

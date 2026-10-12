@@ -7,6 +7,7 @@ import { intercityQuote } from "../shared/cities.ts";
 import { DISTRICTS, PLACES, SERVICES } from "../shared/world.ts";
 import { SITES } from "../shared/regional.ts";
 import { VEHICLES } from "../shared/life.ts";
+import { outageWindow, powerOff } from "../shared/power.ts";
 import { MINUTES_PER_DAY, toGameDate } from "../shared/calendar.ts";
 import { buildState, createPlayer, loadPlayer, type Ctx } from "../server/engine.ts";
 import { districtsIn } from "../shared/world.ts";
@@ -120,7 +121,7 @@ test("farm: plant in season, harvest once, paid once", () => {
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
 
-test("driving school: five daily sessions earn licence B", () => {
+test("driving school: five lessons, then a road test you drive yourself earns licence B", () => {
   const { ctx, id } = rich();
   skipTo(ctx, id, 17); // players start in Kaneshie
   assert.ok(act(ctx, id, { type: "course_enrol", courseId: "driving_b", placeId: "kaneshie_school" }).ok);
@@ -128,11 +129,29 @@ test("driving school: five daily sessions earn licence B", () => {
     const r = act(ctx, id, { type: "course_attend", courseId: "driving_b", placeId: "kaneshie_school" });
     assert.ok(r.ok, `session ${i + 1}: ${r.error}`);
     if (i < 4) assert.equal(act(ctx, id, { type: "course_attend", courseId: "driving_b", placeId: "kaneshie_school" }).code, "tomorrow");
-    skip(ctx, id, 22);
-    skipTo(ctx, id, 17);
+    if (i < 4) {
+      skip(ctx, id, 22);
+      skipTo(ctx, id, 17);
+    }
   }
-  const unlocks = JSON.parse(ctx.db.get<{ unlocks: string }>("SELECT unlocks FROM players WHERE id = ?", id)!.unlocks) as string[];
-  assert.ok(unlocks.includes("licence_b"));
+  const lic = () => (JSON.parse(ctx.db.get<{ unlocks: string }>("SELECT unlocks FROM players WHERE id = ?", id)!.unlocks) as string[]).includes("licence_b");
+  assert.ok(!lic());
+  // A rough first drive: fail, pay the retest fee; only one attempt a day; implausible results are refused.
+  assert.equal(act(ctx, id, { type: "road_test", courseId: "driving_b", placeId: "kaneshie_school", faults: 2, seconds: 3 }).code, "bad_result");
+  skip(ctx, id, 20);
+  skipTo(ctx, id, 17);
+  const cash = bal(ctx, id, "bank") + bal(ctx, id, "cash");
+  const fail = act(ctx, id, { type: "road_test", courseId: "driving_b", placeId: "kaneshie_school", faults: 6, seconds: 140 });
+  assert.ok(fail.ok, fail.error);
+  assert.equal((fail.data as { passed: boolean }).passed, false);
+  assert.equal(cash - (bal(ctx, id, "bank") + bal(ctx, id, "cash")), 15000);
+  assert.equal(act(ctx, id, { type: "road_test", courseId: "driving_b", placeId: "kaneshie_school", faults: 0, seconds: 120 }).code, "tomorrow");
+  skip(ctx, id, 22);
+  skipTo(ctx, id, 17);
+  const pass = act(ctx, id, { type: "road_test", courseId: "driving_b", placeId: "kaneshie_school", faults: 2, seconds: 150 });
+  assert.ok(pass.ok, pass.error);
+  assert.equal((pass.data as { passed: boolean }).passed, true);
+  assert.ok(lic());
 });
 
 test("social posts need a smartphone; work-and-pay pays daily", () => {
@@ -399,6 +418,43 @@ test("police checkpoint: no licence means a fine, a licence means a safe journey
   const r2 = act(ctx, id, { type: "police_check", vehicleType: "compact" });
   assert.equal((r2.data as { fined: boolean }).fined, false);
   assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("dumsor: the published schedule switches screens off at home; a generator keeps them on for fuel", () => {
+  const { ctx, id } = rich();
+  ctx.db.run("INSERT INTO items (player_id, item_id, price, bought_min) VALUES (?, 'tv32', 100, 0)", id);
+  // Find the next outage for Kaneshie and wait for it.
+  let day = Math.floor(gameMin(ctx, id) / MINUTES_PER_DAY);
+  let w = outageWindow("kaneshie", day);
+  while (!w || (day === Math.floor(gameMin(ctx, id) / MINUTES_PER_DAY) && toGameDate(gameMin(ctx, id)).hour >= w[1])) { day++; w = outageWindow("kaneshie", day); }
+  while (Math.floor(gameMin(ctx, id) / MINUTES_PER_DAY) < day) skip(ctx, id, 12);
+  skipTo(ctx, id, w[0] + 1);
+  assert.ok(powerOff("kaneshie", gameMin(ctx, id)));
+  assert.equal(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).code, "dumsor");
+  assert.ok(buildState(ctx, loadPlayer(ctx.db, id)).player.mood.moodlets.some((m) => m.id === "dumsor"));
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "music" }).ok); // the radio runs on batteries
+  ctx.db.run("INSERT INTO items (player_id, item_id, price, bought_min) VALUES (?, 'generator', 100, 0)", id);
+  const before = bal(ctx, id, "cash");
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).ok);
+  assert.ok(bal(ctx, id, "cash") < before);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("gig jobs need the licence and your own wheels; trades take anyone", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 9);
+  assert.ok(act(ctx, id, { type: "travel", to: "airport_city", mode: "taxi" }).ok);
+  assert.equal(act(ctx, id, { type: "job_apply", jobId: "ride_driver" }).code, "needs_licence");
+  const p = loadPlayer(ctx.db, id);
+  ctx.db.run("UPDATE players SET unlocks = ? WHERE id = ?", JSON.stringify([...JSON.parse(p.unlocks), "licence_b"]), id);
+  assert.equal(act(ctx, id, { type: "job_apply", jobId: "ride_driver" }).code, "needs_vehicle");
+  ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, 'compact', 9000000, 0)", id);
+  assert.ok(act(ctx, id, { type: "job_apply", jobId: "ride_driver" }).ok);
+  skipTo(ctx, id, 10);
+  const r = act(ctx, id, { type: "work" });
+  assert.ok(r.ok, r.error);
+  assert.ok(act(ctx, id, { type: "travel", to: "nima", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "job_apply", jobId: "barber_apprentice" }).ok);
 });
 
 test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {
