@@ -136,6 +136,7 @@ export function Minimap({ world, road, district }: { world: World | null; road: 
       for (const p of m.places) if (p.known) dot(p.x, p.z, p.kind === "transport" ? "#f2b705" : p.kind === "bank" ? "#0e7c86" : p.kind === "food" ? "#e35d3a" : p.kind === "nightlife" ? "#a24ae0" : "#ffffff");
       for (const n of m.npcs) dot(n.x, n.z, "#f2b705", 2.6);
       if (m.home) dot(m.home.x, m.home.z, "#3ddc84", 4);
+      if (m.target) dot(m.target.x, m.target.z, "#F2B705", 6);
       dot(m.plot.x, m.plot.z, "#c8452c", 2.4);
       ctx.restore();
       // Player arrow (screen-space, the map rotates around it).

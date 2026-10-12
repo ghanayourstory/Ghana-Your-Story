@@ -1,4 +1,5 @@
 import { BUILD_VERSION } from "../version.ts";
+import { gigVehicle, startGigShift } from "./gig.ts";
 import { getCaptions, getReduceMotion, getUiScale, setCaptions, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
 import { FamilyApp } from "./family.tsx";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -78,7 +79,7 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
             {app === "home" && <HomeScreen gd={gd} onOpen={(id) => (id === "map" || id === "ride" ? onTravel("phone") : setApp(id as AppId))} badges={badges} />}
             {app === "dream" && <DreamApp />}
             {app === "hustle" && <HustleApp />}
-            {app === "work" && <WorkApp />}
+            {app === "work" && <WorkApp world={world} onClose={onClose} />}
             {app === "money" && <MoneyApp />}
             {app === "people" && <PeopleApp minute={minute} />}
             {app === "news" && <NewsApp />}
@@ -260,7 +261,7 @@ function HustleApp() {
   );
 }
 
-function WorkApp() {
+function WorkApp({ world, onClose }: { world: World | null; onClose: () => void }) {
   const { state, act, busy } = useGame();
   if (!state) return null;
   const job = state.player.job;
@@ -278,6 +279,12 @@ function WorkApp() {
           <div className="kv"><span>Paid</span><span>{JOBS[job.id].salaried ? "Monthly on the 28th" : "Cash, every shift"}</span></div>
           {state.money.payroll > 0 && <div className="kv"><span>Salary earned this month</span><b className="good">{money(state.money.payroll)}</b></div>}
           {job.nextRankAt && <><div className="tiny muted" style={{ marginTop: 6 }}>Promotion: {job.shifts}/{job.nextRankAt} shifts</div><Bar value={(job.shifts / job.nextRankAt) * 100} color="#7c83ff" /></>}
+          {JOBS[job.id]?.needsVehicle && (
+            <div className="col" style={{ marginTop: 8, gap: 4 }}>
+              <button className="btn primary" disabled={busy || !gigVehicle(state) || state.player.lastGigDay === state.time.day} onClick={() => startGigShift(world, state, act, onClose)}>{state.player.lastGigDay === state.time.day ? "Today's shift done" : `${JOBS[job.id].needsVehicle === "car" ? "🚗" : "🛵"} Start driving (3 trips)`}</button>
+              <div className="tiny muted">Shift hours {JOBS[job.id].shiftWindow[0]}:00–{JOBS[job.id].shiftWindow[1]}:00. Drive to the green beacon, stop to pick up, then the yellow one to drop off. Pay per trip, fuel comes off, tips sometimes.</div>
+            </div>
+          )}
           <div style={{ marginTop: 8 }}><ConfirmButton className="btn ghost sm" disabled={busy} ask="Quit this job?" details={{ changes: "No more shifts or pay from here; your rank and promotion progress are lost.", undo: "You can apply again if they're hiring, but you start from the bottom." }} onConfirm={() => act({ type: "job_quit" })}>Quit</ConfirmButton></div>
         </div>
       ) : <div className="notice warn">No job yet. Walk into a workplace to apply — Kaneshie Market and the trotro station take anyone.</div>}

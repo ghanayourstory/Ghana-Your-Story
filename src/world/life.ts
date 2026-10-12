@@ -135,6 +135,9 @@ export class CityLife {
   private rnd = mulberry32(42);
   onHonk: ((pos: THREE.Vector3) => void) | null = null;
   hailedTaxi: Car | null = null;
+  /** Dumsor at the junction: lights dark, a warden waves traffic through. */
+  powerCut = false;
+  private warden: Person | null = null;
   /** Length of the car you're driving (0 when on foot), so traffic gives it room. */
   playerCarLength = 0;
 
@@ -325,12 +328,14 @@ export class CityLife {
     const phase = this.d.trafficLight.phase();
     const tl = this.d.trafficLight.mats;
     const amber = this.d.trafficLight.amber();
-    tl.ewGreen.emissiveIntensity = phase === "ew" && !amber ? 3 : 0;
-    tl.ewAmber.emissiveIntensity = phase === "ew" && amber ? 3 : 0;
-    tl.ewRed.emissiveIntensity = phase === "ew" ? 0 : 3;
-    tl.nsGreen.emissiveIntensity = phase === "ns" && !amber ? 3 : 0;
-    tl.nsAmber.emissiveIntensity = phase === "ns" && amber ? 3 : 0;
-    tl.nsRed.emissiveIntensity = phase === "ns" ? 0 : 3;
+    const lit = this.powerCut ? 0 : 3;
+    tl.ewGreen.emissiveIntensity = phase === "ew" && !amber ? lit : 0;
+    tl.ewAmber.emissiveIntensity = phase === "ew" && amber ? lit : 0;
+    tl.ewRed.emissiveIntensity = phase === "ew" ? 0 : lit;
+    tl.nsGreen.emissiveIntensity = phase === "ns" && !amber ? lit : 0;
+    tl.nsAmber.emissiveIntensity = phase === "ns" && amber ? lit : 0;
+    tl.nsRed.emissiveIntensity = phase === "ns" ? 0 : lit;
+    this.updateWarden(dt, phase);
 
     // Vehicles: keep distance, obey lights, stop for the player, pull in at stops.
     const byLane = new Map<Lane, Car[]>();
@@ -351,9 +356,10 @@ export class CityLife {
           const need = (c.rig.length + ahead.rig.length) / 2 + 2.5;
           if (gap < need + 12) target = Math.min(target, Math.max(0, (gap - need) * 0.9));
         }
-        // Red light.
+        // Red light (or, in dumsor, the warden's hand: same rhythm, everyone slows at the junction).
         const toStop = (lane.stopAt - c.s) * lane.dir - c.rig.length / 2;
         if (phase !== lane.green && toStop > -0.5 && toStop < 22) target = Math.min(target, Math.max(0, toStop * 0.6));
+        if (this.powerCut && toStop > -12 && toStop < 18) target = Math.min(target, 5);
         // Player in the lane ahead.
         const pAlong = lane.axis === "x" ? player.x : player.z;
         const pAcross = lane.axis === "x" ? player.z : player.x;
@@ -517,6 +523,30 @@ export class CityLife {
       }
     }
     return best;
+  }
+
+  /** A traffic warden in a reflective vest takes over the junction when the lights die. */
+  private updateWarden(dt: number, phase: string) {
+    if (!this.powerCut) {
+      if (this.warden) this.warden.root.visible = false;
+      return;
+    }
+    if (!this.warden) {
+      this.warden = buildPerson({ skin: "#4a2f1f", shirt: "#d7ff2e", pants: "#1d2733", hair: "#0f0c0a", feminine: false, height: 1.78, build: 1.05, hairStyle: "cap", headwear: "cap", pattern: "plain" }, { key: true });
+      this.warden.root.position.set(CROSS_HALF + 0.9, 0.16, ROAD_HALF + 0.9);
+      this.group.add(this.warden.root);
+    }
+    const w = this.warden;
+    w.root.visible = true;
+    animatePerson(w, dt, 0);
+    // Face the traffic that's moving and wave it on.
+    w.root.rotation.y = phase === "ew" ? -Math.PI / 2 : Math.PI;
+    const b = (w as unknown as { bones?: Record<string, THREE.Bone> }).bones;
+    if (b) {
+      const t = performance.now() / 1000;
+      b["upperarm01.R"]?.rotation.set(-1.4 + Math.sin(t * 3) * 0.5, 0, -0.3);
+      b["upperarm01.L"]?.rotation.set(-1.6, 0, 0.9);
+    }
   }
 
   /** Send cars near x back to the start of their lanes (to clear a spot on the main road). */

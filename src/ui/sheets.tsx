@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { startGigShift } from "./gig.ts";
 import { GOODS, canBuyHere, canSellHere, sellPrice } from "../../shared/trade.ts";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, ConfirmButton, Bar, EffectsPreview, Sheet, initials, money } from "./common.tsx";
@@ -135,7 +136,9 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
               {mine && state.player.job!.nextRankAt && <div className="tiny muted">Promotion at {state.player.job!.nextRankAt} shifts ({state.player.job!.shifts} done)</div>}
             </div>
             {mine ? (
-              <button className="btn primary sm" disabled={!inWindow || !open || busy} onClick={() => act({ type: "work" })}>{inWindow ? "Work shift" : "Off shift"}</button>
+              j.needsVehicle
+                ? <button className="btn primary sm" disabled={!inWindow || busy || state.player.lastGigDay === state.time.day} onClick={() => startGigShift(world, state, act, onClose)}>{state.player.lastGigDay === state.time.day ? "Done today" : inWindow ? "Start driving" : "Off shift"}</button>
+                : <button className="btn primary sm" disabled={!inWindow || !open || busy} onClick={() => act({ type: "work" })}>{inWindow ? "Work shift" : "Off shift"}</button>
             ) : (
               <ConfirmButton className="btn sm" disabled={missing.length > 0 || busy} ask={`Take the job: ${j.title}?`} details={{ where: p.name, time: `${j.hours}h shifts starting ${j.shiftWindow[0]}:00–${j.shiftWindow[1]}:00${j.weekdaysOnly ? ", weekdays" : ""}`, cost: `Pays about ${money(j.pay * 100)} a shift${j.salaried ? ", paid monthly on the 28th" : ""}`, changes: `You work here: show up in shift hours. It uses about ${j.energyCost} energy a shift and builds your skills.${state.player.job ? " It replaces your current job." : ""}`, undo: "Quit any time from Phone → Work." }} onConfirm={() => act({ type: "job_apply", jobId: j.id })}>Apply</ConfirmButton>
             )}

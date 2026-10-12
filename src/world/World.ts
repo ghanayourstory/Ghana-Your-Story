@@ -50,6 +50,8 @@ export interface WorldCallbacks {
   onDrive?: (d: { name: string; kmh: number } | null) => void;
   /** Pulled over at a police checkpoint (vehicle type). */
   onPolice?: (vehicleType: string) => void;
+  /** Gig shift progress (null when it ends). */
+  onGig?: (g: GigStatus | null) => void;
   /** Driving test progress (null when it ends). */
   onExam?: (e: ExamStatus | null) => void;
   /** A caption for an important sound. */
@@ -74,7 +76,29 @@ interface Driving {
   honkCool?: number;
   /** Driving test in progress. */
   exam?: Exam;
+  /** Ride-app or delivery shift in progress. */
+  gig?: Gig;
 }
+
+interface Gig {
+  kind: "ride" | "delivery";
+  trips: number;
+  done: number;
+  phase: "pickup" | "dropoff";
+  target: THREE.Vector3;
+  who: string;
+  marker: THREE.Group;
+  waiting: Person | null;
+  still: number;
+  t: number;
+  spawned: boolean;
+  resolve: (r: { trips: number; seconds: number; aborted: boolean }) => void;
+}
+
+export interface GigStatus { kind: "ride" | "delivery"; trip: number; of: number; phase: "pickup" | "dropoff"; who: string; dist: number }
+
+const GIG_NAMES = ["Kwesi", "Adwoa", "Mr. Mensah", "Auntie Grace", "Yaw", "Esi", "Selorm", "Fuseini", "Naa", "Kojo", "Abena", "Dr. Owusu"];
+const GIG_SPOTS = ["the bank", "the mall", "Oxford Street", "the church", "the clinic", "the lorry station", "the office block", "the junction"];
 
 interface Exam {
   rings: number[];
@@ -1025,7 +1049,7 @@ export class World {
     spinWheels(d.rig, g.position.distanceTo(before) * Math.sign(d.speed));
     // Police checkpoints come up now and then on the road.
     d.driven = (d.driven ?? 0) + g.position.distanceTo(before);
-    if (!d.police && !d.exam && d.driven > (d.nextCheck ?? 500) && Math.abs(g.position.z) < ROAD_HALF + 1) {
+    if (!d.police && !d.exam && !d.gig && d.driven > (d.nextCheck ?? 500) && Math.abs(g.position.z) < ROAD_HALF + 1) {
       d.driven = 0;
       d.nextCheck = 400 + Math.random() * 700;
       this.pullOver(d);
@@ -1041,6 +1065,7 @@ export class World {
       if (!d.edgeCooldown) { d.edgeCooldown = 4; this.cb.onDriveEdge?.(); }
     }
     if (d.exam) this.updateExam(d, dt, hit);
+    if (d.gig) this.updateGig(d, dt);
     const kmh = Math.round(Math.abs(d.speed) * 3.6);
     if (kmh !== d.lastReport) { d.lastReport = kmh; this.cb.onDrive?.({ name: d.name, kmh }); }
   }
@@ -1090,6 +1115,120 @@ export class World {
       this.cb.onDrive?.({ name: this.drive.name, kmh: 0 });
       this.reportExam();
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Gig shifts: drive your own car or motorbike to pick-ups and drop-offs.
+
+  get gigging() {
+    return !!this.drive?.gig;
+  }
+
+  startGig(kind: "ride" | "delivery", vehicleType: string, trips = 3): Promise<{ trips: number; seconds: number; aborted: boolean }> {
+    return new Promise((resolve) => {
+      if (!this.player || this.ride || !this.district || this.drive?.exam) return resolve({ trips: 0, seconds: 0, aborted: true });
+      if (this.inside) this.exitHome();
+      let spawned = false;
+      if (!this.drive) {
+        // Use your parked vehicle if it's here; otherwise you fetch it to the kerb.
+        if (!this.enterCar(vehicleType)) {
+          const rig = buildVehicle(vehicleKindForModel(VEHICLES[vehicleType]?.model ?? "sedan"), 777);
+          const side = Math.sign(this.pos.z) || 1;
+          rig.group.position.set(THREE.MathUtils.clamp(this.pos.x, -EXTENT_X + 10, EXTENT_X - 10), 0.02, side * 2.8);
+          rig.group.rotation.y = side > 0 ? Math.PI / 2 : -Math.PI / 2;
+          this.scene.add(rig.group);
+          this.parkedCars.push({ rig, type: vehicleType });
+          this.enterCar(vehicleType);
+          spawned = true;
+        }
+      }
+      const d = this.drive!;
+      d.gig = { kind, trips, done: 0, phase: "pickup", target: new THREE.Vector3(), who: GIG_NAMES[Math.floor(Math.random() * GIG_NAMES.length)], marker: new THREE.Group(), waiting: null, still: 0, t: 0, spawned, resolve };
+      this.scene.add(d.gig.marker);
+      this.placeGigTarget(d);
+      this.reportGig();
+    });
+  }
+
+  abandonGig() {
+    const d = this.drive;
+    if (d?.gig) this.endGig(d, true);
+  }
+
+  /** A kerbside spot on the main road, well away from where you are. */
+  private gigSpot(from: THREE.Vector3) {
+    for (let i = 0; i < 20; i++) {
+      const x = -EXTENT_X + 14 + Math.random() * (EXTENT_X * 2 - 28);
+      const side = Math.random() < 0.5 ? 1 : -1;
+      const p = new THREE.Vector3(x, 0, side * (ROAD_HALF - 1.2));
+      if (Math.abs(x) > CROSS_HALF + 6 && p.distanceTo(from) > 55) return p;
+    }
+    return new THREE.Vector3(-from.x || 40, 0, ROAD_HALF - 1.2);
+  }
+
+  private placeGigTarget(d: Driving) {
+    const g = d.gig!;
+    g.target.copy(this.gigSpot(d.rig.group.position));
+    g.marker.clear();
+    const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.9, 0.9, 14, 20, 1, true), new THREE.MeshBasicMaterial({ color: g.phase === "pickup" ? "#3ddc84" : "#F2B705", transparent: true, opacity: 0.28, depthWrite: false, side: THREE.DoubleSide }));
+    beacon.position.set(g.target.x, 7, g.target.z);
+    g.marker.add(beacon);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2.6, 3.1, 40), new THREE.MeshBasicMaterial({ color: g.phase === "pickup" ? "#3ddc84" : "#F2B705", transparent: true, opacity: 0.8, depthWrite: false }));
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(g.target.x, 0.06, g.target.z);
+    g.marker.add(ring);
+    // Someone waiting at the kerb (a customer, or the restaurant with your order).
+    const kerb = new THREE.Vector3(g.target.x, 0.16, Math.sign(g.target.z) * (WALK_IN + 0.4));
+    g.waiting = buildPerson(randomLook(Math.floor(Math.random() * 1e6)), { key: true });
+    g.waiting.root.position.copy(kerb);
+    g.waiting.root.rotation.y = Math.sign(g.target.z) > 0 ? Math.PI : 0;
+    g.marker.add(g.waiting.root);
+    if (g.kind === "delivery" && g.phase === "pickup") {
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.3, 0.35), new THREE.MeshStandardMaterial({ color: "#c8452c", roughness: 0.7 }));
+      box.position.copy(kerb).add(new THREE.Vector3(0.5, 0.15, 0));
+      g.marker.add(box);
+    }
+  }
+
+  private reportGig() {
+    const d = this.drive;
+    const g = d?.gig;
+    if (!g || !d) return;
+    this.cb.onGig?.({ kind: g.kind, trip: g.done + 1, of: g.trips, phase: g.phase, who: g.who, dist: Math.round(d.rig.group.position.distanceTo(g.target)) });
+  }
+
+  private updateGig(d: Driving, dt: number) {
+    const g = d.gig!;
+    g.t += dt;
+    if (g.waiting) animatePerson(g.waiting, dt, 0);
+    const pos = d.rig.group.position;
+    const near = Math.hypot(pos.x - g.target.x, pos.z - g.target.z) < 5.5;
+    g.still = near && Math.abs(d.speed) < 0.6 ? g.still + dt : 0;
+    if (g.still > 1) {
+      g.still = 0;
+      if (g.phase === "pickup") {
+        this.caption(g.kind === "ride" ? `🚗 ${g.who} gets in` : `📦 Order picked up for ${g.who}`);
+        g.phase = "dropoff";
+        this.placeGigTarget(d);
+        if (g.kind === "ride" && g.waiting) g.waiting.root.visible = false; // the rider is in your car now
+      } else {
+        g.done++;
+        this.caption(g.kind === "ride" ? `✅ ${g.who} is dropped at ${GIG_SPOTS[g.done % GIG_SPOTS.length]}` : `✅ ${g.who} has the food. Tip incoming?`);
+        if (g.done >= g.trips) return this.endGig(d, false);
+        g.who = GIG_NAMES[Math.floor(Math.random() * GIG_NAMES.length)];
+        g.phase = "pickup";
+        this.placeGigTarget(d);
+      }
+    }
+    if (Math.floor(g.t * 2) !== Math.floor((g.t - dt) * 2)) this.reportGig();
+  }
+
+  private endGig(d: Driving, aborted: boolean) {
+    const g = d.gig!;
+    this.scene.remove(g.marker);
+    d.gig = undefined;
+    this.cb.onGig?.(null);
+    g.resolve({ trips: g.done, seconds: Math.round(g.t), aborted });
   }
 
   abandonRoadTest() {
@@ -1241,6 +1380,7 @@ export class World {
       npcs: [...(this.life?.npcs.values() ?? [])].map((a) => ({ id: a.npc.id, x: a.home.x, z: a.home.z })),
       home: this.state?.player.home.district === d.id ? { x: d.homeDoor.x, z: d.homeDoor.z } : null,
       plot: { x: d.plotSpot.x, z: d.plotSpot.z },
+      target: this.drive?.gig ? { x: this.drive.gig.target.x, z: this.drive.gig.target.z } : null,
       coastal: d.shoreZ,
       bearing: DISTRICTS[d.id].bearing,
     };
@@ -1515,6 +1655,7 @@ export class World {
       const night = this.atmo.night;
       // Dumsor: no street lights and most windows dark (a few on generators).
       const cut = powerOff(this.district.id, minute);
+      this.life.powerCut = cut;
       for (const n of this.district.night) n.mat.emissiveIntensity = THREE.MathUtils.lerp(n.off, cut ? n.off + (n.on - n.off) * 0.15 : n.on, THREE.MathUtils.smoothstep(night, 0.35, 0.8));
       if (this.tickAcc === 0 || this.lampPool[0].intensity === 0) {
         const spots = [...this.district.lampSpots].sort((a, b) => a.distanceToSquared(this.pos) - b.distanceToSquared(this.pos));
@@ -1580,7 +1721,7 @@ export class World {
 
   private updateNearby() {
     let best: Nearby | null = null;
-    if (this.drive?.exam) {
+    if (this.drive?.exam || this.drive?.gig) {
       // The examiner decides when you get out.
     } else if (this.drive) {
       best = { kind: "car_exit", id: "car", label: "Get out" };

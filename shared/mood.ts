@@ -12,6 +12,7 @@ export interface MoodInput {
   missingHome?: boolean;
   /** At home in the dark with no generator. */
   dumsor?: boolean;
+  illness?: string;
 }
 export interface Moodlet {
   id: string;
@@ -60,6 +61,7 @@ export function moodOf(m: MoodInput): Mood {
   if (m.comfort >= 4) add("comfy", "🛋️", "Comfy home", "You've furnished it well.", 1);
   if (m.partnered) add("in_love", "❤️", "In love", "Someone special in your life.", 2);
   if (m.helpedFamily) add("helped_family", "🤲", "Helped the family", "You came through for someone at home.", 1);
+  if (m.illness) add("ill", "🤒", m.illness === "malaria" ? "Malaria" : m.illness === "flu" ? "Flu" : "Running stomach", m.illness === "malaria" ? "Fever and aches. The clinic can test and treat it." : m.illness === "flu" ? "Sniffles and a sore throat. The pharmacy can help; it passes in a few days." : "Too many trips to the toilet. ORS from the pharmacy sorts it.", -2);
   if (m.dumsor) add("dumsor", "🕯️", "Dumsor", "The lights are off and the fan has stopped.", -1);
   if (m.missingHome) add("missing_home", "🏡", "Missing home", "It's been a while since you called home.", -1);
   if (m.hasCar) add("wheels", "🚗", "Got wheels", "No more waiting for trotros.", 1);

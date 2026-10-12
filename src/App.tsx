@@ -10,7 +10,7 @@ import { TodaySheet } from "./ui/today.tsx";
 import { getCaptions } from "./ui/a11y.ts";
 import { FamilyApp } from "./ui/family.tsx";
 import { Sheet } from "./ui/common.tsx";
-import { World, type ExamStatus, type Nearby, type Quality } from "./world/World.ts";
+import { World, type ExamStatus, type GigStatus, type Nearby, type Quality } from "./world/World.ts";
 import { loadHumans } from "./world/humans.ts";
 import { loadCarModels } from "./world/carmodels.ts";
 import type { GameState } from "../server/engine.ts";
@@ -105,6 +105,7 @@ function Game() {
   const [ride, setRide] = useState<{ label: string; icon: string } | null>(null);
   const [police, setPolice] = useState<string | null>(null);
   const [exam, setExam] = useState<ExamStatus | null>(null);
+  const [gig, setGig] = useState<GigStatus | null>(null);
   const [captionsList, setCaptionsList] = useState<{ id: number; text: string }[]>([]);
   const [driving, setDriving] = useState<{ name: string; kmh: number } | null>(null);
   const [doing, setDoing] = useState<{ label: string; icon: string; p: number } | null>(null);
@@ -134,6 +135,7 @@ function Game() {
       onDrive: setDriving,
       onPolice: setPolice,
       onExam: setExam,
+      onGig: setGig,
       onCaption: (text) => {
         if (!getCaptions()) return;
         const id = Math.random();
@@ -318,6 +320,16 @@ function Game() {
         </div>
       )}
       {captionsList.length > 0 && <div className="captions" aria-live="polite">{captionsList.map((c) => <div key={c.id}>{c.text}</div>)}</div>}
+      {gig && (
+        <div className="ride-banner exam">
+          <span className="ride-icon">{gig.kind === "ride" ? "🚗" : "🛵"}</span>
+          <div className="grow">
+            <b>Trip {gig.trip}/{gig.of} · {gig.phase === "pickup" ? (gig.kind === "ride" ? `Pick up ${gig.who}` : `Collect ${gig.who}'s order`) : (gig.kind === "ride" ? `Drop ${gig.who} off` : `Deliver to ${gig.who}`)}</b>
+            <div className="tiny muted">{gig.dist} m · follow the {gig.phase === "pickup" ? "green" : "yellow"} beacon (yellow dot on the map) and stop beside it</div>
+          </div>
+          <button className="btn small ghost" onClick={() => world?.abandonGig()}>End shift</button>
+        </div>
+      )}
       {exam && (
         <div className="ride-banner exam">
           <span className="ride-icon">📋</span>
@@ -370,6 +382,9 @@ function Game() {
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>🚗 <b>Drive for the app:</b> ride-app and delivery shifts are real now. Tap "Start driving", follow the green beacon to pick up, the yellow one to drop off. Pay per trip, fuel comes off, tips sometimes.</div>
+              <div>🤒 <b>Feeling ill:</b> malaria in the rains (sleep under a net), flu in the Harmattan, a running stomach if hygiene slips. The clinic treats malaria; the pharmacy handles the rest.</div>
+              <div>🚦 <b>Dumsor at the junction:</b> when the power goes, the traffic lights die and a warden in a reflective vest waves traffic through.</div>
               <div>🕯️ <b>Dumsor:</b> some weeks each area loses power for a morning or evening on a published timetable (see the morning card). Street lights and windows go dark, home lights drop to candlelight, and the TV won't come on unless you have a generator (fuel extra).</div>
               <div>📋 <b>Real road test:</b> after your driving or riding lessons, drive the examiner yourself: through the checkpoints in your lane, under 50 km/h, stop at red, park in the box. 3 faults or fewer passes.</div>
               <div>💼 <b>New jobs:</b> chop bar cook, barbering and tailoring apprentices, clinic night security, nursing aide, evening class tutor, fitting-shop mechanic, and gig work as a food delivery rider (licence A + motorbike) or ride-app driver (licence B + car).</div>

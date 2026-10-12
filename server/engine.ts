@@ -68,6 +68,9 @@ export interface PlayerRow {
   hometown: string;
   helped_day: number;
   last_police_min: number;
+  last_gig_day: number;
+  illness: string;
+  ill_day: number;
   reputation: number;
   work: number;
   fitness: number;
@@ -127,11 +130,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -266,6 +269,8 @@ function decay(p: PlayerRow, minutes: number, sleeping: boolean, partnered: bool
   if (!sleeping) p.energy = clamp(p.energy - h * 3, 0, 100);
   if (!sleeping) p.social = clamp(p.social - h * (partnered ? 0.45 : 0.9), 0, 100);
   p.fun = clamp(p.fun - h * (sleeping ? 0.3 : 2.2), 0, 100);
+  if (p.illness && !sleeping) p.energy = clamp(p.energy - h * 1.5, 0, 100);
+  if (p.illness === "malaria") p.health = clamp(p.health - h * 0.4, 0, 100);
   p.hygiene = clamp(p.hygiene - h * (sleeping ? 0.6 : 2.4), 0, 100);
   p.bladder = clamp(p.bladder - h * (sleeping ? 2.2 : 6), 0, 100);
   let dh = 0;
@@ -469,6 +474,7 @@ function eventMultiplier(db: Db, playerId: number, day: number): number {
 function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   spoilStock(ctx, p, fb);
   familyDay(ctx, p, day, fb);
+  illnessDay(ctx, p, day, fb);
   const db = ctx.db;
   const y = day - 1;
   const ydate = toGameDate(y * MINUTES_PER_DAY + 12 * 60);
@@ -851,6 +857,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "family_call": return actFamilyCall(ctx, p, a, fb);
     case "police_check": return actPoliceCheck(ctx, p, a, fb);
     case "road_test": return actRoadTest(ctx, p, a, fb);
+    case "gig_shift": return actGigShift(ctx, p, a, fb);
     case "family_send": return actFamilySend(ctx, p, a, fb);
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
@@ -900,6 +907,12 @@ function actService(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const money = chargeStrict(ctx, p, cost, "spend", `${s.name} at ${place.name}`);
   advance(ctx, p, s.minutes, fb, { quiet: true, sleeping: sid === "lodge" });
   applyEffects(p, s.effects, fb, s.site ? `Day trip: ${s.name}` : s.festival ? `🎉 ${s.name}` : `${s.verb} at ${place.name}`, money);
+  if (p.illness && (sid === "clinic" || (sid === "pharmacy" && p.illness !== "malaria"))) {
+    fb.add(sid === "clinic" ? (p.illness === "malaria" ? "🩺 The test is positive for malaria. The doctor prescribes a full antimalarial course: you'll feel better by tomorrow. Sleep under a net." : "🩺 The doctor checks you over and sends you home with medicine. You're on the mend.") : p.illness === "flu" ? "💊 Paracetamol, vitamin C and hot water with lemon. The flu loosens its grip." : "💊 ORS sachets and rest. Your stomach settles.", [], "good");
+    p.illness = "";
+  } else if (sid === "pharmacy" && p.illness === "malaria") {
+    fb.add("💊 The pharmacist says a fever like that needs a malaria test: go to a clinic.", [], "info");
+  }
   if (s.site && addToList(p, "discovered", `site:${s.site}`)) {
     applyEffects(p, { social: 4, reputation: 1 }, fb, `📸 First visit to ${s.name}. Added to your travel album.`);
   }
@@ -1089,6 +1102,7 @@ function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   const gd = toGameDate(p.game_min);
   if (job.weekdaysOnly && gd.isWeekend) throw new GameError("closed", `${place.name} doesn't run weekend shifts.`);
   if (!isOpenAt(job.shiftWindow, gd.hour)) throw new GameError("shift_time", `Shifts start between ${job.shiftWindow[0]}:00 and ${job.shiftWindow[1]}:00.`);
+  if (job.needsVehicle) throw new GameError("drive_it", "This is gig work: tap \"Start driving\" and do the pick-ups yourself.");
   requireAwake(p, Math.round(job.energyCost * 0.6), "work a shift");
   jobGate(ctx.db, p, job);
   // Tired, hungry, smelly or miserable people don't do their best work.
@@ -1817,6 +1831,46 @@ function actCourseAttend(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   return null;
 }
 
+/** Fuel per trip on gig work (game money): car, motorbike. */
+export const GIG_FUEL = { car: 12, motorbike: 5 };
+
+/**
+ * A gig shift you actually drive: pick-ups and drop-offs around town. The drive
+ * happens in the 3D world; the server checks the job, licence, vehicle, shift
+ * hours and one gig shift a day, then pays per trip less fuel, plus tips.
+ */
+function actGigShift(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (!p.job_id) throw new GameError("no_job", "You need a gig job first.");
+  const job = JOBS[p.job_id];
+  if (!job.needsVehicle) throw new GameError("not_gig", "Your job isn't gig work. Go to your workplace and work a shift.");
+  const place = PLACE_BY_ID[job.placeId];
+  if (DISTRICTS[p.district].city !== DISTRICTS[place.district].city) throw new GameError("wrong_city", `The app only sends you jobs in ${CITIES[DISTRICTS[place.district].city]?.name ?? "your city"}.`);
+  const gd = toGameDate(p.game_min);
+  if (!isOpenAt(job.shiftWindow, gd.hour)) throw new GameError("shift_time", `The app is busy between ${job.shiftWindow[0]}:00 and ${job.shiftWindow[1]}:00.`);
+  jobGate(ctx.db, p, job);
+  const day = dayOf(p.game_min);
+  if (p.last_gig_day === day) throw new GameError("tomorrow", "You've done today's shift on the app. Rest; more jobs tomorrow.");
+  const trips = Math.floor(Number(a.trips));
+  const seconds = Number(a.seconds);
+  if (!Number.isFinite(trips) || trips < 1 || trips > 5 || !Number.isFinite(seconds) || seconds < trips * 15 || seconds > 3600) throw new GameError("bad_result", "That shift doesn't add up.");
+  requireAwake(p, Math.round((job.energyCost * trips) / 5), "drive");
+  p.last_gig_day = day;
+  const performance = clamp(0.8 + p.energy / 400 + moodFor(ctx.db, p).score / 100, 0.75, 1.15);
+  const rnd = mulberry32(p.id * 97 + day);
+  let tips = 0;
+  for (let i = 0; i < trips; i++) if (rnd() < 0.4) tips += 5 + Math.floor(rnd() * 16);
+  const fares = minor(rankPay(job.pay, p.job_rank) * performance * (trips / 3)) + minor(tips);
+  const fuel = minor(GIG_FUEL[job.needsVehicle] * trips);
+  advance(ctx, p, trips * 40, fb, { quiet: true });
+  const money = [...credit(ctx, p, "cash", fares, "wages", `${job.title}: ${trips} trip${trips > 1 ? "s" : ""}${tips ? ` incl. ${formatMoney(minor(tips))} tips` : ""}`)];
+  const fuelLegs = chargeFlexible(ctx, p, fuel, "fuel", `Fuel for ${trips} gig trip${trips > 1 ? "s" : ""}`);
+  p.job_shifts += 1;
+  p.shifts_total += 1;
+  applyEffects(p, { energy: -Math.round((job.energyCost * trips) / 3), hunger: -trips * 3, ...job.skillGain, reputation: 0.3 }, fb,
+    `${job.needsVehicle === "car" ? "🚗" : "🛵"} ${trips} trip${trips > 1 ? "s" : ""} on the app: ${formatMoney(fares)} in fares${tips ? ` (tips ${formatMoney(minor(tips))})` : ""}, ${formatMoney(fuel)} on fuel.`, [...money, ...fuelLegs.changes]);
+  return { trips, fares, fuel };
+}
+
 /** Fictional retest fee (game money). */
 export const RETEST_FEE = 150;
 /** At most this many faults to pass. */
@@ -2011,7 +2065,7 @@ function dailyHits(a: Action, discovered: boolean): string[] {
   const hits: string[] = [];
   const act = typeof a.activity === "string" ? a.activity : "";
   switch (a.type) {
-    case "work": hits.push("shift"); break;
+    case "work": case "gig_shift": hits.push("shift"); break;
     case "job_apply": hits.push("job_hunt"); break;
     case "talk": hits.push("talk"); break;
     case "travel": if (a.mode === "trotro") hits.push("trotro"); if (a.mode === "car") hits.push("drive"); break;
@@ -2228,6 +2282,31 @@ function actFamilyVisit(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   return null;
 }
 
+/** Now and then you fall ill: rainy seasons bring malaria (a net helps), poor hygiene brings stomach trouble. Always treatable. */
+function illnessDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
+  const r = mulberry32(p.id * 4099 + day * 7);
+  if (p.illness) {
+    const days = day - p.ill_day;
+    if ((p.illness === "flu" && days >= 3) || (p.illness === "stomach" && days >= 2)) {
+      fb.add(p.illness === "flu" ? "🌤️ The flu has run its course. You feel like yourself again." : "🌤️ Your stomach has settled on its own.", [], "good");
+      p.illness = "";
+    }
+    return;
+  }
+  if (p.needs_pace === 0) return; // needs off: no illness either
+  const season = toGameDate(p.game_min).season;
+  const net = ownedItems(ctx.db, p).some((i) => i.item_id === "mosquito_net");
+  const malaria = (season === "Major rains" || season === "Minor rains" ? 0.02 : 0.006) * (net ? 0.3 : 1);
+  const stomach = p.hygiene < 25 ? 0.03 : 0.004;
+  const flu = season === "Harmattan" ? 0.012 : 0.005;
+  const roll = r();
+  const ill = roll < malaria ? "malaria" : roll < malaria + stomach ? "stomach" : roll < malaria + stomach + flu ? "flu" : "";
+  if (!ill) return;
+  p.illness = ill;
+  p.ill_day = day;
+  fb.add(ill === "malaria" ? "🤒 You wake with a fever and aching joints. Could be malaria: a clinic can test and treat it." : ill === "flu" ? "🤧 Sore throat and a runny nose: flu. A pharmacy can help, or rest it out for a few days." : "😣 Your stomach is not happy. ORS from a pharmacy will sort it.", [], "bad");
+}
+
 /** Family life goes on: requests, small gifts, and closeness that cools if you never call. */
 function familyDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   for (const m of ctx.db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ?", p.id)) {
@@ -2317,6 +2396,7 @@ function moodFor(db: Db, p: PlayerRow) {
     rentArrears: p.rent_arrears > 0,
     hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
     helpedFamily: p.helped_day >= dayOf(p.game_min) - 2,
+    illness: p.illness || undefined,
     dumsor: p.district === homeDistrict(db, p) && powerOff(p.district, p.game_min) && !hasGenerator(db, p),
     missingHome: (() => {
       const last = db.get<{ d: number | null }>("SELECT MAX(last_contact_day) AS d FROM family WHERE player_id = ?", p.id)?.d;
@@ -2417,6 +2497,8 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       mood: moodFor(db, p),
       daily: dailyView(ctx, p),
       settings: { needsPace: p.needs_pace },
+      lastGigDay: p.last_gig_day,
+      illness: p.illness || null,
       generator: hasGenerator(db, p),
       hometown: p.hometown,
       family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),

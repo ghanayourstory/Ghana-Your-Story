@@ -451,10 +451,30 @@ test("gig jobs need the licence and your own wheels; trades take anyone", () => 
   ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, 'compact', 9000000, 0)", id);
   assert.ok(act(ctx, id, { type: "job_apply", jobId: "ride_driver" }).ok);
   skipTo(ctx, id, 10);
-  const r = act(ctx, id, { type: "work" });
+  assert.equal(act(ctx, id, { type: "work" }).code, "drive_it");
+  assert.equal(act(ctx, id, { type: "gig_shift", trips: 3, seconds: 5 }).code, "bad_result");
+  const cash0 = bal(ctx, id, "cash");
+  const r = act(ctx, id, { type: "gig_shift", trips: 3, seconds: 200 });
   assert.ok(r.ok, r.error);
+  assert.ok(bal(ctx, id, "cash") > cash0);
+  assert.equal(act(ctx, id, { type: "gig_shift", trips: 3, seconds: 200 }).code, "tomorrow");
   assert.ok(act(ctx, id, { type: "travel", to: "nima", mode: "taxi" }).ok);
   assert.ok(act(ctx, id, { type: "job_apply", jobId: "barber_apprentice" }).ok);
+});
+
+test("illness: malaria needs the clinic, flu is fine with the pharmacy; both show as a mood", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 9);
+  assert.ok(act(ctx, id, { type: "travel", to: "osu", mode: "taxi" }).ok);
+  ctx.db.run("UPDATE players SET illness = 'malaria', ill_day = 0 WHERE id = ?", id);
+  assert.ok(buildState(ctx, loadPlayer(ctx.db, id)).player.mood.moodlets.some((m) => m.id === "ill"));
+  assert.ok(act(ctx, id, { type: "service", placeId: "sankofa_clinic", serviceId: "pharmacy" }).ok);
+  assert.equal(loadPlayer(ctx.db, id).illness, "malaria");
+  assert.ok(act(ctx, id, { type: "service", placeId: "sankofa_clinic", serviceId: "clinic" }).ok);
+  assert.equal(loadPlayer(ctx.db, id).illness, "");
+  ctx.db.run("UPDATE players SET illness = 'flu', ill_day = 0 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "service", placeId: "sankofa_clinic", serviceId: "pharmacy" }).ok);
+  assert.equal(loadPlayer(ctx.db, id).illness, "");
 });
 
 test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {

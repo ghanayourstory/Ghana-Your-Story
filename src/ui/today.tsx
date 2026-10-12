@@ -49,6 +49,12 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
           <span>💵</span>
           <div className="grow"><b>{money(state.money.cash)} cash · {money(state.money.bank)} in the bank</b><div className="tiny muted">Bills this month about {money(state.money.monthlyExpenses)}.</div></div>
         </div>
+        {p.illness && (
+          <div className="today-row">
+            <span>🤒</span>
+            <div className="grow"><b>{p.illness === "malaria" ? "Possible malaria" : p.illness === "flu" ? "You have the flu" : "Running stomach"}</b><div className="tiny muted">{p.illness === "malaria" ? "Go to a clinic for a test and treatment (Doctor's consultation)." : p.illness === "flu" ? "A pharmacy helps, or rest: it passes in about three days." : "ORS from a pharmacy sorts it; it passes in a couple of days."} You tire faster until then.</div></div>
+          </div>
+        )}
         {p.family.filter((m) => m.request).map((m) => (
           <div className="today-row" key={m.id}>
             <span>🙏</span>

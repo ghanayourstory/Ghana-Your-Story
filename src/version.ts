@@ -1,2 +1,2 @@
 /** Shown in the update notice and Settings. Bump when publishing a build players should notice. */
-export const BUILD_VERSION = "v13 · Dumsor, licences & work";
+export const BUILD_VERSION = "v14 · On the app";

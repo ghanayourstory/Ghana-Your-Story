@@ -354,6 +354,9 @@ const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
   ["players", "helped_day", "INTEGER NOT NULL DEFAULT -99"],
   ["players", "last_police_min", "INTEGER NOT NULL DEFAULT -9999"],
   ["courses", "test_day", "INTEGER NOT NULL DEFAULT -1"],
+  ["players", "last_gig_day", "INTEGER NOT NULL DEFAULT -1"],
+  ["players", "illness", "TEXT NOT NULL DEFAULT ''"],
+  ["players", "ill_day", "INTEGER NOT NULL DEFAULT -1"],
 ];
 
 export function migrate(db: Db) {
