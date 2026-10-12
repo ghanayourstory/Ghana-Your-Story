@@ -516,6 +516,24 @@ export class CityLife {
     return best;
   }
 
+  /** Take a car out of traffic (the taxi you just stopped becomes your ride). */
+  takeCar(c: Car): VehicleRig {
+    this.cars = this.cars.filter((x) => x !== c);
+    if (this.hailedTaxi === c) this.hailedTaxi = null;
+    return c.rig;
+  }
+
+  /** The taxi waiting at the kerb for you, if any. */
+  waitingTaxi(player: THREE.Vector3): Car | null {
+    let best: Car | null = null, bd = 14;
+    for (const c of this.cars) {
+      if (c.rig.kind !== "taxi" || c.speed > 0.5) continue;
+      const d = c.rig.group.position.distanceTo(player);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+
   hail(c: Car) {
     c.hailed = true;
     this.hailedTaxi = c;

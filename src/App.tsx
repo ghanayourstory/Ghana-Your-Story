@@ -96,6 +96,7 @@ function Game() {
   const [world, setWorld] = useState<World | null>(null);
   const [nearby, setNearby] = useState<Nearby | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
+  const [ride, setRide] = useState<{ label: string; icon: string } | null>(null);
   const [road, setRoad] = useState("");
   const [district, setDistrict] = useState<DistrictId>(state!.player.district);
   const [muted, setMuted] = useState(() => { try { return localStorage.getItem("sika.muted") === "1"; } catch { return false; } });
@@ -116,6 +117,7 @@ function Game() {
         setDistrict((d) => (d === i.district ? d : i.district));
       },
       onTaxiArrived: () => setPanel({ kind: "travel", ctx: "taxi" }),
+      onRide: setRide,
     }, quality);
     w.audio.muted = muted;
     w.audio.settings = readMix();
@@ -214,7 +216,6 @@ function Game() {
 
   // Go home from anywhere: straight in if it's this district, otherwise ride
   // there across town (or pick a bus/flight if it's in another city), then go in.
-  const wantHome = useRef(false);
   const goHome = useCallback(async () => {
     if (!world || !state) return;
     const h = state.player.home;
@@ -229,20 +230,17 @@ function Game() {
     }
     const hour = state.time.hour;
     const modes = hour >= 5 && hour < 23 ? ["trotro", "taxi", "walk"] : ["taxi", "walk"];
-    wantHome.current = true;
-    for (const [i, mode] of modes.entries()) {
-      const r = await act({ type: "travel", to: h.district, mode }, { silent: i < modes.length - 1 });
-      if (r.ok) return;
-    }
-    wantHome.current = false;
+    // Ask for the first way home that works, then ride it.
+    let chosen = "";
+    const ok = await world.rideTo(modes[0], `Going home to ${there.name}`, async () => {
+      for (const [i, mode] of modes.entries()) {
+        const r = await act({ type: "travel", to: h.district, mode }, { silent: i < modes.length - 1 });
+        if (r.ok) { chosen = mode; return r; }
+      }
+      return { ok: false };
+    });
+    if (ok && chosen) world.goHome(h.spec, items);
   }, [world, state, act, toast]);
-  useEffect(() => {
-    if (!wantHome.current || !world || !state || state.player.district !== state.player.home.district) return;
-    const t = setTimeout(() => {
-      if (world.goHome(state.player.home.spec, state.items.map((i) => i.itemId))) wantHome.current = false;
-    }, 400);
-    return () => clearTimeout(t);
-  }, [world, state]);
 
   const homeKey = useRef(goHome);
   homeKey.current = goHome;
@@ -263,8 +261,15 @@ function Game() {
       <Hud world={world} onOpen={open} />
       <Minimap world={world} road={road} district={district} />
       <Rail onOpen={open} badges={{ phone: (state?.event ? 1 : 0) + (state?.businesses.filter((b) => b.till > 0).length ? 1 : 0), people: pendingDates }} world={world} muted={muted} setMuted={setMuted} />
-      {!panel && <ActionBar nearby={nearby} onUse={use} />}
-      {!panel && <Joystick world={world} />}
+      {!panel && !ride && <ActionBar nearby={nearby} onUse={use} />}
+      {!panel && !ride && <Joystick world={world} />}
+      {ride && (
+        <div className="ride-banner">
+          <span className="ride-icon">{ride.icon}</span>
+          <div className="grow"><b>{ride.label}</b><div className="tiny muted">Sit back and watch the road.</div></div>
+          <button className="btn small" onClick={() => world?.skipRide()}>Skip ⏩</button>
+        </div>
+      )}
       <Toasts />
       {panel?.kind === "place" && <PlaceSheet placeId={panel.id} world={world} onClose={() => setPanel(null)} onTalk={(id) => setPanel({ kind: "talk", id })} onTravel={() => setPanel({ kind: "travel", ctx: "stop" })} onPhone={(app) => setPanel({ kind: "phone", app })} />}
       {panel?.kind === "talk" && <TalkSheet npcId={panel.id} world={world} onClose={() => setPanel(null)} />}

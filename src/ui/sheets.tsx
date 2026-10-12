@@ -207,9 +207,11 @@ export function TravelSheet({ context, world, onClose, initialScope }: { context
   if (!state) return null;
   const here = state.player.district;
   const rainy = state.time.weather === "rain" || state.time.weather === "storm";
-  const go = async (to: DistrictId) => {
-    const r = await act({ type: "travel", to, mode });
-    if (r.ok) onClose();
+  const go = (to: DistrictId) => {
+    const label = `${TRAVEL_MODES[mode].name} to ${DISTRICTS[to].name}`;
+    if (!world) return void act({ type: "travel", to, mode });
+    onClose();
+    void world.rideTo(mode, label, () => act({ type: "travel", to, mode }));
   };
   return (
     <Sheet title={context === "taxi" ? "🚕 Where to, boss?" : context === "stop" ? "🚐 Catch a ride" : "🗺️ Go somewhere"} sub={context === "phone" ? "Ride app works anywhere. Trotros and taxis: find a stop or flag one on the road." : `${DISTRICTS[here].name} · ${gd.clock}${rainy ? " · rain slows traffic" : ""}`} onClose={onClose}>
@@ -219,7 +221,7 @@ export function TravelSheet({ context, world, onClose, initialScope }: { context
           <button className={scope === "ghana" ? "on" : ""} onClick={() => setScope("ghana")}>🇬🇭 Across Ghana</button>
         </div>
       )}
-      {scope === "ghana" ? <IntercityPanel onDone={onClose} /> : <>
+      {scope === "ghana" ? <IntercityPanel onDone={onClose} world={world} /> : <>
       <div className="seg" style={{ marginTop: 12 }}>
         {modes.map((m) => <button key={m} className={m === mode ? "on" : ""} onClick={() => setMode(m)}>{TRAVEL_MODES[m].name}</button>)}
       </div>

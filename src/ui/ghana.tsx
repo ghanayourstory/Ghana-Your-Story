@@ -2,6 +2,7 @@
 // farms, home goods and the Vibes social app.
 import { useMemo, useState } from "react";
 import { useGame } from "../store.tsx";
+import type { World } from "../world/World.ts";
 import { ConfirmButton, EffectsPreview, money } from "./common.tsx";
 import regionsData from "../../shared/data/ghana-regions.json";
 import { REGIONS, TOWNS, TOWN_BY_ID, roadSegments, type RegionId } from "../../shared/ghana.ts";
@@ -62,7 +63,7 @@ export function CountryMap({ here, onPick, height = 330 }: { here: string; onPic
 // ---------------------------------------------------------------------------
 // Intercity travel
 
-export function IntercityPanel({ onDone }: { onDone: () => void }) {
+export function IntercityPanel({ onDone, world }: { onDone: () => void; world?: World | null }) {
   const { state, act, busy } = useGame();
   const [mode, setMode] = useState<IntercityMode>("vip");
   const [pick, setPick] = useState<string | null>(null);
@@ -75,9 +76,11 @@ export function IntercityPanel({ onDone }: { onDone: () => void }) {
   const modes: IntercityMode[] = ["bus", "vip", "flight", ...(hasCar ? (["car"] as IntercityMode[]) : []), ...(hasPlane ? (["own_plane"] as IntercityMode[]) : [])];
   const cities = [...new Set(Object.values(DISTRICTS).map((d) => d.city))].filter((c) => c !== fromCity);
   const rows = cities.map((c) => ({ c, q: intercityQuote(fromCity, c, mode) })).sort((a, b) => (a.q?.km ?? 9e9) - (b.q?.km ?? 9e9));
-  const go = async (city: string) => {
-    const r = await act({ type: "travel", to: districtsIn(city)[0], mode });
-    if (r.ok) onDone();
+  const go = (city: string) => {
+    const to = districtsIn(city)[0];
+    if (!world) return void act({ type: "travel", to, mode }).then((r) => r.ok && onDone());
+    onDone();
+    void world.rideTo(mode, `${{ bus: "Bus", vip: "VIP coach", flight: "Flight", car: "Driving", own_plane: "Flying your plane" }[mode]} to ${CITIES[city]?.name ?? city}`, () => act({ type: "travel", to, mode }));
   };
   const m = INTERCITY_MODES[mode];
   const running = isOpenAt(m.hours, hour);
