@@ -1,9 +1,9 @@
 {
-  "name": "sika-city",
+  "name": "ghana-your-story",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Sika City — a 3D life simulator set in Accra, Ghana.",
+  "description": "Ghana: Your Story — a 3D life simulator set in real Ghana.",
   "engines": {
     "node": ">=22.18"
   },

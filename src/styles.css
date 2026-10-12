@@ -200,7 +200,7 @@ canvas.world { position: fixed; inset: 0; width: 100%; height: 100%; display: bl
 .splash { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(1200px 600px at 50% 120%, #c8452c 0%, #5a1f2a 35%, #14121c 70%); z-index: 100; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .coin { width: 54px; height: 54px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff1a8, var(--gold) 45%, #a77a00); display: grid; place-items: center; color: #3a2a00; font-weight: 900; font-size: 26px; box-shadow: 0 6px 24px rgba(242,183,5,0.45), inset 0 -4px 0 rgba(0,0,0,0.2); }
-.wordmark { font-size: 40px; font-weight: 900; letter-spacing: -0.03em; line-height: 1; }
+.wordmark { font-size: clamp(28px, 8vw, 40px); font-weight: 900; letter-spacing: -0.03em; line-height: 1; }
 .wordmark span { color: var(--gold); }
 .create { position: fixed; inset: 0; overflow: auto; background: radial-gradient(900px 500px at 70% 110%, #c8452c55, transparent), linear-gradient(160deg, #14121c, #1d2a24); z-index: 90; }
 .create-inner { max-width: 1080px; margin: 0 auto; padding: 24px 16px 40px; display: grid; grid-template-columns: 1fr; gap: 18px; }

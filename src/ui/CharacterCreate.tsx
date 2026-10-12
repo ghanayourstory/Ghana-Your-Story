@@ -99,7 +99,7 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
           <canvas ref={canvas} />
           <div style={{ position: "absolute", left: 18, top: 16 }} className="brand">
             <div className="coin">₵</div>
-            <div className="wordmark">Sika<span>City</span></div>
+            <div className="wordmark" style={{ fontSize: 26 }}>Ghana:<span style={{ display: "block", fontSize: 20 }}>Your Story</span></div>
           </div>
           <div className="seg" style={{ position: "absolute", right: 14, top: 14 }}>
             <button className={view === "body" ? "on" : ""} onClick={() => setView("body")}>Full body</button>

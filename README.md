@@ -1,4 +1,4 @@
-# Sika City
+# Ghana: Your Story
 
 A 3D life simulator set in real Ghana. Build a life from a rented room in Kaneshie to a mansion in Trasacco Valley, a cocoa farm in Sefwi or a guesthouse in Kintampo.
 

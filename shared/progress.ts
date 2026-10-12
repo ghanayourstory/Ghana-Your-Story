@@ -64,7 +64,7 @@ export const GOALS: Goal[] = [
   { id: "car", title: "Wheels", description: "Buy a car.", chapter: 4, check: (s) => s.carCount >= 1, reward: { reputation: 3 } },
   { id: "net_1m", title: "Cedi millionaire", description: "Reach GH₵1,000,000 net worth.", chapter: 5, check: (s) => s.netWorthMinor >= money(1_000_000), progress: (s) => [Math.max(0, Math.min(s.netWorthMinor, money(1_000_000))), money(1_000_000)], reward: { reputation: 10 } },
   { id: "the_v8", title: "The V8", description: "Drive the Savanna V8 through the Valley gate.", chapter: 5, check: (s) => s.vehicles.includes("v8"), reward: { reputation: 10 } },
-  { id: "the_dream", title: "The Sika City dream", description: "Own a home in Trasacco Valley.", chapter: 5, check: (s) => s.ownsHome && s.homeDistrict === "trasacco", reward: { reputation: 20 } },
+  { id: "the_dream", title: "The Ghanaian dream", description: "Own a home in Trasacco Valley.", chapter: 5, check: (s) => s.ownsHome && s.homeDistrict === "trasacco", reward: { reputation: 20 } },
   // Life across Ghana
   { id: "travel_3", title: "Beyond Accra", description: "Visit three of Ghana's regions.", chapter: 2, check: (s) => s.regionsVisited >= 3, progress: (s) => [Math.min(s.regionsVisited, 3), 3], reward: { reputation: 3 } },
   { id: "sites_5", title: "See Ghana", description: "Take five day trips: waterfalls, castles, parks.", chapter: 3, check: (s) => s.sitesVisited >= 5, progress: (s) => [Math.min(s.sitesVisited, 5), 5], reward: { cash: 400, reputation: 3 } },

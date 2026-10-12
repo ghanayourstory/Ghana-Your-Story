@@ -471,7 +471,7 @@ function NewsApp() {
     <>
       <AppHead id="news" sub="The city and your life" />
       <div className="tabs"><button className={tab === "life" ? "on" : ""} onClick={() => setTab("life")}>Your feed</button><button className={tab === "city" ? "on" : ""} onClick={() => setTab("city")}>Accra today</button></div>
-      {tab === "city" && [0, 1, 2, 3].map((i) => <div className="list-item" key={i}><div className="grow"><b className="small">{HEADLINES[(day * 3 + i * 5) % HEADLINES.length]}</b><div className="tiny muted">Day {day + 1} · Sika City Times</div></div></div>)}
+      {tab === "city" && [0, 1, 2, 3].map((i) => <div className="list-item" key={i}><div className="grow"><b className="small">{HEADLINES[(day * 3 + i * 5) % HEADLINES.length]}</b><div className="tiny muted">Day {day + 1} · Ghana Daily Times</div></div></div>)}
       {tab === "life" && state.log.map((l) => (
         <div className="list-item" key={l.id} style={{ alignItems: "flex-start" }}>
           <div className="grow">
@@ -760,7 +760,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
           </div>
         </div>
       )}
-      <p className="tiny muted" style={{ marginTop: 12 }}>Sika City · v0.1 · Game day passes in 24 real minutes while you play.</p>
+      <p className="tiny muted" style={{ marginTop: 12 }}>Ghana: Your Story · Game day passes in 24 real minutes while you play.</p>
     </>
   );
 }

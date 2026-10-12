@@ -2,7 +2,7 @@
 
 Real car models from Sketchfab, all **CC BY 4.0** (https://creativecommons.org/licenses/by/4.0/).
 They were simplified for real-time use (WebP textures, fewer triangles) by the AsciiCity project
-(https://github.com/ubyjvovk/asciicity, `public/models/cars`). Sika City recolours the paint at runtime,
+(https://github.com/ubyjvovk/asciicity, `public/models/cars`). Ghana: Your Story recolours the paint at runtime,
 and converted the Toyota Century to metallic-roughness materials. These are **modified** versions.
 
 | File | Model | Author | Source |

@@ -74,7 +74,7 @@ function Splash() {
   return (
     <div className="splash">
       <div className="col" style={{ alignItems: "center", gap: 14 }}>
-        <div className="brand"><div className="coin">₵</div><div className="wordmark">Sika<span>City</span></div></div>
+        <div className="brand"><div className="coin">₵</div><div className="wordmark">Ghana: <span>Your Story</span></div></div>
         <div className="muted">Accra is waking up…</div>
       </div>
     </div>
@@ -240,7 +240,7 @@ function Game() {
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="pill gold">🆕 Update · {BUILD_VERSION}</div>
             <h2 style={{ margin: "10px 0 4px" }}>Real homes, real streets 🏠</h2>
-            <p className="muted small" style={{ marginTop: 0 }}>Your home now matches what you can afford, and test characters get GH₵500M to try everything.</p>
+            <p className="muted small" style={{ marginTop: 0 }}>Sika City is now <b>Ghana: Your Story</b>. Your saved game carries over. Your home now matches what you can afford, and test characters get GH₵500M to try everything.</p>
             <div className="col small">
               <div>🏠 <b>Homes you can walk into:</b> sleep, bath, cook, watch TV. A compound room has a shared bathroom and a coal pot; a northern room has bucket baths; penthouses and mansions get chef kitchens, ensuites, pools and gatehouses.</div>
               <div>🛣️ <b>Streets:</b> real open gutters with rubbish and slab crossings, three-light traffic signals, hawkers in traffic, burglar bars, balconies, alleys and walkways, and the gated Trasacco Valley Estate.</div>
@@ -260,7 +260,7 @@ function Game() {
       {intro && (
         <div className="modal-wrap" onClick={() => { setIntro(false); try { localStorage.removeItem("sika.intro"); } catch { /* ignore */ } }}>
           <div className="modal">
-            <div className="brand" style={{ marginBottom: 10 }}><div className="coin" style={{ width: 40, height: 40, fontSize: 20 }}>₵</div><div className="wordmark" style={{ fontSize: 28 }}>Sika<span>City</span></div></div>
+            <div className="brand" style={{ marginBottom: 10 }}><div className="coin" style={{ width: 40, height: 40, fontSize: 20 }}>₵</div><div className="wordmark" style={{ fontSize: 26 }}>Ghana: <span>Your Story</span></div></div>
             <p style={{ marginTop: 0 }}>Akwaaba, <b>{state?.player.name}</b>. You've just stepped off a trotro at Kaneshie with a rented room at Tetteh House and not much else.</p>
             <div className="col small">
               <div>🕹️ <b>Move</b> with WASD / arrow keys (hold Shift to run, <b>Space</b> to jump gutters) or the joystick. Drag to turn the camera, scroll to zoom.</div>

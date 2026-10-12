@@ -1,4 +1,4 @@
-// The people of Sika City: personalities, goals, daily routines and how they talk.
+// The people of Ghana: Your Story: personalities, goals, daily routines and how they talk.
 import { pick } from "./rng.ts";
 import type { DistrictId } from "./world.ts";
 import { REGIONAL_NPCS } from "./people-regional.ts";

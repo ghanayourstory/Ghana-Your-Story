@@ -1,4 +1,4 @@
-// Sika City game server: authoritative state, static hosting of the built client.
+// Ghana: Your Story game server: authoritative state, static hosting of the built client.
 import { createServer } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -106,5 +106,5 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Sika City server on http://localhost:${PORT} (${production ? "production" : "development"}, dev tools ${devTools ? "ON" : "off"}, match data: ${provider.name})`);
+  console.log(`Ghana: Your Story server on http://localhost:${PORT} (${production ? "production" : "development"}, dev tools ${devTools ? "ON" : "off"}, match data: ${provider.name})`);
 });
