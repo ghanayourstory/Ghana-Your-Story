@@ -8,6 +8,7 @@ import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/
 import { Phone, readMix } from "./ui/phone.tsx";
 import { World, type Nearby, type Quality } from "./world/World.ts";
 import { loadHumans } from "./world/humans.ts";
+import { loadCarModels } from "./world/carmodels.ts";
 import type { GameState } from "../server/engine.ts";
 import type { PersonLook } from "./world/people.ts";
 import type { DistrictId } from "../shared/world.ts";
@@ -20,7 +21,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
 
   const start = useCallback(async () => {
-    const [backend] = await Promise.all([pickBackend(), loadHumans()]);
+    const [backend] = await Promise.all([pickBackend(), loadHumans(), loadCarModels()]);
     if (getToken()) {
       try {
         const res = await backend.request<{ state: GameState }>("GET", "/api/state");

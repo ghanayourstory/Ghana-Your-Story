@@ -1,9 +1,10 @@
+import { SKIN_TONES } from "../world/people.ts";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { buildPerson, animatePerson, type PersonLook, type HairStyle, type Pattern } from "../world/people.ts";
 import { shadowBlob } from "../world/vehicles.ts";
 
-const SKINS = ["#3B2416", "#4A2C1A", "#5A3825", "#6B4226", "#7A4E2D", "#8D5B3A"];
+const SKINS = SKIN_TONES;
 const OUTFITS = ["#1F7A4D", "#C8452C", "#F2B705", "#2E86AB", "#3A2E6E", "#F7F3E8", "#1A1A1A", "#E35D3A", "#0E7C86", "#B03A62"];
 const PANTS = ["#2B2B2B", "#1F3A5F", "#E9DCC6", "#4A4036", "#7A2E2E", "#3A4A5A"];
 const HAIRS: { id: HairStyle; label: string }[] = [
@@ -19,7 +20,7 @@ const BACKGROUNDS = [
 export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { name: string; background: string; look: PersonLook }) => void; error: string | null; busy: boolean }) {
   const [name, setName] = useState("");
   const [bg, setBg] = useState("graduate");
-  const [look, setLook] = useState<PersonLook>({ skin: SKINS[2], shirt: OUTFITS[0], pants: PANTS[0], hair: "#111111", feminine: false, height: 1.75, build: 1, hairStyle: "low", pattern: "kente" });
+  const [look, setLook] = useState<PersonLook>({ skin: SKINS[3], shirt: OUTFITS[0], pants: PANTS[0], hair: "#111111", feminine: false, height: 1.75, build: 1, hairStyle: "low", pattern: "kente" });
   const canvas = useRef<HTMLCanvasElement>(null);
   const lookRef = useRef(look);
   lookRef.current = look;

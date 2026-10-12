@@ -52,4 +52,4 @@ Development uses a fictional mock league. To use a licensed provider, set `MATCH
 
 ## Attribution
 
-sql.js (MIT) powers the offline demo. Region boundaries: geoBoundaries gbOpen (Runfola et al. 2020), derived from OpenStreetMap, CC BY-SA 2.0. Vehicle and phone brands are fictional stand-ins. All art, textures, dialogue and characters are original. Real place names are used for public landmarks only; businesses are fictional.
+sql.js (MIT) powers the offline demo. Region boundaries: geoBoundaries gbOpen (Runfola et al. 2020), derived from OpenStreetMap, CC BY-SA 2.0. Vehicle and phone names in the game are fictional. Real car models: see `public/vehicles/CREDITS.md` (CC BY 4.0, Sketchfab authors credited; optimised by the AsciiCity project). All art, textures, dialogue and characters are original. Real place names are used for public landmarks only; businesses are fictional.

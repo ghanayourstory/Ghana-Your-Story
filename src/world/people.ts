@@ -325,7 +325,9 @@ export function animatePerson(r: Person, dt: number, speed: number) {
   if (r.talk > 0) r.talk -= dt;
 }
 
-const SKINS = ["#3B2416", "#4A2C1A", "#5A3825", "#6B4226", "#7A4E2D", "#4F3020", "#3E2618", "#5C3A24"];
+/** Ghana's real range: deep to light brown, plus fair (mixed, Fulani, Lebanese-Ghanaian) — weighted to how often you'd see them. */
+export const SKIN_TONES = ["#2E1B10", "#3B2416", "#4A2C1A", "#5A3825", "#6B4226", "#7A4E2D", "#8D5B3A", "#A06A47", "#B57D57", "#C99470", "#DDAE8A", "#EBC6A6"];
+const SKINS = [...SKIN_TONES.slice(0, 7), ...SKIN_TONES.slice(1, 7), ...SKIN_TONES.slice(2, 6), ...SKIN_TONES.slice(7)];
 const CLOTH = ["#C8452C", "#F2B705", "#1F7A4D", "#2E86AB", "#E35D3A", "#F7F3E8", "#3A2E6E", "#B03A62", "#0E7C86", "#E9B872", "#1A1A1A", "#7FB7BE", "#D9734E", "#556B2F"];
 const PANTS = ["#2B2B2B", "#3A4A5A", "#4A4036", "#1F3A5F", "#7A6A5A", "#E9DCC6", "#2E2E3A"];
 
@@ -338,7 +340,7 @@ export function randomLook(seed: number, opts: { carry?: boolean } = {}): Person
     skin: pick(SKINS),
     shirt: pick(CLOTH),
     pants: feminine && r() < 0.5 ? pick(CLOTH) : pick(PANTS),
-    hair: r() < 0.9 ? "#0f0c0a" : "#5a4636",
+    hair: r() < 0.88 ? "#0f0c0a" : r() < 0.6 ? "#3b2a1e" : "#5a4636",
     feminine,
     height: feminine ? 1.56 + r() * 0.16 : 1.66 + r() * 0.2,
     build: 0.88 + r() * 0.3,

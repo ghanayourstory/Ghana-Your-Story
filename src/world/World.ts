@@ -85,7 +85,7 @@ export class World {
 
   constructor(private canvas: HTMLCanvasElement, private cb: WorldCallbacks, quality: Quality) {
     this.quality = quality;
-    setHumanMode(quality === "high" ? "all" : quality === "medium" ? "key" : "off");
+    setHumanMode(quality === "low" ? "key" : "all");
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality !== "low", powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === "high" ? 2 : quality === "medium" ? 1.5 : 1));
     this.renderer.shadowMap.enabled = quality !== "low";
@@ -114,7 +114,7 @@ export class World {
 
   setQuality(q: Quality) {
     this.quality = q;
-    setHumanMode(q === "high" ? "all" : q === "medium" ? "key" : "off");
+    setHumanMode(q === "low" ? "key" : "all");
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q === "high" ? 2 : q === "medium" ? 1.5 : 1));
     this.renderer.shadowMap.enabled = q !== "low";
     this.resize();

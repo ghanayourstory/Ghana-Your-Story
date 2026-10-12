@@ -312,7 +312,62 @@ function build(gender) {
   // the normal. They share the body's skeleton and morphs.
   const regionV = new Int8Array(V.length).fill(-1);
   for (let i = 0; i < n; i++) regionV[src[i]] = region[i];
-  function makeShell(set, offset, iterations, tile) {
+  const chestY = heads.get("upperarm01.L")[1] - 0.1;
+  const kneeY = heads.get("lowerleg01.L")[1];
+  const ankleY = heads.get("foot.L")[1];
+  const shoulderX = Math.abs(heads.get("upperarm01.L")[0]);
+  // Fabric doesn't follow anatomy: shirts fall straight from the chest, sleeves
+  // open towards the cuff, trousers hang as tubes from hip to ankle.
+  const DRAPE = {
+    top(S, R) {
+      const chest = S.filter((p, i) => R[i] === 1 && Math.abs(p[1] - chestY) < 0.025 && Math.abs(p[0]) < shoulderX * 0.85);
+      if (!chest.length) return S;
+      const a = Math.max(...chest.map((p) => Math.abs(p[0]))) * 1.04;
+      const zmin = Math.min(...chest.map((p) => p[2])), zmax = Math.max(...chest.map((p) => p[2]));
+      const zc = (zmin + zmax) / 2, b = (zmax - zmin) / 2 * 1.06;
+      return S.map((p, i) => {
+        if (R[i] === 1 && p[1] < chestY && Math.abs(p[0]) < a * 1.2) {
+          const t = Math.min(1, (chestY - p[1]) / 0.12);
+          const s = 1 / Math.sqrt((p[0] / a) ** 2 + ((p[2] - zc) / b) ** 2);
+          if (s > 1) { const k = 0.85 * t; return [p[0] * (1 + (s - 1) * k), p[1], zc + (p[2] - zc) * (1 + (s - 1) * k)]; }
+        }
+        if (R[i] === 2) {
+          // Sleeves open up towards the hem: push away from the shoulder→elbow axis.
+          const side = Math.sign(p[0]) || 1;
+          const sh = heads.get("upperarm01.L"), el = heads.get("lowerarm01.L");
+          const A = [sh[0] * side, sh[1], sh[2]], B = [el[0] * side, el[1], el[2]];
+          const ax = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], al = Math.hypot(...ax);
+          const u = ax.map((x) => x / al);
+          const rel = [p[0] - A[0], p[1] - A[1], p[2] - A[2]];
+          const along = rel[0] * u[0] + rel[1] * u[1] + rel[2] * u[2];
+          if (along <= 0) return p;
+          const c = A.map((x, k) => x + u[k] * along);
+          const k = 1 + Math.min(0.32, (along / al) * 0.5);
+          return p.map((x, j) => c[j] + (x - c[j]) * k);
+        }
+        return p;
+      });
+    },
+    legs(S, R) {
+      // Per leg: centre line from hip to ankle; push each ring out to a smooth tube radius.
+      const hipY = heads.get("upperleg01.L")[1];
+      return S.map((p) => {
+        if (p[1] > hipY - 0.04) return p;
+        const side = Math.sign(p[0]) || 1;
+        const t = Math.min(1, Math.max(0, (hipY - p[1]) / (hipY - ankleY)));
+        const hx = heads.get("upperleg01.L")[0] * side, fx = heads.get("foot.L")[0] * side;
+        const cx = hx + (fx - hx) * t;
+        const kz = heads.get("upperleg01.L")[2] + (heads.get("foot.L")[2] - heads.get("upperleg01.L")[2]) * t;
+        const dx = p[0] - cx, dz = p[2] - kz;
+        const r = Math.hypot(dx, dz) || 1;
+        // Tube radius tapers from thigh to a straight-cut hem; never tighter than the body.
+        const target = 0.085 - 0.03 * t + (p[1] < kneeY ? 0.008 : 0);
+        const nr = Math.max(r, target * 0.6 + r * 0.4);
+        return [cx + (dx / r) * nr, p[1], kz + (dz / r) * nr];
+      });
+    },
+  };
+  function makeShell(set, offset, iterations, tile, drape) {
     // Faces touching the region (not only inside it): garments overlap at hems, so no gaps show.
     const sf = faces.filter((f) => f.some(([vi]) => set.has(regionV[vi])));
     const used = [...new Set(sf.flatMap((f) => f.map(([vi]) => vi)))];
@@ -350,7 +405,8 @@ function build(gender) {
     const shape = (Pfull) => {
       const S = smooth(used.map((vi) => toM(Pfull[vi])));
       const N = normalsOf(S);
-      return S.map((p, i) => p.map((x, k) => x + N[i][k] * offset));
+      const O = S.map((p, i) => p.map((x, k) => x + N[i][k] * offset));
+      return drape ? drape(O, used.map((vi) => regionV[vi])) : O;
     };
     const basePos = shape(base);
     const out = { vertexCount: m };
@@ -389,9 +445,9 @@ function build(gender) {
     return out;
   }
   const shells = {
-    top: makeShell(new Set([1, 2]), 0.009, 10, 0.12),
-    shorts: makeShell(new Set([3]), 0.008, 8, 0.12),
-    shins: makeShell(new Set([6]), 0.007, 6, 0.12),
+    top: makeShell(new Set([1, 2]), 0.012, 14, 0.12, DRAPE.top),
+    shorts: makeShell(new Set([3]), 0.012, 14, 0.12, DRAPE.legs),
+    shins: makeShell(new Set([6]), 0.012, 12, 0.12, DRAPE.legs),
     shoes: makeShell(new Set([4]), 0.012, 14, 0.2),
   };
   const hips = { waistY: waistY, kneeY: heads.get("lowerleg01.L")[1], hipHalfWidth: Math.max(...pos.filter((_, i) => i % 3 === 0 && region[Math.floor(i / 3)] === 3)) };

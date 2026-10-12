@@ -115,7 +115,7 @@ function fabricTex(pattern: string, color: string) {
   return t;
 }
 
-function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; legs: boolean; feet: boolean }) {
+function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; legs: boolean; feet: boolean }, neck: [number, number, number] = [99, 99, 0]) {
   // Physical material with a soft sheen reads more like skin than plain plastic.
   const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.78, metalness: 0, sheen: 0.15, sheenRoughness: 0.9, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
   // Stylised: a touch lighter and warmer than the swatch so faces read in shade.
@@ -136,6 +136,8 @@ function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; 
     uHideTop: { value: hide.top ? 1 : 0 },
     uHideLegs: { value: hide.legs ? 1 : 0 },
     uHideFeet: { value: hide.feet ? 1 : 0 },
+    uNeckY: { value: neck[1] },
+    uNeckZ: { value: neck[2] },
   };
   m.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, uniforms);
@@ -153,23 +155,41 @@ varying vec2 vUv2;
 varying vec3 vObjPos;
 uniform float uFem; uniform float uRows;
 uniform vec3 uSkin; uniform sampler2D uShirtTex; uniform sampler2D uPantsTex; uniform vec3 uShoe; uniform vec3 uHair; uniform vec3 uLips;
-uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideLegs; uniform float uHideFeet;
-float hHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }`,
+uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideLegs; uniform float uHideFeet; uniform float uNeckY; uniform float uNeckZ;
+float hHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
+float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vNoise(vec3 x) {
+  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(vHash(i), vHash(i + vec3(1,0,0)), f.x), mix(vHash(i + vec3(0,1,0)), vHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(vHash(i + vec3(0,0,1)), vHash(i + vec3(1,0,1)), f.x), mix(vHash(i + vec3(0,1,1)), vHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+vec3 bumpNormal(vec3 n, float h, float scale) {
+  vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
+  float dx = dFdx(h), dy = dFdy(h);
+  vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+  float det = dot(sx, r1);
+  vec3 grad = sign(det) * (dx * r1 + dy * r2) * scale;
+  return normalize(abs(det) * n - grad);
+}
+float skinH;`,
       )
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
 float rg = floor(vRegion + 0.5);
 // Skin under garments is hidden so it never pokes through the cloth.
-if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0)) || (uHideLegs > 0.5 && (rg == 3.0 || rg == 6.0)) || (uHideFeet > 0.5 && rg == 4.0)) discard;
+float neckLine = uNeckY - 0.085 + 3.0 * vObjPos.x * vObjPos.x - max(0.0, uNeckZ - vObjPos.z) * 0.3;
+if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < neckLine - 0.012) || (uHideLegs > 0.5 && (rg == 3.0 || rg == 6.0)) || (uHideFeet > 0.5 && rg == 4.0)) discard;
 vec3 c = uSkin;
-float rough = 0.52;
-// Subtle pore-level variation keeps skin from looking like plastic.
-c *= 0.94 + 0.08 * hHash(floor(vObjPos * 900.0));
+// Real skin: blotchy tone at a few centimetres, finer mottling, pores.
+float n1 = vNoise(vObjPos * 30.0), n2 = vNoise(vObjPos * 110.0);
+c *= 0.94 + 0.08 * n1 + 0.03 * n2;
+c = mix(c, c * vec3(1.05, 0.96, 0.93), smoothstep(0.6, 0.95, n1) * 0.35);
+skinH = n2;
+float rough = 0.52 + 0.08 * n2;
 vec2 cuv = vUv2 * 9.0;
-if (rg == 1.0 || rg == 2.0) { c = uSkin; }
-else if (rg == 3.0 || rg == 6.0) { c = uSkin * (0.94 + 0.08 * hHash(floor(vObjPos * 900.0))); }
-else if (rg == 4.0) { c = uShoe; rough = 0.35; }
+if (rg == 1.0 || rg == 2.0 || rg == 3.0 || rg == 6.0) { /* skin tone with variation, set above */ }
+else if (rg == 4.0) { c = uShoe; rough = 0.35; skinH = 0.0; }
 else if (rg == 5.0) { if (uShortHair > 0.5) { c = uHair * (0.75 + 0.5 * hHash(floor(vObjPos * 2400.0))); rough = 0.95; } }
 else if (rg == 7.0) { c = uLips; rough = 0.38; }
 else if (rg == 8.0) { c = mix(uSkin, uHair, 0.75); rough = 0.95; }
@@ -184,36 +204,65 @@ if (rg == 0.0) {
   c = mix(c, uLips, vFace.z * 0.85);
   rough = mix(rough, 0.36, vFace.z);
   c = mix(c, vec3(0.03), vFace.w * mix(0.55, 0.85, uFem));
+  // T-zone (forehead, nose) is a little shinier.
+  rough -= 0.1 * smoothstep(0.02, 0.0, abs(vObjPos.x)) ;
+  skinH *= 1.0 - vFace.x * uShortHair;
 }
 diffuseColor.rgb = c;`,
       )
-      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = rough;");
+      .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = rough;")
+      .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, skinH, 0.00012);");
   };
-  m.customProgramCacheKey = () => "sika-human";
+  m.customProgramCacheKey = () => "sika-human-2";
   return m;
 }
 
 /** Cloth with a triplanar-projected pattern: no UV seams, pattern scale in real centimetres. */
-function fabricMaterial(tex: THREE.Texture) {
+function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0) {
   const m = new THREE.MeshStandardMaterial({ roughness: 0.92, side: THREE.DoubleSide });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uFabric = { value: tex };
+    shader.uniforms.uNeckY = { value: neckY };
+    shader.uniforms.uNeckZ = { value: neckZ };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRest = position;\nvRestN = normal;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;")
+      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nfloat foldH;\n" + `
+float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+float vNoise(vec3 x) {
+  vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(mix(vHash(i), vHash(i + vec3(1,0,0)), f.x), mix(vHash(i + vec3(0,1,0)), vHash(i + vec3(1,1,0)), f.x), f.y),
+             mix(mix(vHash(i + vec3(0,0,1)), vHash(i + vec3(1,0,1)), f.x), mix(vHash(i + vec3(0,1,1)), vHash(i + vec3(1,1,1)), f.x), f.y), f.z);
+}
+vec3 bumpNormal(vec3 n, float h, float scale) {
+  vec3 sx = dFdx(-vViewPosition), sy = dFdy(-vViewPosition);
+  float dx = dFdx(h), dy = dFdy(h);
+  vec3 r1 = cross(sy, n), r2 = cross(n, sx);
+  float det = dot(sx, r1);
+  vec3 grad = sign(det) * (dx * r1 + dy * r2) * scale;
+  return normalize(abs(det) * n - grad);
+}`)
       .replace(
         "#include <color_fragment>",
         `#include <color_fragment>
+// A clean round neckline instead of the mesh's jagged edge.
+if (vRest.y > uNeckY - 0.085 + 3.0 * vRest.x * vRest.x - max(0.0, uNeckZ - vRest.z) * 0.3) discard;
 vec3 w = pow(abs(normalize(vRestN)), vec3(4.0));
 w /= (w.x + w.y + w.z);
 float sc = 8.0;
 vec3 fab = texture2D(uFabric, vRest.zy * sc).rgb * w.x + texture2D(uFabric, vRest.xz * sc).rgb * w.y + texture2D(uFabric, vRest.xy * sc).rgb * w.z;
+// Folds: soft vertical drape plus creases, and the weave of the cloth.
+float drape = vNoise(vec3(vRest.x * 22.0, vRest.y * 5.0, vRest.z * 22.0));
+float crease = vNoise(vec3(vRest.x * 60.0, vRest.y * 14.0, vRest.z * 60.0));
+float weave = vNoise(vRest * 1400.0);
+foldH = drape * 0.75 + crease * 0.25 + weave * 0.04;
+fab *= 0.86 + 0.2 * drape;
 diffuseColor.rgb = fab;`,
-      );
+      )
+      .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, foldH, 0.006);");
   };
-  m.customProgramCacheKey = () => "sika-fabric";
+  m.customProgramCacheKey = () => "sika-fabric-2";
   return m;
 }
 
@@ -265,7 +314,8 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     } else bones[i].position.copy(h);
   });
   const skirt = look.feminine && (look.pattern ?? "plain") !== "plain";
-  const mesh = new THREE.SkinnedMesh(t.geometry, personMaterial(look, skirt, { top: true, legs: !skirt, feet: true }));
+  const neckHead = a.bones.find((b) => b.name === "neck01")?.head;
+  const mesh = new THREE.SkinnedMesh(t.geometry, personMaterial(look, skirt, { top: true, legs: !skirt, feet: true }, neckHead));
   mesh.add(bones[0]);
   const skeleton = new THREE.Skeleton(bones);
   mesh.bind(skeleton);
@@ -283,8 +333,9 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     body.add(g);
     garments.push(g);
   };
-  const cloth = (pattern: string, color: string) => fabricMaterial(fabricTex(pattern, color));
-  dress(t.shells.top, cloth(look.pattern ?? "plain", look.shirt));
+  const cloth = (pattern: string, color: string, neck?: [number, number, number]) => fabricMaterial(fabricTex(pattern, color), neck?.[1], neck?.[2]);
+  const neckBone = t.asset.bones.find((b) => b.name === "neck01");
+  dress(t.shells.top, cloth(look.pattern ?? "plain", look.shirt, neckBone?.head));
   if (!skirt) {
     const pm = cloth("plain", look.pants);
     dress(t.shells.shorts, pm);

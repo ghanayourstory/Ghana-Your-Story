@@ -4,6 +4,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { plate, signboard, trotroLivery } from "./textures.ts";
 import { mulberry32 } from "../../shared/rng.ts";
+import { realCar } from "./carmodels.ts";
 
 export type VehicleKind =
   | "sedan" | "taxi" | "trotro" | "suv" | "v8" | "pickup" | "compact" | "accordo" | "saloon" | "supercar" | "phantom"
@@ -396,7 +397,27 @@ export function buildVehicle(kind: VehicleKind, seed: number): VehicleRig {
     group.add(p);
   };
 
-  if (kind === "trotro") {
+  const real = realCar(kind, seed);
+  if (real) {
+    group.add(real.group);
+    L = real.length;
+    W = real.width;
+    // Light glows near the real lamps: invisible by day, glowing at night or when braking.
+    const glowHead = new THREE.MeshBasicMaterial({ color: "#fff6d8", transparent: true, opacity: 0, depthWrite: false });
+    const glowTail = new THREE.MeshBasicMaterial({ color: "#ff2a1a", transparent: true, opacity: 0, depthWrite: false });
+    glowHead.userData.glow = "head";
+    glowTail.userData.glow = "tail";
+    glowMats.set(group, [glowHead, glowTail]);
+    for (const sx of [-1, 1]) {
+      const hl = new THREE.Mesh(new THREE.PlaneGeometry(0.28, 0.1), glowHead);
+      hl.position.set(sx * (W / 2 - 0.3), real.height * 0.42, L / 2 + 0.02);
+      group.add(hl);
+      const tl = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.09), glowTail);
+      tl.position.set(sx * (W / 2 - 0.28), real.height * 0.5, -L / 2 - 0.02);
+      tl.rotation.y = Math.PI;
+      group.add(tl);
+    }
+  } else if (kind === "trotro") {
     L = 5.6;
     W = 2.0;
     const colors = [["#f4efe2", "#C8452C"], ["#f4efe2", "#1F7A4D"], ["#e9e2cf", "#2E86AB"], ["#fbfbf6", "#F2B705"]];
@@ -509,7 +530,14 @@ export function shadowBlob() {
   return blobMat;
 }
 
+const glowMats = new WeakMap<THREE.Object3D, [THREE.MeshBasicMaterial, THREE.MeshBasicMaterial]>();
+
 export function setVehicleLights(v: VehicleRig, night: boolean, braking: boolean) {
+  const g = glowMats.get(v.group);
+  if (g) {
+    g[0].opacity = night ? 0.95 : 0;
+    g[1].opacity = braking ? 0.95 : night ? 0.55 : 0;
+  }
   for (const m of v.lights) m.emissiveIntensity = night ? 2.4 : 0.05;
   v.brake.emissiveIntensity = braking ? 2.5 : night ? 0.9 : 0.12;
 }
