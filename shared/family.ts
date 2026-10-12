@@ -69,3 +69,52 @@ export function requestFor(m: { role: FamilyRole; age: number }, rnd: () => numb
 }
 
 export const ROLE_LABEL: Record<FamilyRole, string> = { mother: "Mother", father: "Father", grandmother: "Grandmother", brother: "Brother", sister: "Sister" };
+
+// ---------------------------------------------------------------------------
+// Where family members are during the week, and chores you can help with at
+// the family house. Schoolchildren are at school on weekdays, parents work,
+// grandma is home. Worship day follows the region (Friday prayers where most
+// people are Muslim, Sunday service elsewhere).
+
+export type Whereabouts = "home" | "school" | "work" | "worship" | "asleep";
+const MUSLIM_REGIONS: RegionId[] = ["northern", "savannah", "north_east"];
+
+export function familyWhereabouts(m: { role: FamilyRole; age: number }, hometown: string, weekday: number, hour: number): Whereabouts {
+  if (hour < 5 || hour >= 22) return "asleep";
+  const region = TOWN_BY_ID[hometown]?.region ?? "ashanti";
+  const muslim = MUSLIM_REGIONS.includes(region);
+  if (muslim ? weekday === 5 && hour >= 12 && hour < 14 : weekday === 0 && hour >= 8 && hour < 11) return m.role === "grandmother" && m.age >= 80 ? "home" : "worship";
+  const weekdayTime = weekday >= 1 && weekday <= 5;
+  if (m.age < 18) return weekdayTime && hour >= 7 && hour < 14 ? "school" : "home";
+  if (m.role === "grandmother" || m.age >= 70) return "home";
+  return (weekdayTime || weekday === 6) && hour >= 8 && hour < 16 ? "work" : "home";
+}
+
+export const WHEREABOUTS_LABEL: Record<Whereabouts, string> = { home: "at home", school: "at school", work: "at work", worship: "at church or the mosque", asleep: "asleep" };
+
+export interface Chore {
+  id: string;
+  name: string;
+  minutes: number;
+  energy: number;
+  /** Who it's with: everyone at home, or a specific role. */
+  with: "all" | "young";
+  blurb: string;
+}
+
+/** Chores at the family house; the cooking one depends on the region's food. */
+export function choresFor(hometown: string): Chore[] {
+  const region = TOWN_BY_ID[hometown]?.region ?? "ashanti";
+  const cook: Chore =
+    region === "volta" || region === "oti" ? { id: "cook", name: "Turn the akple", minutes: 60, energy: 10, with: "all", blurb: "Stand at the pot and turn the dough till your arm burns." }
+    : ["northern", "savannah", "north_east", "upper_east", "upper_west"].includes(region) ? { id: "cook", name: "Stir the TZ", minutes: 60, energy: 10, with: "all", blurb: "Stir the TZ with the big paddle while someone picks ayoyo leaves." }
+    : region === "greater_accra" ? { id: "cook", name: "Turn the banku", minutes: 60, energy: 10, with: "all", blurb: "Banku needs a strong arm. Grandma supervises." }
+    : region === "central" || region === "western" ? { id: "cook", name: "Grind pepper for the fish", minutes: 45, energy: 6, with: "all", blurb: "Pepper, onion and tomato in the asanka while the fish fries." }
+    : { id: "cook", name: "Pound the fufu", minutes: 60, energy: 14, with: "all", blurb: "You pound, someone turns. Don't lose a finger." };
+  return [
+    { id: "water", name: "Fetch water", minutes: 45, energy: 12, with: "all", blurb: "Buckets from the standpipe or borehole, for cooking and bathing." },
+    { id: "sweep", name: "Sweep the compound", minutes: 30, energy: 6, with: "all", blurb: "Early-morning sweeping with a broom of palm fronds." },
+    cook,
+    { id: "homework", name: "Help with homework", minutes: 60, energy: 4, with: "young", blurb: "Maths and English for the young one, at the table under the bulb." },
+  ];
+}

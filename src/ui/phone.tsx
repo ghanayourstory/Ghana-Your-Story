@@ -1,4 +1,5 @@
 import { BUILD_VERSION } from "../version.ts";
+import { LANGUAGES, MAX_LANGUAGES, MAX_PRIORITIES, PRIORITIES } from "../../shared/identity.ts";
 import { gigVehicle, startGigShift } from "./gig.ts";
 import { getCaptions, getReduceMotion, getUiScale, setCaptions, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
 import { FamilyApp } from "./family.tsx";
@@ -781,6 +782,14 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
         <b>Needs</b>
         <div className="seg">{([[1, "Normal"], [0.5, "Slow"], [0, "Off"]] as const).map(([v, label]) => <button key={v} className={state.player.settings.needsPace === v ? "on" : ""} disabled={busy} onClick={() => act({ type: "settings", needsPace: v })}>{label}</button>)}</div>
         <div className="tiny muted">How fast hunger, energy, bladder, hygiene, fun and social run down. Off keeps them where they are.</div>
+      </div>
+      <div className="card col" style={{ marginTop: 10 }}>
+        <b>Languages you speak</b>
+        <div className="seg" style={{ flexWrap: "wrap" }}>{Object.values(LANGUAGES).map((l) => { const mine = state.player.languages; const on = mine.includes(l.id); return <button key={l.id} className={on ? "on" : ""} disabled={busy} onClick={() => act({ type: "settings", languages: on ? mine.filter((x) => x !== l.id) : [...mine, l.id].slice(-MAX_LANGUAGES) })}>{l.name}</button>; })}</div>
+        <div className="tiny muted">Plus English. People warm to you faster in their own language.</div>
+        <b style={{ marginTop: 10 }}>What matters to you</b>
+        <div className="seg" style={{ flexWrap: "wrap" }}>{Object.values(PRIORITIES).map((pr) => { const mine = state.player.priorities; const on = mine.includes(pr.id); return <button key={pr.id} className={on ? "on" : ""} disabled={busy} onClick={() => act({ type: "settings", priorities: on ? mine.filter((x) => x !== pr.id) : [...mine, pr.id].slice(-MAX_PRIORITIES) })}>{pr.icon} {pr.label}</button>; })}</div>
+        <div className="tiny muted">{state.player.priorities.map((x) => PRIORITIES[x as keyof typeof PRIORITIES].text).join(" ") || "Pick up to two. Good moments in these areas lift your mood more and your daily goals lean that way."}</div>
       </div>
       <div className="card col" style={{ marginTop: 10 }}>
         <b>Save</b>

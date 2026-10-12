@@ -48,11 +48,11 @@ export default function App() {
       <CharacterCreate
         busy={busy}
         error={error}
-        onCreate={async ({ name, background, look, hometown }) => {
+        onCreate={async ({ name, background, look, hometown, languages, priorities }) => {
           setBusy(true);
           setError(null);
           try {
-            const res = await boot.backend.request<{ token?: string; state?: GameState; error?: string }>("POST", "/api/player", { name, background, look, hometown, test: boot.backend.mode === "offline" });
+            const res = await boot.backend.request<{ token?: string; state?: GameState; error?: string }>("POST", "/api/player", { name, background, look, hometown, languages, priorities, test: boot.backend.mode === "offline" });
             if (res.json.token && res.json.state) {
               setToken(res.json.token);
               try { localStorage.setItem("sika.intro", "1"); } catch { /* ignore */ }
@@ -382,6 +382,9 @@ function Game() {
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>🗣️ <b>Languages and what matters to you:</b> pick the languages you speak (Twi, Fante, Ga, Ewe, Dagbani, Hausa, Gonja, Dagaare, Gurene, Nzema) and up to two priorities (family, faith, getting ahead, friends, health, enjoying life). People warm to you faster in their own language; good moments in what you care about lift your mood more, and one daily goal leans that way. Change them any time in Phone → Settings.</div>
+              <div>👪 <b>Family keep their own week:</b> the young one is at school on weekday mornings, parents work until 4, everyone goes to church or the mosque. At the family house you can fetch water, sweep the compound, help cook (pound fufu, stir TZ, turn akple or banku) or help with homework.</div>
+              <div>🥁 <b>Festivals on your Today card:</b> what's on where you are and back home, and what's coming next month. 🏘️ <b>Neighbours:</b> people who live on your street head to the station in the morning and come home in the evening; the elder stays in.</div>
               <div>🇬🇭 <b>Not just Accra:</b> every town now has a church and a mosque, everyday jobs (market loader, trotro mate, chop bar cook, nursing aide, night security, evening tutor), driving and riding lessons, and three named townspeople (a trader, a driver, a nurse) you can befriend. Their favours do real things: cheaper stock, half-price clinic visits, standing at the station. Bigger cities have ride-app and delivery work.</div>
               <div>🥁 <b>Funerals and weddings follow the region:</b> the gyil plays at Upper West funeral rites, smocks and drums in the Upper East, funeral prayers and mosque weddings where most people are Muslim, black and red with brass bands in the south.</div>
               <div>⚫💍 <b>Saturdays:</b> funerals and weddings in town. Canopies go up, guests come in black and red or kente. Go along with a donation or gift (Today card, or the venue). Social, fun, food, and a little standing if you give well.</div>

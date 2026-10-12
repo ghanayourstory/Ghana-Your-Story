@@ -142,6 +142,9 @@ export class CityLife {
   /** Dumsor at the junction: lights dark, a warden waves traffic through. */
   powerCut = false;
   private warden: Person | null = null;
+  /** People who live on this street: out to work in the morning, home in the evening. */
+  private neighbours: { rig: Person; idx: number; home: THREE.Vector3; atHome: boolean; path: THREE.Vector3[]; leaving: boolean }[] = [];
+  private neighboursReady = false;
   /** Length of the car you're driving (0 when on foot), so traffic gives it room. */
   playerCarLength = 0;
 
@@ -350,6 +353,74 @@ export class CityLife {
     }
   }
 
+  /** Is neighbour i at home at this time? Workers commute on weekdays, the elder stays in, Sunday morning is church. */
+  private neighbourHome(i: number, weekday: number, h: number): boolean {
+    if (h < 5.5 || h >= 22) return false; // indoors asleep
+    if (weekday === 0) return !(h >= 7.5 + i * 0.1 && h < 11.5 + i * 0.2) || i === 0;
+    if (i === 0 || weekday === 6) return h < 20.5 + i * 0.2;
+    return h < 6.8 + i * 0.35 || h >= 16.8 + i * 0.45;
+  }
+
+  /** Keep the street's residents in step with the clock; walk them when they come and go. */
+  updateNeighbours(weekday: number, hour: number) {
+    if (!this.neighboursReady) {
+      this.neighboursReady = true;
+      const door = this.d.homeDoor;
+      const side = Math.sign(door.z) || 1;
+      for (let i = 0; i < 5; i++) {
+        const look = randomLook(9100 + i * 37 + this.d.id.length * 11);
+        if (i === 0) { look.hair = "#cfcac2"; if (look.face) look.face[12] = 0.9; }
+        const rig = buildPerson(look);
+        const home = new THREE.Vector3(door.x - 3 + i * 1.5 + (i > 2 ? 3 : 0), 0.16, side * (WALK_IN + 0.9));
+        rig.root.position.copy(home);
+        rig.root.rotation.y = side > 0 ? Math.PI : 0;
+        const atHome = this.neighbourHome(i, weekday, hour);
+        rig.root.visible = atHome;
+        this.group.add(rig.root);
+        this.neighbours.push({ rig, idx: i, home, atHome, path: [], leaving: false });
+      }
+      return;
+    }
+    for (const n of this.neighbours) {
+      const want = this.neighbourHome(n.idx, weekday, hour);
+      if (want === n.atHome) continue;
+      n.atHome = want;
+      const out = this.arrivalPoint(n.home);
+      // Asleep or gone overnight: just appear/disappear indoors.
+      const night = hour < 5.5 || hour >= 21.9;
+      if (night) { n.rig.root.visible = want; n.rig.root.position.copy(n.home); n.path = []; continue; }
+      n.rig.root.visible = true;
+      if (want) { n.rig.root.position.copy(out); n.path = this.route(out, n.home); n.leaving = false; }
+      else { n.path = this.route(n.rig.root.position, out); n.leaving = true; }
+    }
+  }
+
+  private animateNeighbours(dt: number, player: THREE.Vector3) {
+    for (const n of this.neighbours) {
+      if (!n.rig.root.visible) continue;
+      const p = n.rig.root.position;
+      if (n.path.length) {
+        const tgt = n.path[0], dx = tgt.x - p.x, dz = tgt.z - p.z, dist = Math.hypot(dx, dz);
+        if (dist < 0.15) {
+          n.path.shift();
+          if (!n.path.length && n.leaving) n.rig.root.visible = false;
+        } else {
+          const k = Math.min(1, (1.3 * dt) / dist);
+          p.x += dx * k;
+          p.z += dz * k;
+          n.rig.root.rotation.y = Math.atan2(dx, dz);
+        }
+        animatePerson(n.rig, dt, 1.3);
+        continue;
+      }
+      // At home: chat with each other, turn to greet you when you pass.
+      const dx = player.x - p.x, dz = player.z - p.z;
+      const yaw = Math.hypot(dx, dz) < 5 ? Math.atan2(dx, dz) : n.idx % 2 ? Math.PI / 2 : -Math.PI / 2;
+      n.rig.root.rotation.y += (((yaw - n.rig.root.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 3);
+      animatePerson(n.rig, dt, 0);
+    }
+  }
+
   /** Nearest trotro/taxi stop, else the end of the street, on the pavement. */
   private arrivalPoint(near: THREE.Vector3): THREE.Vector3 {
     const lane = (Math.sign(near.z) || 1) * (WALK_IN + 1.6);
@@ -528,6 +599,7 @@ export class CityLife {
       if (w.bubble) w.bubble.position.set(w.x, 2.25, w.z);
     }
 
+    this.animateNeighbours(dt, player);
     // Named characters: idle, face the player when close.
     for (const [id, a] of this.npcs) {
       if (a.path.length) {
@@ -574,6 +646,7 @@ export class CityLife {
   peoplePositions(): { x: number; z: number }[] {
     const out = this.walkers.map((w) => ({ x: w.x, z: w.z }));
     for (const a of this.npcs.values()) out.push({ x: a.rig.root.position.x, z: a.rig.root.position.z });
+    for (const n of this.neighbours) if (n.rig.root.visible) out.push({ x: n.rig.root.position.x, z: n.rig.root.position.z });
     return out;
   }
 

@@ -1,6 +1,7 @@
 // The 3D runtime: renderer, camera, player controller, district streaming,
 // city life, atmosphere, interactions, interiors and sound.
 import { powerOff } from "../../shared/power.ts";
+import { familyWhereabouts } from "../../shared/family.ts";
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -434,7 +435,9 @@ export class World {
     const d = this.district;
     if (!d) return;
     const here = DISTRICTS[d.id].city === s.player.hometown && districtsIn(DISTRICTS[d.id].city)[0] === d.id;
-    const members = here ? s.player.family.filter((m) => m.town === s.player.hometown) : [];
+    // Only whoever is home right now: the young one is at school on weekday mornings, parents at work.
+    const gdNow = toGameDate(Math.floor(this.minuteNow));
+    const members = here ? s.player.family.filter((m) => m.town === s.player.hometown && familyWhereabouts(m, m.town, gdNow.weekdayIndex, gdNow.hour) === "home") : [];
     const key = `${d.id}:${members.map((m) => m.id).join(",")}`;
     if (key === this.familyKey) return;
     this.familyKey = key;
@@ -1768,9 +1771,11 @@ export class World {
         // Hour ticked over while you're here: people walk to their next place instead of popping there.
         const animate = this.npcHourSeen !== -1 && (gd.hour - this.npcHourSeen + 24) % 24 === 1 && this.npcDistrictSeen === this.district.id;
         this.lastNpcHour = this.npcHourSeen = gd.hour;
+        if (this.state) this.updateFamily(this.state);
         this.npcDistrictSeen = this.district.id;
         this.life.syncNpcs(gd.weekdayIndex, gd.hour, this.tiers, animate);
       }
+      this.life.updateNeighbours(gd.weekdayIndex, gd.hour + gd.min / 60);
       this.life.update(dt, t, this.pos, night > 0.55, this.camera);
       this.animateFamily(dt, t);
       this.animateEvents(dt, t, gd.hour + gd.min / 60);

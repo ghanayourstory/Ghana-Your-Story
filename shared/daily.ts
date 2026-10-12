@@ -2,6 +2,7 @@
 // (no "go to work" if you have no job). Skippable, one swap a day, and the
 // reward is modest: they guide play, they don't replace it.
 import { mulberry32 } from "./rng.ts";
+import { PRIORITY_GOALS, type Priority } from "./identity.ts";
 
 export interface DailyGoalDef {
   id: string;
@@ -21,6 +22,8 @@ export interface DailyContext {
   enrolled: boolean;
   hasKitchen: boolean;
   hasCar: boolean;
+  /** Your priorities: goals in those areas come up first. */
+  priorities?: string[];
 }
 export interface DailyGoal {
   id: string;
@@ -54,6 +57,8 @@ export const DAILY_GOALS: Record<string, DailyGoalDef> = {
   farm: { id: "farm", icon: "🌱", label: "Work on your farm", hint: "Plant or harvest.", target: 1, reward: 35, eligible: (c) => c.hasFarm },
   trade: { id: "trade", icon: "🧺", label: "Buy stock at a market and sell it", hint: "Sachet water, oranges or bread sell fast at lorry stations.", target: 1, reward: 25, eligible: always },
   family: { id: "family", icon: "📞", label: "Call or visit family", hint: "Phone → Family.", target: 1, reward: 15, eligible: always },
+  worship: { id: "worship", icon: "🙏", label: "Go to church or the mosque", hint: "A service, fellowship or prayers.", target: 1, reward: 15, eligible: always },
+  exercise: { id: "exercise", icon: "💪", label: "Get some exercise", hint: "Gym, a jog, street football or boxing.", target: 1, reward: 20, eligible: always },
   post: { id: "post", icon: "📸", label: "Post on Vibes", hint: "Share something from your day.", target: 1, reward: 15, eligible: always },
 };
 /** Bonus for doing all three. */
@@ -70,7 +75,11 @@ export function pickDaily(playerId: number, day: number, c: DailyContext): strin
   // Work or job hunting is usually one of them; the rest are a mix.
   const first = pool.includes("shift") ? "shift" : pool.includes("job_hunt") && rnd() < 0.7 ? "job_hunt" : null;
   const rest = pool.filter((id) => id !== first && id !== "shift" && id !== "job_hunt").sort(() => rnd() - 0.5);
-  return [...(first ? [first] : []), ...rest].slice(0, 3);
+  // One goal from something you care about, when there is one.
+  const cares = new Set((c.priorities ?? []).flatMap((p) => PRIORITY_GOALS[p as Priority] ?? []));
+  const favourite = rest.find((id) => cares.has(id));
+  const ordered = favourite ? [favourite, ...rest.filter((id) => id !== favourite)] : rest;
+  return [...(first ? [first] : []), ...ordered].slice(0, 3);
 }
 
 /** A replacement for one goal: the next eligible one not already on the list. */

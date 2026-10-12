@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v16. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v17. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -23,7 +23,7 @@ Last checked: game build v16. This is the Stage 0 "discovery" note from the foun
 
 | Item | State |
 |---|---|
-| Character creator and starter household | ✅ hometown choice and a family there (no language / priorities choice yet) |
+| Character creator and starter household | ✅ hometown, languages and priorities, and a family there |
 | Interactive home and nearby street | ✅ dollhouse home, Kaneshie street |
 | Neighbourhood map with a real transport route | ✅ trotro, taxi, ride app; rides drive you there |
 | One job and one self-employed hustle | ✅ jobs; ✅ market trading: buy stock, carry it, sell it, with spoilage, demand and rush hours |
@@ -54,11 +54,14 @@ Last checked: game build v16. This is the Stage 0 "discovery" note from the foun
 - ✅ Prepaid electricity units: drawn down daily by what you own, solar cuts the draw, empty meter darkens the home and blocks screens until you top up in SikaBank. Water, refuse and data stay a monthly bill.
 - ✅ Named people commute: they walk in from the trotro stop, between places, and off home as their schedule changes.
 - ✅ Foundation across all 20 playable towns (checked by a test): church and mosque, everyday jobs with shifts that fit opening hours, licence lessons, at least two named people with routines, Saturday events. Funeral and wedding customs, venues and dress vary by region.
-- ⏳ School days for younger family; separate household members' routines; water as its own line if it adds play.
+- ✅ Languages and priorities: chosen at the start, changeable in Settings; shared language speeds friendship, priorities weight moodlets and daily goals (never a penalty).
+- ✅ Family routines: school, work and worship by region; chores at the family house with regional cooking; only whoever is home appears outside.
+- ✅ Festivals where you are and at home on the Today card; street residents who commute in the morning and come home at night, in every town.
+- ⏳ Water as its own bill line if it adds play; learning languages in play.
 
 ## Next slices, in order
 
 1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner.)*
-2. Language and priorities choice at character creation (Stage 1 gap).
-3. School days and chores for younger family members; festivals on the calendar (Homowo, Aboakyer, Hogbetsotso) as town events.
-4. Neighbours with homes on your street (not just workplaces), so evenings fill up as people come back.
+2. Regional refinement pass, one region at a time: hand-written characters to replace the generated townsfolk, local reviewers for names, language and customs.
+3. Festival days as 3D events (durbars, processions) like the Saturday funerals.
+4. Learn a language through lessons or time spent in a town.

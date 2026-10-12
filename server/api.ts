@@ -39,7 +39,7 @@ export async function handle(deps: ApiDeps, req: ApiRequest): Promise<ApiRespons
 
     if (req.method === "POST" && req.path === "/api/player") {
       const token = deps.newToken();
-      const id = createPlayer(ctx, { name: body.name, look: body.look, background: body.background, hometown: body.hometown, isTest: body.test === true });
+      const id = createPlayer(ctx, { name: body.name, look: body.look, background: body.background, hometown: body.hometown, languages: body.languages, priorities: body.priorities, isTest: body.test === true });
       ctx.db.run("UPDATE players SET token_hash = ? WHERE id = ?", await deps.hashToken(token), id);
       return { status: 201, json: { token, state: buildState(ctx, loadPlayer(ctx.db, id)) } };
     }

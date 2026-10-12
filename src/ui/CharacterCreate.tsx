@@ -1,5 +1,6 @@
 import { SKIN_TONES } from "../world/people.ts";
 import { CITIES } from "../../shared/cities.ts";
+import { LANGUAGES, MAX_LANGUAGES, MAX_PRIORITIES, PRIORITIES, homeLanguage, type Priority } from "../../shared/identity.ts";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { buildPerson, animatePerson, type PersonLook, type HairStyle, type Pattern } from "../world/people.ts";
@@ -22,9 +23,13 @@ const BACKGROUNDS = [
 // Hometowns you can travel back to and walk around, grouped by region.
 const HOMETOWN_OPTIONS = Object.values(CITIES).filter((c) => c.playable).sort((a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name));
 
-export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { name: string; background: string; look: PersonLook; hometown: string }) => void; error: string | null; busy: boolean }) {
+export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { name: string; background: string; look: PersonLook; hometown: string; languages: string[]; priorities: Priority[] }) => void; error: string | null; busy: boolean }) {
   const [name, setName] = useState("");
   const [hometown, setHometown] = useState("kumasi");
+  const [langs, setLangs] = useState<string[]>([homeLanguage("kumasi")]);
+  const [langsTouched, setLangsTouched] = useState(false);
+  const [prios, setPrios] = useState<Priority[]>([]);
+  const toggle = <T,>(xs: T[], x: T, max: number) => (xs.includes(x) ? xs.filter((y) => y !== x) : xs.length >= max ? [...xs.slice(1), x] : [...xs, x]);
   const [bg, setBg] = useState("graduate");
   const [look, setLook] = useState<PersonLook>({ skin: SKINS[3], shirt: OUTFITS[0], pants: PANTS[0], hair: "#111111", feminine: false, height: 1.75, build: 1, hairStyle: "low", pattern: "kente" });
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -126,11 +131,21 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
           </label>
           <label className="col" style={{ gap: 6 }}>
             <b>Hometown</b>
-            <select className="input" value={hometown} onChange={(e) => setHometown(e.target.value)}>
+            <select className="input" value={hometown} onChange={(e) => { setHometown(e.target.value); if (!langsTouched) setLangs([homeLanguage(e.target.value)]); }}>
               {HOMETOWN_OPTIONS.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.region}</option>)}
             </select>
             <div className="tiny muted">Your family lives here: parents, a grandmother, a brother or sister. You start in Accra; you can call, send MoMo or travel home to visit.</div>
           </label>
+          <div className="col" style={{ gap: 6 }}>
+            <b>Languages <span className="tiny muted">(besides English, up to {MAX_LANGUAGES})</span></b>
+            <div className="seg" style={{ flexWrap: "wrap" }}>{Object.values(LANGUAGES).map((l) => <button key={l.id} className={langs.includes(l.id) ? "on" : ""} onClick={() => { setLangsTouched(true); setLangs((x) => toggle(x, l.id, MAX_LANGUAGES)); }}>{l.name}</button>)}</div>
+            <div className="tiny muted">People warm to you faster when you speak their language. Nobody is unfriendly if you don't.</div>
+          </div>
+          <div className="col" style={{ gap: 6 }}>
+            <b>What matters to you <span className="tiny muted">(pick up to {MAX_PRIORITIES}, optional)</span></b>
+            <div className="seg" style={{ flexWrap: "wrap" }}>{Object.values(PRIORITIES).map((p) => <button key={p.id} className={prios.includes(p.id) ? "on" : ""} onClick={() => setPrios((x) => toggle(x, p.id, MAX_PRIORITIES))}>{p.icon} {p.label}</button>)}</div>
+            <div className="tiny muted">{prios.length ? prios.map((p) => PRIORITIES[p].text).join(" ") : "Good moments in what you care about lift your mood more, and your daily goals lean that way. You can change this later in Settings."}</div>
+          </div>
           <div className="col" style={{ gap: 6 }}>
             <b>Background</b>
             {BACKGROUNDS.map((b) => (
@@ -164,7 +179,7 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
             <div className="swatches">{PANTS.map((c) => <button key={c} className={`swatch ${look.pants === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ pants: c })} aria-label="Trousers colour" />)}</div>
           </div>
           {error && <div className="notice err">{error}</div>}
-          <button className="btn primary" style={{ padding: 16, fontSize: 17 }} disabled={!valid || busy} onClick={() => onCreate({ name: name.trim(), background: bg, look, hometown })}>{busy ? "Arriving…" : "Arrive in Accra →"}</button>
+          <button className="btn primary" style={{ padding: 16, fontSize: 17 }} disabled={!valid || busy} onClick={() => onCreate({ name: name.trim(), background: bg, look, hometown, languages: langs, priorities: prios })}>{busy ? "Arriving…" : "Arrive in Accra →"}</button>
         </div>
       </div>
     </div>

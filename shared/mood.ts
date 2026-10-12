@@ -1,6 +1,7 @@
 // Mood, Sims-style: a handful of "moodlets" that say why you feel the way you
 // do, each worth a little up or down. Poverty, faith, family set-up or
 // disability are never a mood penalty; neglected needs and stress are.
+import { PRIORITY_MOODLETS, type Priority } from "./identity.ts";
 export interface MoodInput {
   stats: { energy: number; hunger: number; health: number; social: number; fun: number; hygiene: number; bladder: number };
   homeTier: string;
@@ -16,6 +17,10 @@ export interface MoodInput {
   /** Prepaid electricity has run out at home. */
   noUnits?: boolean;
   fellowship?: boolean;
+  /** What matters to this person (see identity.ts). */
+  priorities?: string[];
+  /** Worked, traded or ran the business today. */
+  productive?: boolean;
 }
 export interface Moodlet {
   id: string;
@@ -71,6 +76,11 @@ export function moodOf(m: MoodInput): Mood {
   if (m.missingHome) add("missing_home", "🏡", "Missing home", "It's been a while since you called home.", -1);
   if (m.hasCar) add("wheels", "🚗", "Got wheels", "No more waiting for trotros.", 1);
   if (m.rentArrears) add("rent_due", "🧾", "Rent is overdue", "The landlord has been calling.", -2);
+  const pri = (m.priorities ?? []) as Priority[];
+  if (m.productive && pri.includes("money")) add("productive", "📈", "Productive day", "You put in the work today.", 1);
+  // Good things in the areas you care about count for more.
+  const boosted = new Set(pri.flatMap((p) => PRIORITY_MOODLETS[p] ?? []));
+  for (const x of out) if (x.value > 0 && boosted.has(x.id)) { x.value += 1; x.why += " This matters to you."; }
   const score = out.reduce((a, b) => a + b.value, 0);
   const [label, face] = score >= 4 ? ["Very happy", "😄"] : score >= 1 ? ["Happy", "🙂"] : score >= -1 ? ["Fine", "😐"] : score >= -4 ? ["Uncomfortable", "😕"] : ["Miserable", "😞"];
   return { score, label, face, moodlets: out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value)) };

@@ -395,6 +395,21 @@ test("family: a hometown family with local names; call, send MoMo for a request,
   assert.equal(act(ctx, id, { type: "family_visit", memberId: mum.id }).code, "not_here");
   const r = act(ctx, id, { type: "travel", to: districtsIn("tamale")[0], mode: "bus" });
   assert.ok(r.ok, r.error);
+  // Family keep their own week: on a weekday morning the young one is at school.
+  while (![1, 2, 3, 4].includes(toGameDate(gameMin(ctx, id)).weekdayIndex)) skip(ctx, id, 12);
+  skipTo(ctx, id, 10);
+  const young = st.family.find((m) => m.age < 18)!;
+  const yv = act(ctx, id, { type: "family_visit", memberId: young.id });
+  assert.equal(yv.code, "not_home");
+  assert.equal(buildState(ctx, loadPlayer(ctx.db, id)).player.family.find((m) => m.id === young.id)!.where, "school");
+  assert.equal(act(ctx, id, { type: "family_chore", chore: "homework" }).code, "nobody_home");
+  // Grandma is home: sweep the compound with her. Evening: homework, then visit mum.
+  const sw = act(ctx, id, { type: "family_chore", chore: "sweep" });
+  assert.ok(sw.ok, sw.error);
+  assert.equal(act(ctx, id, { type: "family_chore", chore: "sweep" }).code, "already");
+  skipTo(ctx, id, 17);
+  const hw = act(ctx, id, { type: "family_chore", chore: "homework" });
+  assert.ok(hw.ok, hw.error);
   assert.ok(act(ctx, id, { type: "family_visit", memberId: mum.id }).ok);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
@@ -592,5 +607,34 @@ test("a Saturday in Tamale: work as a loader, go to a Saturday event, named peop
   const r = act(ctx, id, { type: "event_attend", eventId: ev.id, gift: ev.gift * 100 });
   assert.ok(r.ok, r.error);
   assert.ok(NPCS.some((n) => n.district === "tamale"));
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("languages and priorities: chosen at the start, change in settings, and they matter", () => {
+  const env = makeCtx({ devTools: true });
+  const { ctx } = env;
+  const id = createPlayer(ctx, { name: "Kojo Test", look: {}, background: "graduate", hometown: "ho", priorities: ["faith", "nonsense", "family", "fun"], isTest: true });
+  let st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.deepEqual(st.player.languages, ["ewe"], "defaults to the hometown's language");
+  assert.deepEqual(st.player.priorities, ["faith", "family"], "unknown ones dropped, max two");
+  grant(ctx, id, 100_000);
+  // Faith matters: Sunday service feels like more.
+  while (toGameDate(gameMin(ctx, id)).weekdayIndex !== 0) skip(ctx, id, 12);
+  skipTo(ctx, id, 8);
+  assert.ok(act(ctx, id, { type: "service", placeId: "kaneshie_church", serviceId: "sunday_service" }).ok);
+  st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(st.player.mood.moodlets.find((m) => m.id === "fellowship")?.value, 2);
+  // Settings: speak Dagbani, go to Tamale, talk to a townsperson in their language.
+  assert.ok(act(ctx, id, { type: "settings", languages: ["dagbani", "klingon"], priorities: ["money"] }).ok);
+  st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.deepEqual(st.player.languages, ["dagbani"]);
+  assert.deepEqual(st.player.priorities, ["money"]);
+  assert.ok(act(ctx, id, { type: "travel", to: "tamale", mode: "bus" }).ok);
+  skip(ctx, id, 24);
+  skipTo(ctx, id, 10);
+  const trader = NPCS.find((n) => n.id === "tf_tamale_trader") ?? NPCS.find((n) => n.district === "tamale" && n.schedule.some((b) => b.from <= 10 && b.to > 10 && b.days !== "sunday"))!;
+  const r = act(ctx, id, { type: "talk", npcId: trader.id, topic: "chat" });
+  assert.ok(r.ok, r.error);
+  assert.match((r.data as { reply: string }).reply, /Dagbani/);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });

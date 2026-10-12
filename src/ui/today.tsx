@@ -6,6 +6,25 @@ import { JOBS, PLACE_BY_ID } from "../../shared/world.ts";
 import { NEEDS } from "../../shared/mood.ts";
 import { GROUP_NAME, fmtHour, outageWindow, powerGroup } from "../../shared/power.ts";
 import { DISTRICTS } from "../../shared/world.ts";
+import { FESTIVALS } from "../../shared/regional.ts";
+import { daysToAkwasidae } from "../../shared/calendar.ts";
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** Festivals where you are and back home: on now, or coming next month (Akwasidae within a week). */
+function festivalsFor(cities: string[], month: number, day: number) {
+  const out: { id: string; name: string; people: string; where: string; on: boolean; when: string }[] = [];
+  for (const f of FESTIVALS) {
+    const ds = f.districts.filter((d) => cities.includes(DISTRICTS[d]?.city));
+    if (!ds.length) continue;
+    const where = [...new Set(ds.map((d) => DISTRICTS[d].name))].join(", ");
+    if (f.cycle42) {
+      const n = daysToAkwasidae(day);
+      if (n <= 7) out.push({ id: f.id, name: f.name, people: f.people, where, on: n === 0, when: `In ${n} day${n === 1 ? "" : "s"}` });
+    } else if (f.months.includes(month)) out.push({ id: f.id, name: f.name, people: f.people, where, on: true, when: "" });
+    else if (f.months.includes((month % 12) + 1)) out.push({ id: f.id, name: f.name, people: f.people, where, on: false, when: `Next month (${f.months.map((m) => MONTHS[m - 1]).join("/")})` });
+  }
+  return out.slice(0, 3);
+}
 
 export function TodaySheet({ onClose }: { onClose: () => void }) {
   const { state, act, busy } = useGame();
@@ -49,6 +68,12 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
           <span>💵</span>
           <div className="grow"><b>{money(state.money.cash)} cash · {money(state.money.bank)} in the bank</b><div className="tiny muted">Bills this month about {money(state.money.monthlyExpenses)}.</div></div>
         </div>
+        {festivalsFor([DISTRICTS[p.district].city, p.hometown], t.month + 1, t.day).map((f) => (
+          <div className="today-row" key={f.id}>
+            <span>🥁</span>
+            <div className="grow"><b>{f.on ? "Festival on now" : "Festival soon"}: {f.name}</b><div className="tiny muted">{f.people} · {f.where} · {f.on ? "Join in at the town's tour desk or square." : f.when}</div></div>
+          </div>
+        ))}
         {(p.events.length ? p.events : p.nextEvents).slice(0, 2).map((e) => (
           <div className="today-row" key={e.id}>
             <span>{e.kind === "funeral" ? "⚫" : "💍"}</span>

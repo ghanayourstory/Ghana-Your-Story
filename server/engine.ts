@@ -3,10 +3,11 @@
 import { isMarketDay, townEvents, weekdayOf } from "../shared/weekly.ts";
 import { fmtHour, outageWindow, powerOff } from "../shared/power.ts";
 import { mulberry32 } from "../shared/rng.ts";
-import { ROLE_LABEL, makeFamily, requestFor, type FamilyRequest, type FamilyRole } from "../shared/family.ts";
+import { ROLE_LABEL, makeFamily, requestFor, type FamilyRequest, type FamilyRole, choresFor, familyWhereabouts, WHEREABOUTS_LABEL } from "../shared/family.ts";
 import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../shared/trade.ts";
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
+import { LANGUAGES, PRIORITIES, homeLanguage, languagesOfCity, sanitizeLanguages, sanitizePriorities } from "../shared/identity.ts";
 import { tx, type Db } from "./db.ts";
 import { balance, ensureAccount, GameError, post, recentLedger, type Leg } from "./ledger.ts";
 import {
@@ -67,6 +68,10 @@ export interface PlayerRow {
   daily: string;
   needs_pace: number;
   hometown: string;
+  languages: string;
+  priorities: string;
+  productive_day: number;
+  chores: string;
   helped_day: number;
   last_police_min: number;
   last_gig_day: number;
@@ -134,11 +139,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -200,7 +205,7 @@ export function sanitizeLook(l: unknown): LookInput {
   };
 }
 
-export function createPlayer(ctx: Ctx, input: { name: unknown; look: unknown; background: unknown; hometown?: unknown; isTest?: boolean }): number {
+export function createPlayer(ctx: Ctx, input: { name: unknown; look: unknown; background: unknown; hometown?: unknown; languages?: unknown; priorities?: unknown; isTest?: boolean }): number {
   const name = typeof input.name === "string" ? input.name.trim().replace(/\s+/g, " ") : "";
   if (!/^[\p{L}\p{M}' .-]{2,24}$/u.test(name)) throw new GameError("bad_name", "Name must be 2–24 letters");
   const bgKey = (typeof input.background === "string" && input.background in BACKGROUNDS ? input.background : "graduate") as Background;
@@ -219,7 +224,8 @@ export function createPlayer(ctx: Ctx, input: { name: unknown; look: unknown; ba
     const id = r.lastInsertRowid;
     for (const code of ["cash", "bank", "momo", "usd", "tbill", "loan"]) ensureAccount(ctx.db, id, code);
     const home = typeof input.hometown === "string" && HOMETOWNS.includes(input.hometown) ? input.hometown : HOMETOWNS[Number(id) % HOMETOWNS.length];
-    ctx.db.run("UPDATE players SET hometown = ? WHERE id = ?", home, id);
+    const langs = sanitizeLanguages(input.languages);
+    ctx.db.run("UPDATE players SET hometown = ?, languages = ?, priorities = ? WHERE id = ?", home, JSON.stringify(langs.length ? langs : [homeLanguage(home)]), JSON.stringify(sanitizePriorities(input.priorities)), id);
     seedFamily(ctx.db, Number(id), home, name);
     post(ctx.db, id, [
       { account: "cash", amount: minor(bg.cash) },
@@ -870,6 +876,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "event_attend": return actEventAttend(ctx, p, a, fb);
     case "family_send": return actFamilySend(ctx, p, a, fb);
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
+    case "family_chore": return actFamilyChore(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
     case "settings": return actSettings(p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
@@ -1250,6 +1257,12 @@ function actTalk(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
     delta = Math.min(delta, 1);
   } else if (tiredNpc && topic === "chat") {
     reply = `${L.tired} ${reply}`;
+  }
+  // Speaking someone's own language warms things up a little faster.
+  const shared = languagesOfCity(DISTRICTS[npc.district]?.city ?? "accra").find((l) => (JSON.parse(p.languages || "[]") as string[]).includes(l));
+  if (shared && delta > 0 && !cold) {
+    delta *= 1.3;
+    if (rel.talks_today === 0) reply = `(${LANGUAGES[shared].hello ? `"${LANGUAGES[shared].hello}" ` : ""}You talk in ${LANGUAGES[shared].name}.) ${reply}`;
   }
   if (repeat && topic !== "gift") {
     delta = delta > 0 ? delta * 0.2 - 1 : delta - 1;
@@ -2105,6 +2118,7 @@ function dailyContext(db: Db, p: PlayerRow): DailyContext {
     enrolled: !!db.get("SELECT 1 FROM courses WHERE player_id = ? AND status != 'done'", p.id),
     hasKitchen: true,
     hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
+    priorities: JSON.parse(p.priorities || "[]"),
   };
 }
 
@@ -2151,6 +2165,8 @@ function dailyHits(a: Action, discovered: boolean): string[] {
       const s = SERVICES[String(a.serviceId)];
       if (s && (s.effects.hunger ?? 0) >= 15) hits.push("eat_local");
       if (s && (s.effects.fun ?? 0) > 0) hits.push("fun");
+      if (["sunday_service", "church", "mosque", "jumah"].includes(String(a.serviceId))) hits.push("worship");
+      if (s && (s.effects.fitness ?? 0) > 0) hits.push("exercise");
       break;
     }
     case "biz_collect": hits.push("business"); break;
@@ -2158,7 +2174,7 @@ function dailyHits(a: Action, discovered: boolean): string[] {
     case "farm_plant": case "farm_harvest": hits.push("farm"); break;
     case "social_post": hits.push("post"); break;
     case "trade_sell": hits.push("trade"); break;
-    case "family_call": case "family_visit": hits.push("family"); break;
+    case "family_call": case "family_visit": case "family_chore": hits.push("family"); break;
   }
   if (discovered) hits.push("explore");
   return hits;
@@ -2167,6 +2183,7 @@ function dailyHits(a: Action, discovered: boolean): string[] {
 function trackDaily(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback, discovered: boolean) {
   const st = dailyState(ctx.db, p);
   const hits = dailyHits(a, discovered);
+  if (["work", "gig_shift", "trade_sell", "biz_collect", "farm_harvest"].includes(String(a.type))) p.productive_day = dayOf(p.game_min);
   let changed = false;
   for (const g of st.goals) {
     if (g.done || !hits.includes(g.id)) continue;
@@ -2347,11 +2364,36 @@ function actFamilyVisit(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const m = familyMember(ctx, p, a.memberId);
   if (DISTRICTS[p.district].city !== m.town) throw new GameError("not_here", `${firstName(m)} lives in ${CITIES[m.town]?.name ?? m.town}. Travel there to visit.`);
   requireAwake(p, 8, "visit");
+  const gdv = toGameDate(p.game_min);
+  const where = familyWhereabouts(m, m.town, gdv.weekdayIndex, gdv.hour);
+  if (where !== "home") throw new GameError("not_home", `${firstName(m)} is ${WHEREABOUTS_LABEL[where]} right now. ${where === "school" ? "School finishes at 2." : where === "work" ? "Back around 4." : where === "worship" ? "Back soon after the service." : "Come back in the morning."}`);
   const day = dayOf(p.game_min);
   const first = m.last_visit_day !== day;
   ctx.db.run("UPDATE family SET closeness = MIN(100, closeness + ?), last_contact_day = ?, last_visit_day = ? WHERE id = ?", first ? 15 : 2, day, day, m.id);
   advance(ctx, p, 120, fb, { quiet: true });
   applyEffects(p, { social: first ? 20 : 5, fun: first ? 10 : 2, hunger: first ? 35 : 0 }, fb, `🏡 Two hours with ${firstName(m)}. ${first ? "You eat, you talk, someone brings out the photo album." : "You sit a little longer."}`);
+  return null;
+}
+
+/** Help out at the family house: closeness with whoever is home, a bit of tiredness, and a full belly if you cooked. */
+function actFamilyChore(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (DISTRICTS[p.district].city !== p.hometown) throw new GameError("not_here", "Chores happen at the family house in your hometown.");
+  requireAwake(p, 8, "help out");
+  const chore = choresFor(p.hometown).find((c) => c.id === a.chore);
+  if (!chore) throw new GameError("bad_chore", "Which chore?");
+  const gd = toGameDate(p.game_min);
+  const day = dayOf(p.game_min);
+  const done = (() => { try { const c = JSON.parse(p.chores || "{}") as { day?: number; ids?: string[] }; return c.day === day ? c.ids ?? [] : []; } catch { return []; } })();
+  if (done.includes(chore.id)) throw new GameError("already", `You've already done that today.`);
+  const members = ctx.db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? AND town = ?", p.id, p.hometown)
+    .filter((m) => familyWhereabouts(m, m.town, gd.weekdayIndex, gd.hour) === "home")
+    .filter((m) => chore.with === "all" || m.age < 18);
+  if (!members.length) throw new GameError("nobody_home", chore.with === "young" ? "The young ones aren't home yet. School finishes at 2." : "Nobody is home right now. Come back in the evening.");
+  if (p.energy < chore.energy + 5) throw new GameError("too_tired", "You're too tired. Sit with them instead.");
+  for (const m of members) ctx.db.run("UPDATE family SET closeness = MIN(100, closeness + ?), last_contact_day = ? WHERE id = ?", chore.with === "young" ? 10 : 6, day, m.id);
+  p.chores = JSON.stringify({ day, ids: [...done, chore.id] });
+  advance(ctx, p, chore.minutes, fb, { quiet: true });
+  applyEffects(p, { energy: -chore.energy, social: 10, fun: 3, ...(chore.id === "cook" ? { hunger: 30 } : {}) }, fb, `🧹 ${chore.name}: ${chore.blurb} ${members.map(firstName).join(", ")} ${members.length > 1 ? "are" : "is"} glad you're home.`);
   return null;
 }
 
@@ -2422,6 +2464,16 @@ function actPoliceCheck(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
 }
 
 function actSettings(p: PlayerRow, a: Action, fb: Feedback) {
+  if (a.languages !== undefined) {
+    const l = sanitizeLanguages(a.languages);
+    p.languages = JSON.stringify(l);
+    fb.add(l.length ? `🗣️ You speak English, ${l.map((x) => LANGUAGES[x].name).join(", ")}.` : "🗣️ You speak English.", [], "info");
+  }
+  if (a.priorities !== undefined) {
+    const pr = sanitizePriorities(a.priorities);
+    p.priorities = JSON.stringify(pr);
+    fb.add(pr.length ? `🧭 What matters to you: ${pr.map((x) => PRIORITIES[x].label).join(" and ")}.` : "🧭 No particular priorities right now.", [], "info");
+  }
   if (a.needsPace !== undefined) {
     const v = Number(a.needsPace);
     if (![0, 0.5, 1].includes(v)) throw new GameError("bad_setting", "Needs pace is off, slow or normal.");
@@ -2471,6 +2523,8 @@ function moodFor(db: Db, p: PlayerRow) {
     helpedFamily: p.helped_day >= dayOf(p.game_min) - 2,
     illness: p.illness || undefined,
     fellowship: p.worship_day === dayOf(p.game_min),
+    priorities: JSON.parse(p.priorities || "[]"),
+    productive: p.productive_day === dayOf(p.game_min),
     dumsor: p.district === homeDistrict(db, p) && powerOff(p.district, p.game_min) && !hasGenerator(db, p),
     noUnits: p.power_units <= 0 && !hasGenerator(db, p),
     missingHome: (() => {
@@ -2579,7 +2633,9 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       power: { units: p.power_units, perDay: powerProfile(db, p).kwhPerDay, price: KWH_PRICE },
       generator: hasGenerator(db, p),
       hometown: p.hometown,
-      family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
+      languages: JSON.parse(p.languages || "[]") as string[],
+      priorities: JSON.parse(p.priorities || "[]") as string[],
+      family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ where: familyWhereabouts(m, m.town, toGameDate(p.game_min).weekdayIndex, toGameDate(p.game_min).hour), id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
       stock: stockOf(db, p).map((r) => ({ id: r.good_id, qty: r.qty, avgCost: Math.round(r.cost / r.qty) })),
       carryCap: carryCapacity(!!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)),
       tradeSold: Object.fromEntries(db.all<{ place_id: string; good_id: string; sold: number }>("SELECT place_id, good_id, sold FROM trade_sales WHERE player_id = ? AND day = ?", p.id, dayOf(p.game_min)).map((r) => [`${r.place_id}:${r.good_id}`, r.sold])),

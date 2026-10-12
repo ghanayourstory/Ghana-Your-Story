@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { isMarketDay, marketDayNames } from "../../shared/weekly.ts";
+import { LANGUAGES, languagesOfCity } from "../../shared/identity.ts";
 import { startGigShift } from "./gig.ts";
 import { GOODS, canBuyHere, canSellHere, sellPrice } from "../../shared/trade.ts";
 import { useGame } from "../store.tsx";
@@ -182,7 +183,7 @@ export function TalkSheet({ npcId, world, onClose }: { npcId: string; world: Wor
     } else setLines((l) => [...l, { who: "npc", text: "…" }]);
   };
   return (
-    <Sheet wide title={<div className="row"><div className="avatar" style={{ background: AVATAR_COLORS[npcId] }}>{initials(npc.name)}</div><div><div>{npc.name}</div><div className="small muted" style={{ fontWeight: 500 }}>{npc.role}</div></div></div>} onClose={onClose}>
+    <Sheet wide title={<div className="row"><div className="avatar" style={{ background: AVATAR_COLORS[npcId] }}>{initials(npc.name)}</div><div><div>{npc.name}</div><div className="small muted" style={{ fontWeight: 500 }}>{npc.role}{(() => { const ls = languagesOfCity(DISTRICTS[npc.district]?.city ?? "accra"); const sh = ls.find((l) => state.player.languages.includes(l)); return ` · speaks ${ls.map((l) => LANGUAGES[l].name).join(", ")} & English${sh ? ` · you share ${LANGUAGES[sh].name} 🗣️` : ""}`; })()}</div></div></div>} onClose={onClose}>
       <div className="card" style={{ marginTop: 12 }}>
         <div className="spread small"><span>{rel ? (rel.partner ? "❤️ Partner" : tierFor(aff)[0].toUpperCase() + tierFor(aff).slice(1)) : "Stranger"}</span><span className="num muted">{Math.round(aff)}/100</span></div>
         <Bar value={Math.max(0, aff)} color="#f2b705" />
