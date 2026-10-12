@@ -7,6 +7,7 @@ import { ROLE_LABEL, makeFamily, requestFor, type FamilyRequest, type FamilyRole
 import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../shared/trade.ts";
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
+import { MISSIONS, type MissionState } from "../shared/missions.ts";
 import { LANGUAGES, PRIORITIES, homeLanguage, languagesOfCity, sanitizeLanguages, sanitizePriorities } from "../shared/identity.ts";
 import { tx, type Db } from "./db.ts";
 import { balance, ensureAccount, GameError, post, recentLedger, type Leg } from "./ledger.ts";
@@ -18,9 +19,11 @@ import {
   DISTRICTS, JOBS, MAX_RANK, PLACE_BY_ID, RANK_TITLES, SERVICES, SHIFTS_PER_RANK, TRAVEL_MODES,
   districtsIn, isOpenAt, priceFor, rankPay, travelQuote,
   type DistrictId, type EffectKey, type Effects, type TravelMode,
+  placesIn,
 } from "../shared/world.ts";
 import { NPC_BY_ID, NPCS, lineFor, npcLocation, tierFor, type Topic } from "../shared/people.ts";
 import {
+  ATTENDANT_BOOST, MANAGER_BOOST, SEVERANCE_DAYS, attendantWage, managerWage, maxAttendants,
   BUSINESSES, BUSINESS_UPGRADE_DAYS, DESIGNS, LOAN_MIN_REPAYMENT, LOAN_RATE, MAX_BUSINESS_LEVEL, NEGLECT_DAYS,
   PHONE_DATA_MONTHLY, PLOTS, QUALITY, QUALITY_ORDER, RENTALS, SALARY_DAY, SAVINGS_RATE, STARTER_HOME, TBILLS,
   USD_RATE, VEHICLES, VEHICLE_DEPRECIATION_PER_MONTH, businessUpgradeCost, businessValue, builtValue,
@@ -31,6 +34,7 @@ import { TOWN_BY_ID } from "../shared/ghana.ts";
 import { HOME_ACTIVITIES, HOME_SPECS, tierForHome } from "../shared/homes.ts";
 import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
 import {
+  BREAKDOWN_FIX, NO_INSURANCE_FINE, insuranceCost, repairCost,
   COURSES, CROPS, DEALER_STOCK, FARMLANDS, FARM_HARVEST_WINDOW_DAYS, ITEMS, POST_TYPES, furnishingScore, influencerDaily, stockFor,
 } from "../shared/life.ts";
 import { GOALS, LIFE_EVENTS, type ProgressSnapshot } from "../shared/progress.ts";
@@ -72,6 +76,7 @@ export interface PlayerRow {
   priorities: string;
   productive_day: number;
   chores: string;
+  missions: string;
   helped_day: number;
   last_police_min: number;
   last_gig_day: number;
@@ -139,11 +144,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -225,7 +230,7 @@ export function createPlayer(ctx: Ctx, input: { name: unknown; look: unknown; ba
     for (const code of ["cash", "bank", "momo", "usd", "tbill", "loan"]) ensureAccount(ctx.db, id, code);
     const home = typeof input.hometown === "string" && HOMETOWNS.includes(input.hometown) ? input.hometown : HOMETOWNS[Number(id) % HOMETOWNS.length];
     const langs = sanitizeLanguages(input.languages);
-    ctx.db.run("UPDATE players SET hometown = ?, languages = ?, priorities = ? WHERE id = ?", home, JSON.stringify(langs.length ? langs : [homeLanguage(home)]), JSON.stringify(sanitizePriorities(input.priorities)), id);
+    ctx.db.run("UPDATE players SET hometown = ?, missions = ?, languages = ?, priorities = ? WHERE id = ?", home, JSON.stringify({ done: [], paid: [] }), JSON.stringify(langs.length ? langs : [homeLanguage(home)]), JSON.stringify(sanitizePriorities(input.priorities)), id);
     seedFamily(ctx.db, Number(id), home, name);
     post(ctx.db, id, [
       { account: "cash", amount: minor(bg.cash) },
@@ -466,6 +471,8 @@ interface BusinessRow {
   total_profit: number;
   last_day_profit: number;
   history: string;
+  attendants: number;
+  manager: number;
 }
 
 function dayWasRainy(day: number) {
@@ -512,10 +519,13 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
     if (t.foodBusiness && hasUnlock(p, "esi_recipe")) rev *= 1.1;
     if (t.foodBusiness && hasUnlock(p, "cert_catering")) rev *= 1.1;
     if (promoDay === y) rev *= 1.12;
-    const neglected = y - b.last_visit_day > NEGLECT_DAYS;
+    rev *= 1 + ATTENDANT_BOOST * b.attendants + (b.manager ? MANAGER_BOOST : 0);
+    // A manager keeps things running while you're away.
+    const neglected = y - b.last_visit_day > NEGLECT_DAYS && !b.manager;
     if (neglected) rev *= 0.8;
     if (b.upgrading_until !== null) rev *= 0.5;
-    const costs = levelCosts(t.costs, b.level);
+    const wages = b.attendants * attendantWage(t) + (b.manager ? managerWage(t) : 0);
+    const costs = levelCosts(t.costs, b.level) + wages;
     const profit = Math.round(minor(rev - costs));
     post(db, p.id, [{ account: `biz:${b.id}`, amount: profit }], {
       kind: "business_day", memo: `${t.name}: ${ydate.label} trading`, gameMin: p.game_min, nowMs, idemKey: `bizday:${b.id}:${y}`,
@@ -805,6 +815,7 @@ export function perform(ctx: Ctx, playerId: number, idemKey: string, action: Act
       const discoveredBefore = p.discovered;
       const data = dispatch(ctx, p, action, fb);
       trackDaily(ctx, p, action, fb, discoveredBefore !== p.discovered);
+      trackMissions(ctx, p, fb);
       evaluateGoals(ctx, p, fb);
       savePlayer(ctx.db, p);
       for (const item of fb.items) {
@@ -850,9 +861,12 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "biz_buy": return actBizBuy(ctx, p, a, fb);
     case "biz_upgrade": return actBizUpgrade(ctx, p, a, fb);
     case "biz_collect": return actBizCollect(ctx, p, a, fb);
+    case "biz_staff": return actBizStaff(ctx, p, a, fb);
     case "biz_sell": return actBizSell(ctx, p, a, fb);
     case "vehicle_buy": return actVehicleBuy(ctx, p, a, fb);
     case "vehicle_sell": return actVehicleSell(ctx, p, a, fb);
+    case "vehicle_repair": return actVehicleRepair(ctx, p, a, fb);
+    case "vehicle_insure": return actVehicleInsure(ctx, p, a, fb);
     case "vehicle_workpay": return actVehicleWorkPay(ctx, p, a, fb);
     case "shop_buy": return actShopBuy(ctx, p, a, fb);
     case "item_sell": return actItemSell(ctx, p, a, fb);
@@ -1004,6 +1018,7 @@ function actTravel(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (mode === "trotro" && hasUnlock(p, "kobby_ride")) fare = 0;
   const money = mode === "ride" ? chargeStrict(ctx, p, fare, "transport", `Ride app to ${DISTRICTS[to].name}`, true) : chargeStrict(ctx, p, fare, "transport", `${m.name} to ${DISTRICTS[to].name}`);
   advance(ctx, p, q.minutes, fb, { quiet: true });
+  if (mode === "car") wearVehicle(ctx, p, roadVehicle(ctx.db, p), q.km * 0.05, fb);
   const from = p.district;
   p.district = to;
   p.pos_x = -58;
@@ -1051,6 +1066,7 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}`, mode === "flight" || mode === "own_plane");
   // On long journeys you doze in your seat (unless you're the one driving).
   advance(ctx, p, q.minutes, fb, { quiet: true, sleeping: q.minutes > 240 && mode !== "car" });
+  if (mode === "car") wearVehicle(ctx, p, roadVehicle(ctx.db, p, true), q.km * 0.03, fb);
   const from = p.district;
   p.district = arrivalDistrict(toCity, mode);
   p.pos_x = -58;
@@ -1583,6 +1599,35 @@ function actBizCollect(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   return null;
 }
 
+/** Hire or let go of an attendant or a manager. Hiring is done in person; wages come out of the till daily. */
+function actBizStaff(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const b = ownedBiz(ctx, p, a.businessId);
+  const t = BUSINESSES[b.type];
+  const role = a.role === "manager" ? "manager" : a.role === "attendant" ? "attendant" : null;
+  if (!role) throw new GameError("bad_role", "Attendant or manager?");
+  const hire = a.change === "hire";
+  if (a.change !== "hire" && a.change !== "fire") throw new GameError("bad_change", "Hire or let go?");
+  const wage = role === "manager" ? managerWage(t) : attendantWage(t);
+  if (hire) {
+    if (p.district !== t.district) throw new GameError("not_here", `Interview people in person at your ${t.name} in ${DISTRICTS[t.district].name}.`);
+    if (role === "manager" && b.manager) throw new GameError("full", "You already have a manager.");
+    if (role === "attendant" && b.attendants >= maxAttendants(b.level)) throw new GameError("full", `A level ${b.level} ${t.name} has room for ${maxAttendants(b.level)} attendant${maxAttendants(b.level) > 1 ? "s" : ""}. Upgrade to make room.`);
+    requireAwake(p, 10, "interview anyone");
+    advance(ctx, p, 60, fb, { quiet: true });
+    ctx.db.run(role === "manager" ? "UPDATE businesses SET manager = 1 WHERE id = ?" : "UPDATE businesses SET attendants = attendants + 1 WHERE id = ?", b.id);
+    applyEffects(p, { business: 0.5 }, fb, role === "manager"
+      ? `🧑‍💼 You hired a manager for your ${t.name}: GH₵${wage}/day from the till. Sales hold up even when you're away, and a little more on top.`
+      : `🧑‍🔧 You hired an attendant for your ${t.name}: GH₵${wage}/day from the till, about ${Math.round(ATTENDANT_BOOST * 100)}% more trade.`);
+    return null;
+  }
+  if (role === "manager" ? !b.manager : b.attendants <= 0) throw new GameError("none", `You don't have ${role === "manager" ? "a manager" : "an attendant"} there.`);
+  const severance = minor(wage * SEVERANCE_DAYS);
+  post(ctx.db, p.id, [{ account: `biz:${b.id}`, amount: -severance }], { kind: "wages", memo: `${t.name}: ${SEVERANCE_DAYS} days' pay for the ${role} you let go`, gameMin: p.game_min, nowMs: ctx.now() });
+  ctx.db.run(role === "manager" ? "UPDATE businesses SET manager = 0 WHERE id = ?" : "UPDATE businesses SET attendants = attendants - 1 WHERE id = ?", b.id);
+  fb.add(`You let your ${role} at the ${t.name} go, with ${formatMoney(severance)} (${SEVERANCE_DAYS} days' pay) from the till.`, [], "info");
+  return null;
+}
+
 function actBizSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const b = ownedBiz(ctx, p, a.businessId);
   const t = BUSINESSES[b.type];
@@ -1614,7 +1659,8 @@ function actVehicleBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (count >= (v.workPay ? 5 : 1)) throw new GameError("already", v.workPay ? "Five is the most you can manage. Even fleet owners sleep." : "You already own one");
   const discount = place.id === "tamale_motors" && hasUnlock(p, "abu_moto") ? 0.85 : 1;
   const money = chargeStrict(ctx, p, minor(v.price * discount), "vehicle", `Bought ${v.name}${discount < 1 ? " (Alhaji's price)" : ""}`, true);
-  ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min) VALUES (?, ?, ?, ?)", p.id, v.id, minor(v.price), p.game_min);
+  // The dealer registers it with the first year's insurance and roadworthy sticker.
+  ctx.db.run("INSERT INTO vehicles (player_id, type, price, bought_min, insured_until) VALUES (?, ?, ?, ?, ?)", p.id, v.id, minor(v.price), p.game_min, dayOf(p.game_min) + 365);
   const icon = v.category === "aircraft" ? "🛩️" : v.category === "bicycle" ? "🚲" : v.category === "motorbike" ? "🏍️" : v.category === "tricycle" ? "🛺" : v.category === "luxury" ? "🏎️" : "🚗";
   applyEffects(p, { reputation: v.reputation, social: v.category === "luxury" ? 16 : 8 }, fb, `${icon} You rode the ${v.name} out of ${place.name}.${v.licence && !hasUnlock(p, v.licence) ? " (You'll need a licence before you can drive it.)" : ""}`, money);
   return null;
@@ -1629,6 +1675,60 @@ const vehicleValue = (v: { price: number; bought_min: number; condition: number 
   const months = (now - v.bought_min) / (30 * MINUTES_PER_DAY);
   return Math.round(v.price * Math.max(0.35, 1 - VEHICLE_DEPRECIATION_PER_MONTH * months) * (0.6 + 0.4 * v.condition / 100));
 };
+
+/** The personal vehicle you'd use on the road (same pick as drivable), as a row. */
+function roadVehicle(db: Db, p: PlayerRow, longDistance = false) {
+  const rows = db.all<{ id: number; type: string; condition: number; price: number; insured_until: number }>("SELECT * FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)
+    .filter((v) => { const d = VEHICLES[v.type]; return d && d.category !== "bicycle" && d.category !== "aircraft" && (!longDistance || d.longDistance); });
+  rows.sort((x, y) => (hasUnlock(p, VEHICLES[y.type].licence ?? "") ? 1 : 0) - (hasUnlock(p, VEHICLES[x.type].licence ?? "") ? 1 : 0) || VEHICLES[y.type].speedKmh - VEHICLES[x.type].speedKmh);
+  return rows[0];
+}
+
+/** Driving wears the vehicle; a worn-out one can break down on the way. */
+function wearVehicle(ctx: Ctx, p: PlayerRow, v: { id: number; type: string; condition: number } | undefined, wear: number, fb: Feedback) {
+  if (!v) return;
+  const cond = Math.max(0, v.condition - wear);
+  ctx.db.run("UPDATE vehicles SET condition = ? WHERE id = ?", cond, v.id);
+  const name = VEHICLES[v.type].name;
+  if (cond < 25 && rand01(`breakdown:${v.id}:${p.game_min}`) < 0.25) {
+    advance(ctx, p, 60, fb, { quiet: true });
+    const { changes } = chargeFlexible(ctx, p, minor(BREAKDOWN_FIX), "repair", `Roadside fix: ${name}`);
+    fb.add(`🔧 Your ${name} broke down on the way. A roadside fitter got you going again after an hour (${formatMoney(minor(BREAKDOWN_FIX))}). It needs a proper service: condition ${Math.round(cond)}%.`, changes, "bad");
+  } else if (v.condition >= 40 && cond < 40) fb.add(`🔧 Your ${name} is due a service (condition ${Math.round(cond)}%). The fitters by any lorry station can do it.`, [], "info");
+}
+
+function ownedVehicleRow(ctx: Ctx, p: PlayerRow, id: unknown) {
+  const v = ctx.db.get<{ id: number; type: string; condition: number; price: number; insured_until: number; status: string }>("SELECT * FROM vehicles WHERE id = ? AND player_id = ?", Number(id), p.id);
+  if (!v) throw new GameError("no_vehicle", "That isn't your vehicle.");
+  return v;
+}
+
+function actVehicleRepair(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const v = ownedVehicleRow(ctx, p, a.vehicleId);
+  const def = VEHICLES[v.type];
+  if (def.category === "aircraft") throw new GameError("hangar", "Aircraft are maintained at the hangar.");
+  const cost = repairCost(v.price / 100, v.condition);
+  if (!cost) throw new GameError("fine", "It's running perfectly. Nothing to fix.");
+  if (!placesIn(p.district).some((pl) => pl.kind === "transport" && isOpenAt(pl.open, toGameDate(p.game_min).hour))) throw new GameError("not_here", "The fitters work by the lorry station. Go there.");
+  requireAwake(p, 5, "wait at the fitters");
+  const money = chargeStrict(ctx, p, minor(cost), "repair", `Service and repairs: ${def.name}`);
+  advance(ctx, p, 60 + Math.round((100 - v.condition) * 2), fb, { quiet: true });
+  ctx.db.run("UPDATE vehicles SET condition = 100 WHERE id = ?", v.id);
+  fb.add(`🔧 The fitters serviced your ${def.name}: oil, brakes, tyres and a lot of opinions. Good as new.`, money, "good");
+  return null;
+}
+
+function actVehicleInsure(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const v = ownedVehicleRow(ctx, p, a.vehicleId);
+  const def = VEHICLES[v.type];
+  if (def.category === "bicycle") throw new GameError("no_need", "Bicycles don't need insurance.");
+  const cost = insuranceCost(v.price / 100);
+  const money = chargeStrict(ctx, p, minor(cost), "insurance", `Insurance & roadworthy sticker (1 year): ${def.name}`, true);
+  const until = Math.max(dayOf(p.game_min), v.insured_until) + 365;
+  ctx.db.run("UPDATE vehicles SET insured_until = ? WHERE id = ?", until, v.id);
+  fb.add(`🛡️ Your ${def.name} is insured with a fresh roadworthy sticker until ${toGameDate(until * MINUTES_PER_DAY).label.split(",")[0]}.`, money, "good");
+  return null;
+}
 
 function actVehicleSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const v = ownedVehicle(ctx, p, a.vehicleRowId);
@@ -1948,6 +2048,7 @@ function actGigShift(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   advance(ctx, p, trips * 40, fb, { quiet: true });
   const money = [...credit(ctx, p, "cash", fares, "wages", `${job.title}: ${trips} trip${trips > 1 ? "s" : ""}${tips ? ` incl. ${formatMoney(minor(tips))} tips` : ""}`)];
   const fuelLegs = chargeFlexible(ctx, p, fuel, "fuel", `Fuel for ${trips} gig trip${trips > 1 ? "s" : ""}`);
+  wearVehicle(ctx, p, roadVehicle(ctx.db, p), trips * 0.4, fb);
   p.job_shifts += 1;
   p.shifts_total += 1;
   applyEffects(p, { energy: -Math.round((job.energyCost * trips) / 3), hunger: -trips * 3, ...job.skillGain, reputation: 0.3 }, fb,
@@ -2144,6 +2245,88 @@ function dailyState(db: Db, p: PlayerRow): DailyState {
 
 const CLEAN_ACTS = ["shower", "shared_bath", "bucket_bath"];
 const FUN_ACTS = ["watch_tv", "watch_football", "music", "neighbours", "pool_swim", "terrace"];
+
+// ---------------------------------------------------------------------------
+// Story arcs: each step is checked against real state, so progress is honest.
+
+function missionChecks(ctx: Ctx, p: PlayerRow): Record<string, () => boolean> {
+  const db = ctx.db;
+  const has = (sql: string) => db.get(sql, p.id) !== undefined;
+  const disc = list(p.discovered);
+  return {
+    has_job: () => !!p.job_id,
+    shifts_3: () => p.shifts_total >= 3,
+    momo_used: () => has("SELECT 1 FROM transactions WHERE player_id = ? AND kind IN ('deposit', 'momo')"),
+    talked_3: () => db.get<{ n: number }>("SELECT COUNT(*) AS n FROM relationships WHERE player_id = ?", p.id)!.n >= 3,
+    family_called: () => has("SELECT 1 FROM family WHERE player_id = ? AND last_call_day >= 0"),
+    went_home: () => has("SELECT 1 FROM family WHERE player_id = ? AND last_visit_day >= 0"),
+    chore: () => !!p.chores,
+    helped_family: () => p.helped_day >= 0,
+    enrolled_licence: () => has("SELECT 1 FROM courses WHERE player_id = ? AND course_id IN ('driving_b', 'riding_a')"),
+    licence: () => hasUnlock(p, "licence_a") || hasUnlock(p, "licence_b"),
+    own_vehicle: () => db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ?", p.id).some((v) => ["car", "luxury", "motorbike"].includes(VEHICLES[v.type]?.category)),
+    serviced: () => has("SELECT 1 FROM transactions WHERE player_id = ? AND kind IN ('repair', 'insurance')"),
+    traded: () => has("SELECT 1 FROM trade_sales WHERE player_id = ? AND sold > 0"),
+    own_business: () => has("SELECT 1 FROM businesses WHERE player_id = ?"),
+    hired: () => has("SELECT 1 FROM businesses WHERE player_id = ? AND (attendants > 0 OR manager = 1)"),
+    biz_profit: () => (db.get<{ n: number | null }>("SELECT SUM(total_profit) AS n FROM businesses WHERE player_id = ?", p.id)!.n ?? 0) >= minor(1_000),
+    own_land: () => has("SELECT 1 FROM plots WHERE player_id = ?"),
+    building_started: () => has("SELECT 1 FROM buildings WHERE player_id = ?"),
+    building_done: () => has("SELECT 1 FROM buildings WHERE player_id = ? AND status IN ('complete', 'upgrading')"),
+    moved_in_or_rent: () => has("SELECT 1 FROM buildings WHERE player_id = ? AND use IN ('live', 'rent')"),
+    regions_3: () => new Set(list(p.visited).map((d) => (DISTRICTS[d] ? TOWN_BY_ID[DISTRICTS[d].city]?.region : undefined)).filter(Boolean)).size >= 3,
+    festival: () => disc.some((d) => d.startsWith("fest:")),
+    dishes_3: () => disc.filter((d) => d.startsWith("dish:")).length >= 3,
+    regional_friend: () => db.all<{ npc_id: string; affinity: number }>("SELECT npc_id, affinity FROM relationships WHERE player_id = ? AND affinity >= 40", p.id)
+      .some((r) => NPC_BY_ID[r.npc_id] && DISTRICTS[NPC_BY_ID[r.npc_id].district]?.city !== "accra"),
+    saturday_event: () => list(p.events_attended || "[]").length > 0,
+    close_friend: () => has("SELECT 1 FROM relationships WHERE player_id = ? AND affinity >= 70"),
+    standing_25: () => p.reputation >= 25,
+    date: () => has("SELECT 1 FROM dates WHERE player_id = ? AND status = 'attended'"),
+    partner: () => isPartnered(db, p.id),
+  };
+}
+
+function missionState(p: PlayerRow): MissionState | null {
+  if (!p.missions) return null;
+  try { return JSON.parse(p.missions) as MissionState; } catch { return null; }
+}
+
+/** After each action: tick off steps that are now true, pay out finished arcs. */
+function trackMissions(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  const prev = missionState(p);
+  const st: MissionState = prev ?? { done: [], paid: [] };
+  const checks = missionChecks(ctx, p);
+  let changed = !prev;
+  for (const arc of MISSIONS) {
+    if (st.paid.includes(arc.id)) continue;
+    for (const step of arc.steps) {
+      if (st.done.includes(step.id) || !checks[step.id]?.()) continue;
+      st.done.push(step.id);
+      changed = true;
+      // The first look at an older save marks what's already done quietly.
+      if (prev) fb.add(`📖 ${arc.title}: ${step.label} ✓`, [], "goal");
+    }
+    if (arc.steps.every((s) => st.done.includes(s.id))) {
+      st.paid.push(arc.id);
+      changed = true;
+      if (!prev) continue; // no windfall for things finished before stories existed
+      const money = post(ctx.db, p.id, [{ account: "bank", amount: minor(arc.reward) }], { kind: "mission", memo: `Story complete: ${arc.title}`, gameMin: p.game_min, nowMs: ctx.now(), idemKey: `mission:${arc.id}` });
+      void money;
+      applyEffects(p, { reputation: arc.reputation }, fb, `🏆 Story complete: ${arc.title}! GH₵${arc.reward.toLocaleString()} to your bank and +${arc.reputation} standing.`, [{ k: "bank", d: minor(arc.reward) }]);
+    }
+  }
+  if (changed) p.missions = JSON.stringify(st);
+}
+
+function missionsView(p: PlayerRow) {
+  const st = missionState(p) ?? { done: [], paid: [] };
+  return MISSIONS.map((m) => ({
+    id: m.id, icon: m.icon, title: m.title, blurb: m.blurb, reward: m.reward, reputation: m.reputation,
+    complete: st.paid.includes(m.id),
+    steps: m.steps.map((s) => ({ ...s, done: st.done.includes(s.id) })),
+  }));
+}
 
 /** Which of today's goals did this action move forward? */
 function dailyHits(a: Action, discovered: boolean): string[] {
@@ -2455,7 +2638,13 @@ function actPoliceCheck(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   p.last_police_min = p.game_min;
   advance(ctx, p, 10, fb, { quiet: true });
   if (!v.licence || hasUnlock(p, v.licence)) {
-    fb.add(`👮 Police checkpoint. The officer looks at your licence, waves you on: "Safe journey."`, [], "info");
+    const row = ctx.db.get<{ insured_until: number }>("SELECT insured_until FROM vehicles WHERE player_id = ? AND type = ? AND status = 'personal' ORDER BY insured_until DESC", p.id, t)!;
+    if (row.insured_until < dayOf(p.game_min) && v.category !== "bicycle") {
+      const { unpaid, changes } = chargeFlexible(ctx, p, minor(NO_INSURANCE_FINE), "fine", "Fine: no valid insurance sticker");
+      applyEffects(p, { reputation: -1 }, fb, `👮 Police checkpoint. Licence fine, but the insurance sticker has expired: ${unpaid ? "a warning this time" : `fined ${formatMoney(minor(NO_INSURANCE_FINE))}`}. Renew it from the vehicle's page.`, changes);
+      return { stopped: true, fined: true };
+    }
+    fb.add(`👮 Police checkpoint. The officer checks your licence and sticker, waves you on: "Safe journey."`, [], "info");
     return { stopped: true, fined: false };
   }
   const { unpaid, changes } = chargeFlexible(ctx, p, minor(NO_LICENCE_FINE), "fine", `Fine: driving without a ${v.licence === "licence_a" ? "riding (A)" : "driving (B)"} licence`);
@@ -2634,6 +2823,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       generator: hasGenerator(db, p),
       hometown: p.hometown,
       languages: JSON.parse(p.languages || "[]") as string[],
+      missions: missionsView(p),
       priorities: JSON.parse(p.priorities || "[]") as string[],
       family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ where: familyWhereabouts(m, m.town, toGameDate(p.game_min).weekdayIndex, toGameDate(p.game_min).hour), id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
       stock: stockOf(db, p).map((r) => ({ id: r.good_id, qty: r.qty, avgCost: Math.round(r.cost / r.qty) })),
@@ -2676,12 +2866,14 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
     businesses: db.all<BusinessRow>("SELECT * FROM businesses WHERE player_id = ?", p.id).map((b) => ({
       id: b.id, type: b.type, level: b.level, upgradingUntil: b.upgrading_until, lastVisitDay: b.last_visit_day,
       totalProfit: b.total_profit, lastDayProfit: b.last_day_profit, history: JSON.parse(b.history) as number[],
-      till: balance(db, p.id, `biz:${b.id}`), neglected: day - b.last_visit_day > NEGLECT_DAYS,
+      till: balance(db, p.id, `biz:${b.id}`), neglected: day - b.last_visit_day > NEGLECT_DAYS && !b.manager,
+      attendants: b.attendants, manager: b.manager === 1, maxAttendants: maxAttendants(b.level),
+      attendantWage: attendantWage(BUSINESSES[b.type]), managerWage: managerWage(BUSINESSES[b.type]),
       upgradeCost: b.level < MAX_BUSINESS_LEVEL ? minor(businessUpgradeCost(BUSINESSES[b.type].price, b.level)) : null,
       value: minor(businessValue(BUSINESSES[b.type].price, b.level)),
     })),
     vehicles: db.all<{ id: number; type: string; price: number; bought_min: number; status: string; condition: number }>("SELECT * FROM vehicles WHERE player_id = ?", p.id)
-      .map((v) => ({ id: v.id, type: v.type, price: v.price, boughtMin: v.bought_min, status: v.status, condition: Math.round(v.condition), value: vehicleValue(v, p.game_min) })),
+      .map((v) => ({ id: v.id, type: v.type, price: v.price, boughtMin: v.bought_min, status: v.status, condition: Math.round(v.condition), value: vehicleValue(v, p.game_min), insuredUntil: (v as { insured_until?: number }).insured_until ?? 0, repairCost: minor(repairCost(v.price / 100, v.condition)), insureCost: minor(insuranceCost(v.price / 100)) })),
     items: ownedItems(db, p).map((i) => ({ id: i.id, itemId: i.item_id, price: i.price, boughtMin: i.bought_min })),
     furnishing: (() => { const f = furnishingScore(ownedItems(db, p).map((i) => i.item_id)); return { ...f, base: baseComfort(db, p) }; })(),
     farms: db.all<FarmRow>("SELECT * FROM farms WHERE player_id = ?", p.id).map((f) => ({

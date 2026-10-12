@@ -68,6 +68,17 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
           <span>💵</span>
           <div className="grow"><b>{money(state.money.cash)} cash · {money(state.money.bank)} in the bank</b><div className="tiny muted">Bills this month about {money(state.money.monthlyExpenses)}.</div></div>
         </div>
+        {(() => {
+          const arcs = p.missions.filter((m) => !m.complete);
+          const arc = arcs.find((m) => m.steps.some((x) => x.done)) ?? arcs[0];
+          const step = arc?.steps.find((x) => !x.done);
+          return arc && step ? (
+            <div className="today-row">
+              <span>📖</span>
+              <div className="grow"><b>Story · {arc.title}: {step.label}</b><div className="tiny muted">{step.hint} (Phone → Story)</div></div>
+            </div>
+          ) : null;
+        })()}
         {festivalsFor([DISTRICTS[p.district].city, p.hometown], t.month + 1, t.day).map((f) => (
           <div className="today-row" key={f.id}>
             <span>🥁</span>

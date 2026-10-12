@@ -306,6 +306,13 @@ export interface Course {
   unlock?: string;
   blurb: string;
 }
+/** Third-party insurance and the roadworthy sticker for a year (police check it at barriers). */
+export const insuranceCost = (price: number) => Math.max(350, Math.round(price * 0.015));
+/** A full service at the fitters by the station: parts and labour for the wear. */
+export const repairCost = (price: number, condition: number) => condition >= 99 ? 0 : Math.max(50, Math.round(price * (100 - condition) / 100 * 0.12));
+export const NO_INSURANCE_FINE = 200;
+export const BREAKDOWN_FIX = 100;
+
 export const COURSES: Record<string, Course> = {
   driving_b: { id: "driving_b", name: "Driving school & DVLA test (licence B)", places: ["kaneshie_school", "knust_city", "uds_tamale", "ktu", "ucc", "uenr", "bolga_tech", "uhas"], fee: 2_200, sessions: 5, minutes: 120, hours: [7, 18], perSession: {}, onComplete: { reputation: 1 }, unlock: "licence_b", blurb: "Highway code, parking between two drums, then the DVLA examiner." },
   riding_a: { id: "riding_a", name: "Motorbike & tricycle licence (A)", places: ["uds_tamale", "kaneshie_school", "knust_city", "wa_university", "bolga_tech", "damongo_agric"], fee: 700, sessions: 2, minutes: 90, hours: [7, 17], perSession: {}, onComplete: {}, unlock: "licence_a", blurb: "Helmet on. Figure-of-eight around the cones." },

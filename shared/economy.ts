@@ -235,6 +235,14 @@ export const BUSINESS_UPGRADE_DAYS = 2;
 export const levelRevenue = (base: number, level: number) => base * Math.pow(1.28, level - 1);
 export const levelCosts = (base: number, level: number) => base * Math.pow(1.17, level - 1);
 export const businessValue = (price: number, level: number) => Math.round(price * (1 + 0.35 * (level - 1)));
+/** Staff: attendants add trade (one per level, up to 3); a manager keeps it running when you're away. Wages come out of the till daily. */
+export const attendantWage = (t: { revenue: number }) => Math.max(40, Math.round(t.revenue * 0.08));
+export const managerWage = (t: { revenue: number }) => Math.max(90, Math.round(t.revenue * 0.15));
+export const maxAttendants = (level: number) => Math.min(3, level);
+export const ATTENDANT_BOOST = 0.15;
+export const MANAGER_BOOST = 0.05;
+/** Days of wages owed when you let someone go. */
+export const SEVERANCE_DAYS = 3;
 /** Days without the owner visiting the district before the business starts slipping. */
 export const NEGLECT_DAYS = 7;
 

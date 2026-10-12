@@ -357,7 +357,7 @@ export function FarmApp() {
 export function GarageApp() {
   const { state, act, busy } = useGame();
   if (!state) return null;
-  const vs = state.vehicles as { id: number; type: string; status: string; condition: number; value: number }[];
+  const vs = state.vehicles as { id: number; type: string; status: string; condition: number; value: number; insuredUntil: number; repairCost: number; insureCost: number }[];
   return (
     <>
       <div className="tiny muted">Licences: {["licence_a", "licence_b"].filter((l) => state.player.unlocks.includes(l)).map((l) => (l === "licence_a" ? "A (motorbike/tricycle)" : "B (car)")).join(", ") || "none yet — driving schools at Kaneshie, KNUST, UDS and more"}</div>
@@ -367,9 +367,11 @@ export function GarageApp() {
         return (
           <div className="card" key={v.id} style={{ marginTop: 8 }}>
             <div className="spread"><b>{def.name}</b><span className="pill" style={{ background: def.color, color: "#fff" }}>{def.category}</span></div>
-            <div className="tiny muted">Worth ~{money(v.value, true)} · condition {v.condition}%{v.status === "workpay" ? " · on work-and-pay" : ""}</div>
+            <div className="tiny muted">Worth ~{money(v.value, true)} · condition <b className={v.condition < 40 ? "bad" : ""}>{v.condition}%</b>{v.status === "workpay" ? " · on work-and-pay" : ""}{def.category !== "bicycle" && def.category !== "aircraft" ? <> · {v.insuredUntil >= state.time.day ? `insured ${v.insuredUntil - state.time.day} more days` : <b className="bad">insurance expired</b>}</> : null}</div>
             <div className="row" style={{ marginTop: 8 }}>
               {def.workPay && <button className="btn sm" disabled={busy} onClick={() => act({ type: "vehicle_workpay", vehicleRowId: v.id, on: v.status !== "workpay" })}>{v.status === "workpay" ? "Take it back" : `Work-and-pay (~${money(def.workPay * 100)}/day)`}</button>}
+              {def.category !== "aircraft" && v.repairCost > 0 && <ConfirmButton className="btn sm" disabled={busy} ask="Service this vehicle?" details={{ where: "The fitters by any lorry station", time: `About ${Math.round((60 + (100 - v.condition) * 2) / 60 * 10) / 10} hours`, cost: money(v.repairCost), changes: "Condition back to 100%: no breakdowns, better resale, steadier work-and-pay.", undo: "No." }} onConfirm={() => act({ type: "vehicle_repair", vehicleId: v.id })}>🔧 Service · {money(v.repairCost, true)}</ConfirmButton>}
+              {def.category !== "aircraft" && def.category !== "bicycle" && <ConfirmButton className="btn sm" disabled={busy} ask="Insure for a year?" details={{ time: "Done on your phone", cost: money(v.insureCost), changes: "Third-party insurance and a roadworthy sticker for another year. Police check them at barriers.", undo: "No refund." }} onConfirm={() => act({ type: "vehicle_insure", vehicleId: v.id })}>🛡️ Insure · {money(v.insureCost, true)}</ConfirmButton>}
               <ConfirmButton className="btn sm danger" disabled={busy} ask="Sell this vehicle?" details={{ cost: `You get about ${money(Math.round(v.value * 0.85))}`, changes: "The money goes to your bank and the vehicle is gone (and any work-and-pay driver with it).", undo: "No. You'd have to buy one again at full price." }} onConfirm={() => act({ type: "vehicle_sell", vehicleRowId: v.id })}>Sell</ConfirmButton>
             </div>
           </div>

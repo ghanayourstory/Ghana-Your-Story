@@ -638,3 +638,70 @@ test("languages and priorities: chosen at the start, change in settings, and the
   assert.match((r.data as { reply: string }).reply, /Dagbani/);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("deeper systems: business staff, vehicle service and insurance, story arcs tracked by the server", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 10);
+  // Business with staff.
+  assert.ok(act(ctx, id, { type: "biz_buy", bizType: "phone_kiosk" }).ok);
+  let st = buildState(ctx, loadPlayer(ctx.db, id));
+  const biz = st.businesses[0];
+  const hire = act(ctx, id, { type: "biz_staff", businessId: biz.id, role: "attendant", change: "hire" });
+  assert.ok(hire.ok, hire.error);
+  assert.ok(hire.feedback.some((f) => f.text.includes("Hire someone")), "story step ticks off");
+  assert.equal(act(ctx, id, { type: "biz_staff", businessId: biz.id, role: "attendant", change: "hire" }).code, "full");
+  assert.ok(act(ctx, id, { type: "biz_staff", businessId: biz.id, role: "manager", change: "hire" }).ok);
+  st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(st.businesses[0].attendants, 1);
+  assert.equal(st.businesses[0].manager, true);
+  const hustle = st.player.missions.find((m) => m.id === "hustle")!;
+  assert.ok(hustle.steps.find((s) => s.id === "own_business")!.done && hustle.steps.find((s) => s.id === "hired")!.done);
+  const till0 = st.businesses[0].till;
+  assert.ok(act(ctx, id, { type: "biz_staff", businessId: biz.id, role: "attendant", change: "fire" }).ok);
+  assert.equal(buildState(ctx, loadPlayer(ctx.db, id)).businesses[0].till, till0 - st.businesses[0].attendantWage * 3 * 100, "three days' pay from the till");
+  // Vehicle: worn out, serviced at the station fitters; insurance checked at the barrier.
+  assert.ok(act(ctx, id, { type: "vehicle_buy", vehicleId: "taxi", placeId: "tokunbo_lot" }).ok);
+  const v = buildState(ctx, loadPlayer(ctx.db, id)).vehicles[0];
+  assert.ok(v.insuredUntil > 300, "dealer includes the first year");
+  ctx.db.run("UPDATE vehicles SET condition = 30, insured_until = -1 WHERE id = ?", v.id);
+  ctx.db.run("UPDATE players SET unlocks = json_insert(unlocks, '$[#]', 'licence_b') WHERE id = ?", id);
+  const pc = act(ctx, id, { type: "police_check", vehicleType: "taxi" });
+  assert.ok(pc.ok, pc.error);
+  assert.equal((pc.data as { fined: boolean }).fined, true);
+  const rp = act(ctx, id, { type: "vehicle_repair", vehicleId: v.id });
+  assert.ok(rp.ok, rp.error);
+  assert.equal(act(ctx, id, { type: "vehicle_repair", vehicleId: v.id }).code, "fine");
+  assert.ok(act(ctx, id, { type: "vehicle_insure", vehicleId: v.id }).ok);
+  skip(ctx, id, 3);
+  assert.equal((act(ctx, id, { type: "police_check", vehicleType: "taxi" }).data as { fined: boolean }).fined, false);
+  st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(st.vehicles[0].condition, 100);
+  const wheels = st.player.missions.find((m) => m.id === "wheels")!;
+  assert.ok(wheels.steps.find((s) => s.id === "serviced")!.done && wheels.steps.find((s) => s.id === "own_vehicle")!.done);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("story arc pays out once when every step is done", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 7);
+  const before = bal(ctx, id, "bank");
+  assert.ok(act(ctx, id, { type: "job_apply", jobId: "market_loader" }).ok);
+  for (let i = 0; i < 3; i++) {
+    const w = act(ctx, id, { type: "work" });
+    assert.ok(w.ok, w.error);
+    skip(ctx, id, 24 - 6);
+  }
+  assert.ok(act(ctx, id, { type: "deposit", amount: 5_000 }).ok || act(ctx, id, { type: "momo_move", from: "cash", to: "momo", amount: 5_000 }).ok);
+  skipTo(ctx, id, 10);
+  const here = NPCS.filter((n) => n.district === "kaneshie").map((n) => n.id);
+  let talked = 0;
+  for (let h = 0; h < 24 && talked < 3; h++) {
+    for (const n of here) if (act(ctx, id, { type: "talk", npcId: n, topic: "chat" }).ok) talked++;
+    if (talked < 3) skip(ctx, id, 1);
+  }
+  const st = buildState(ctx, loadPlayer(ctx.db, id));
+  const arc = st.player.missions.find((m) => m.id === "new_in_town")!;
+  assert.ok(arc.complete, JSON.stringify(arc.steps));
+  assert.ok(bal(ctx, id, "bank") >= before + 300 * 100 - 0, "reward paid to the bank");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

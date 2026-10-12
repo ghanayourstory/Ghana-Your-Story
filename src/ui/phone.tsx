@@ -17,10 +17,11 @@ import { FarmApp, GarageApp, GhanaApp, VibesApp } from "./ghana.tsx";
 import type { GameState } from "../../server/engine.ts";
 import type { Quality as GfxQuality } from "../world/World.ts";
 
-type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage" | "family";
+type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage" | "family" | "story";
 
 const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string }[] = [
   { id: "dream", name: "Dream", icon: "⭐", bg: "linear-gradient(160deg,#ffd34d,#f2a900)" },
+  { id: "story", name: "Story", icon: "📖", bg: "linear-gradient(160deg,#ffb38a,#b5562a)" },
   { id: "hustle", name: "Hustle", icon: "🏪", bg: "linear-gradient(160deg,#ff9a3c,#e8590c)" },
   { id: "work", name: "Work", icon: "💼", bg: "linear-gradient(160deg,#7c83ff,#4c56d9)" },
   { id: "money", name: "SikaBank", icon: "🏦", bg: "linear-gradient(160deg,#3ddc84,#1f7a4d)" },
@@ -91,6 +92,7 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
             {app === "ghana" && <><AppHead id="ghana" sub="Sixteen regions, one country" /><GhanaApp /></>}
             {app === "vibes" && <><AppHead id="vibes" sub="Post, grow, get paid" /><VibesApp /></>}
             {app === "farm" && <><AppHead id="farm" sub="Seasons, rain and harvests" /><FarmApp /></>}
+            {app === "story" && <><AppHead id="story" sub="Longer goals, at your own pace" /><StoryApp /></>}
             {app === "family" && <><AppHead id="family" sub="The people at home" /><FamilyApp onTravel={() => onTravel("phone")} /></>}
             {app === "garage" && <><AppHead id="garage" sub="Vehicles, licences and your things" /><GarageApp /></>}
           </div>
@@ -228,7 +230,14 @@ function HustleApp() {
                 <div className="kv"><span>Till</span><b className={b.till >= 0 ? "good" : "bad"}>{money(b.till)}</b></div>
                 <div className="kv"><span>Yesterday</span><span className={b.lastDayProfit >= 0 ? "good" : "bad"}>{money(b.lastDayProfit)}</span></div>
                 <div className="kv"><span>All-time profit</span><span>{money(b.totalProfit)}</span></div>
-                {b.neglected && <div className="notice warn" style={{ marginTop: 6 }}>Staff haven't seen you in a week. Visit {DISTRICTS[t.district].name}.</div>}
+                {b.neglected && <div className="notice warn" style={{ marginTop: 6 }}>Staff haven't seen you in a week. Visit {DISTRICTS[t.district].name}, or hire a manager.</div>}
+                <div className="kv"><span>Staff</span><span>{b.attendants}/{b.maxAttendants} attendant{b.maxAttendants > 1 ? "s" : ""}{b.manager ? " · a manager" : ""}</span></div>
+                <div className="row" style={{ marginTop: 6, flexWrap: "wrap", gap: 6 }}>
+                  {b.attendants < b.maxAttendants && <ConfirmButton className="btn sm" disabled={busy} ask="Hire an attendant?" details={{ where: `In person at the ${t.name}, ${DISTRICTS[t.district].name}`, time: "An hour of interviews", cost: `GH₵${b.attendantWage}/day in wages, from the till`, changes: "About 15% more trade every day.", undo: `You can let them go; that costs ${3} days' pay from the till.` }} onConfirm={() => act({ type: "biz_staff", businessId: b.id, role: "attendant", change: "hire" })}>+ Attendant</ConfirmButton>}
+                  {!b.manager && <ConfirmButton className="btn sm" disabled={busy} ask="Hire a manager?" details={{ where: `In person at the ${t.name}, ${DISTRICTS[t.district].name}`, time: "An hour of interviews", cost: `GH₵${b.managerWage}/day in wages, from the till`, changes: "Sales don't slip when you stay away, and about 5% more trade.", undo: "You can let them go; that costs 3 days' pay from the till." }} onConfirm={() => act({ type: "biz_staff", businessId: b.id, role: "manager", change: "hire" })}>+ Manager</ConfirmButton>}
+                  {b.attendants > 0 && <ConfirmButton className="btn sm ghost" disabled={busy} ask="Let an attendant go?" details={{ cost: `${money(b.attendantWage * 300)} (3 days' pay) from the till`, changes: "Less trade, lower wages.", undo: "You can hire again in person." }} onConfirm={() => act({ type: "biz_staff", businessId: b.id, role: "attendant", change: "fire" })}>− Attendant</ConfirmButton>}
+                  {b.manager && <ConfirmButton className="btn sm ghost" disabled={busy} ask="Let the manager go?" details={{ cost: `${money(b.managerWage * 300)} (3 days' pay) from the till`, changes: "You'll need to visit every week again.", undo: "You can hire again in person." }} onConfirm={() => act({ type: "biz_staff", businessId: b.id, role: "manager", change: "fire" })}>− Manager</ConfirmButton>}
+                </div>
                 <div className="row" style={{ marginTop: 8 }}>
                   <button className="btn sm green" disabled={busy || b.till <= 0} onClick={() => act({ type: "biz_collect", businessId: b.id })}>Collect</button>
                   {b.upgradeCost !== null && <ConfirmButton className="btn sm primary" disabled={busy || !!b.upgradingUntil} ask="Upgrade this business?" details={{ cost: money(b.upgradeCost), time: "Takes a few days; the business keeps trading", changes: "More customers and a bigger daily till, with higher running costs.", undo: "No, but the upgrade adds to what the business sells for." }} onConfirm={() => act({ type: "biz_upgrade", businessId: b.id })}>Upgrade · {money(b.upgradeCost, true)}</ConfirmButton>}
@@ -837,6 +846,36 @@ function A11ySettings() {
         <button className={caps ? "on" : ""} onClick={() => { setCaptions(true); setCaps(true); }}>On</button>
       </div>
       <div className="tiny muted">Short text for horns, music, markets and rain, with which side they come from.</div>
+    </div>
+  );
+}
+
+/** Phone → Story: longer arcs, checked by the server against what you've actually done. */
+function StoryApp() {
+  const { state } = useGame();
+  if (!state) return null;
+  const arcs = state.player.missions;
+  const open = arcs.filter((a) => !a.complete);
+  const done = arcs.filter((a) => a.complete);
+  return (
+    <div className="col" style={{ gap: 10 }}>
+      <div className="tiny muted">Do them in any order, or not at all. Each pays once when every step is done.</div>
+      {[...open, ...done].map((a) => {
+        const next = a.steps.find((s) => !s.done);
+        const n = a.steps.filter((s) => s.done).length;
+        return (
+          <div className="card col" key={a.id} style={{ gap: 6, opacity: a.complete ? 0.7 : 1 }}>
+            <div className="spread"><b>{a.icon} {a.title}</b><span className={`pill ${a.complete ? "green" : "gold"}`}>{a.complete ? "Done" : `${n}/${a.steps.length}`}</span></div>
+            <div className="tiny muted">{a.blurb} Reward: GH₵{a.reward.toLocaleString()} and +{a.reputation} standing.</div>
+            {a.steps.map((s) => (
+              <div key={s.id} className="small" style={{ display: "flex", gap: 8 }}>
+                <span>{s.done ? "✅" : s === next ? "👉" : "⬜"}</span>
+                <div><div className={s.done ? "muted" : ""}>{s.label}</div>{s === next && <div className="tiny muted">{s.hint}</div>}</div>
+              </div>
+            ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

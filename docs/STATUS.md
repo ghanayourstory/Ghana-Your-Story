@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v17. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v18. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -59,9 +59,25 @@ Last checked: game build v17. This is the Stage 0 "discovery" note from the foun
 - ✅ Festivals where you are and at home on the Today card; street residents who commute in the morning and come home at night, in every town.
 - ⏳ Water as its own bill line if it adds play; learning languages in play.
 
+## Stage 3 progress ("deepen life systems")
+
+Acceptance from the brief: each system has a useful start-to-finish path, meaningful costs, feedback and persistent state.
+
+| System | Path today |
+|---|---|
+| Education & careers | ✅ courses → certificates/licences → gated jobs → ranks and promotion |
+| Business operations & staff | ✅ trade → buy → hire attendants/manager → wages → upgrade → sell |
+| Property, construction, rentals | ✅ rent → buy land → staged build → live in or rent out → upgrade |
+| Furnishing | ✅ shops → items → comfort, mood and home activities |
+| Transport ownership | ✅ licence → buy → wear, service, insurance, police checks → work-and-pay or gig work → sell |
+| Family & relationships | ✅ family routines, calls, help, visits, chores; friends, dates, partners. ⏳ marriage (knocking ceremony) and household arcs |
+| Story missions | ✅ eight arcs checked by the server against real state, paid once |
+| Events | ✅ life events, Saturday funerals/weddings, festivals |
+
 ## Next slices, in order
 
 1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner.)*
-2. Regional refinement pass, one region at a time: hand-written characters to replace the generated townsfolk, local reviewers for names, language and customs.
-3. Festival days as 3D events (durbars, processions) like the Saturday funerals.
-4. Learn a language through lessons or time spent in a town.
+2. Relationship arc: engagement, the knocking ceremony and marriage, regionally varied; a shared household.
+3. Regional refinement pass, one region at a time: hand-written characters to replace the generated townsfolk, local reviewers for names, language and customs.
+4. Festival days as 3D events (durbars, processions) like the Saturday funerals.
+5. Learn a language through lessons or time spent in a town.
