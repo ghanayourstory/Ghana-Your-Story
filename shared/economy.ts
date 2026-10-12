@@ -52,6 +52,11 @@ for (const r of [
   R("osu_penthouse", "osu", "Penthouse, Cantonments", 34_000, 12, 6, "Embassy neighbours, sea glimpses, an island kitchen and a lift that works.", 25),
   R("trasacco_villa_rent", "trasacco", "Villa in Trasacco Valley", 48_000, 12, 6, "Pool, gatehouse, staff quarters. The guard salutes.", 30),
   R("dambai_room", "dambai", "Room near the ferry, Dambai", 200, 6, 1, "Lake breeze."),
+  R("bonwire_room", "bonwire", "Room in a weaver's compound, Bonwire", 140, 6, 1, "The looms start at dawn."),
+  R("nyankpala_room", "nyankpala", "Room in a farming compound, Nyankpala", 100, 6, 1, "Guinea fowl at the door."),
+  R("elmina_room", "elmina", "Room by the lagoon, Elmina", 220, 6, 1, "Smoke from the fish ovens, sea at night."),
+  R("paga_room", "paga", "Room in a painted compound, Paga", 100, 6, 1, "Thick walls, cool nights."),
+  R("wli_room", "wli", "Room in a family house, Wli", 120, 6, 1, "The falls in earshot."),
 ]) RENTALS[r.id] = r;
 
 export const STARTER_HOME = "tetteh_room";

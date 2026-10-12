@@ -830,3 +830,58 @@ test("connected regions: yam is bought in Kintampo and fetches far more in Accra
   assert.equal(buildState(ctx, loadPlayer(ctx.db, id)).player.job, null);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("stage 5 solo play: oware checked by the server, a party at home, communal clean-up, a life score", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 15);
+  const chop = PLACES.find((p) => p.district === "kaneshie" && p.kind === "food" && p.open[0] <= 15 && p.open[1] > 16)!;
+  assert.ok(act(ctx, id, { type: "oware", step: "start", placeId: chop.id }).ok);
+  assert.equal(act(ctx, id, { type: "oware", step: "start", placeId: chop.id }).code, "busy");
+  let st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(act(ctx, id, { type: "oware", step: "move", pit: 7 }).code, "illegal", "can't sow from their row");
+  for (let i = 0; i < 300 && st.player.oware && !st.player.oware.game.over; i++) {
+    const r = act(ctx, id, { type: "oware", step: "move", pit: st.player.oware.legal[0] });
+    assert.ok(r.ok, r.error);
+    st = buildState(ctx, loadPlayer(ctx.db, id));
+  }
+  const g = st.player.oware!.game;
+  assert.ok(g.over);
+  assert.equal(g.store[0] + g.store[1] + g.pits.reduce((a, b) => a + b, 0), 48, "no seeds made or lost");
+  assert.equal(st.player.owareGames, 1);
+  assert.ok(act(ctx, id, { type: "oware", step: "leave" }).ok);
+  // A party: guests must be people you know.
+  ctx.db.run("INSERT INTO relationships (player_id, npc_id, affinity) VALUES (?, 'esi', 30), (?, 'kobby', 20)", id, id);
+  skipTo(ctx, id, 18);
+  assert.equal(act(ctx, id, { type: "party", guests: ["akosua"] }).code, "no_guests");
+  const pt = act(ctx, id, { type: "party", guests: ["esi", "kobby"] });
+  assert.ok(pt.ok, pt.error);
+  assert.equal(act(ctx, id, { type: "party", guests: ["esi"] }).code, "too_soon");
+  // Clean-up only on the first Saturday, 7 to 10.
+  skipTo(ctx, id, 8);
+  let guard = 0;
+  while (!buildState(ctx, loadPlayer(ctx.db, id)).player.cleanupToday && guard++ < 40) skip(ctx, id, 24);
+  const cu = act(ctx, id, { type: "cleanup" });
+  assert.ok(cu.ok, cu.error);
+  assert.equal(act(ctx, id, { type: "cleanup" }).code, "already");
+  st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(st.player.lifeScore.parts.length, 8);
+  assert.ok(st.player.lifeScore.total > 0 && st.player.lifeScore.total <= 100);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("rural spokes: villages around the hubs with their own work and rooms", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 6);
+  assert.ok(act(ctx, id, { type: "travel", to: "elmina", mode: "bus" }).ok, "the bus arrives at the hub");
+  assert.equal(district(ctx, id), "cape_coast");
+  skipTo(ctx, id, 9);
+  const tr = act(ctx, id, { type: "travel", to: "elmina", mode: "trotro" });
+  assert.ok(tr.ok, tr.error);
+  assert.equal(district(ctx, id), "elmina");
+  assert.ok(act(ctx, id, { type: "job_apply", jobId: "fishing_crew" }).code !== "bad_job");
+  for (const v of ["bonwire", "nyankpala", "elmina", "paga", "wli"]) {
+    assert.ok(DISTRICTS[v], v);
+    assert.ok(Object.values(JOBS).some((j) => PLACES.find((p) => p.id === j.placeId)?.district === v), `${v} has work`);
+  }
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

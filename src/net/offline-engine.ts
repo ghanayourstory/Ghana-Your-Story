@@ -113,7 +113,10 @@ function adapt(raw: Database): Db {
   };
 }
 
-let ready: Promise<{ deps: ApiDeps; markDirty: () => void; flush: () => Promise<void> }> | null = null;
+/** Set while restoring a backup, so the old game doesn't overwrite it on the way out. */
+let frozen = false;
+
+let ready: Promise<{ deps: ApiDeps; markDirty: () => void; flush: () => Promise<void>; SQL: SqlJsStatic }> | null = null;
 const boot = async () => {
   const SQL = await loadSqlJs();
   const raw = new SQL.Database((await loadBytes()) ?? undefined);
@@ -130,7 +133,7 @@ const boot = async () => {
   await tick();
   setInterval(tick, 20_000);
   setInterval(() => {
-    if (!dirty) return;
+    if (!dirty || frozen) return;
     dirty = false;
     void saveBytes(exportDb(raw));
   }, 4000);
@@ -142,8 +145,8 @@ const boot = async () => {
     },
     newToken: () => Array.from(crypto.getRandomValues(new Uint8Array(32)), (b) => b.toString(16).padStart(2, "0")).join(""),
   };
-  addEventListener("pagehide", () => void saveBytes(exportDb(raw)));
-  return { deps, markDirty: () => { dirty = true; }, flush: () => saveBytes(exportDb(raw)) };
+  addEventListener("pagehide", () => { if (!frozen) void saveBytes(exportDb(raw)); });
+  return { deps, markDirty: () => { dirty = true; }, flush: () => (frozen ? Promise.resolve() : saveBytes(exportDb(raw))), SQL };
 };
 
 export async function offlineRequest(m: { method: string; path: string; body: unknown; token: string | null; idemKey: string | null }) {
@@ -153,4 +156,58 @@ export async function offlineRequest(m: { method: string; path: string; body: un
   markDirty(); // even reads advance the game clock
   if (m.path === "/api/player") await flush();
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Backups: until the game server is hosted, a save lives in one browser.
+// A backup file holds the whole save (and your sign-in token) so you can keep
+// it safe or move it to another device.
+
+const SAVE_KIND = "ghana-your-story-save";
+function toB64(bytes: Uint8Array) {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function fromB64(b64: string) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+export async function exportSave(): Promise<string> {
+  ready ??= boot();
+  const r = await ready;
+  await r.flush();
+  const bytes = await loadBytes();
+  if (!bytes) throw new Error("Nothing saved yet");
+  let token: string | null = null;
+  try { token = localStorage.getItem("sika.token"); } catch { /* ignore */ }
+  return JSON.stringify({ kind: SAVE_KIND, v: 1, savedAt: new Date().toISOString(), token, db: toB64(bytes) });
+}
+
+/** Check a backup and, if it's good, replace this browser's save with it. The page reloads. */
+export async function importSave(text: string): Promise<void> {
+  let parsed: { kind?: string; token?: string | null; db?: string };
+  try { parsed = JSON.parse(text); } catch { throw new Error("That isn't a Ghana: Your Story backup file."); }
+  if (parsed.kind !== SAVE_KIND || typeof parsed.db !== "string") throw new Error("That isn't a Ghana: Your Story backup file.");
+  const bytes = fromB64(parsed.db);
+  const header = new TextDecoder().decode(bytes.subarray(0, 15));
+  if (header !== "SQLite format 3") throw new Error("The backup is damaged.");
+  ready ??= boot();
+  const { SQL } = await ready;
+  const test = new SQL.Database(bytes);
+  try {
+    const n = test.exec("SELECT COUNT(*) FROM players")[0]?.values[0][0];
+    if (!n) throw new Error("The backup has no character in it.");
+  } finally {
+    test.close();
+  }
+  frozen = true;
+  await saveBytes(bytes);
+  try {
+    if (parsed.token) localStorage.setItem("sika.token", parsed.token);
+  } catch { /* ignore */ }
+  location.reload();
 }

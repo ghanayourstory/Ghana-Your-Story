@@ -85,6 +85,13 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
             <div className="grow"><b>Your job is in {DISTRICTS[place.district].name}</b><div className="tiny muted">Jobs are local: a week without a shift and they'll give it to someone else. There's work here too.</div></div>
           </div>
         )}
+        {p.cleanupToday && p.cleanupDay !== t.day && (
+          <div className="today-row">
+            <span>🧹</span>
+            <div className="grow"><b>Communal clean-up today, 7 to 10</b><div className="tiny muted">First Saturday of the month: brooms and shovels, gutters cleared. Standing and social.</div></div>
+            <button className="btn sm" disabled={busy || t.hour < 7 || t.hour >= 10} onClick={() => act({ type: "cleanup" })}>Join in</button>
+          </div>
+        )}
         {festivalsFor([DISTRICTS[p.district].city, p.hometown], t.month + 1, t.day).map((f) => (
           <div className="today-row" key={f.id}>
             <span>🥁</span>

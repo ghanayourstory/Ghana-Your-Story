@@ -80,6 +80,7 @@ function Household() {
           <ConfirmButton className="btn sm" disabled={busy} ask="Apply to adopt?" details={{ where: "The Social Welfare office near your home", time: `2 hours of forms; a child comes home in about ${ADOPTION_DAYS} days`, cost: `GH₵${ADOPTION_FEE.toLocaleString()} in assessment and court fees, then monthly costs`, changes: "A child aged 2 to 5 joins your household. You need a home with room (not a shared compound room).", undo: "No: this is a child's home." }} onConfirm={() => act({ type: "household", step: "adopt" })}>🧒 Adopt</ConfirmButton>
         </div>
       )}
+      <PartyPlanner />
       {p.children.map((c) => {
         const nm = names[c.id] ?? c.suggestions[0] ?? "";
         return (
@@ -102,6 +103,30 @@ function Household() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Host a party at home: pick guests from people you know. */
+function PartyPlanner() {
+  const { state, act, busy } = useGame();
+  const [pick, setPick] = useState<string[]>([]);
+  const [openP, setOpenP] = useState(false);
+  if (!state) return null;
+  const known = state.relationships.filter((r) => r.affinity >= 15 && NPC_BY_ID[r.npcId]);
+  const wait = 7 - (state.time.day - state.player.partyDay);
+  if (!known.length) return null;
+  return (
+    <div className="col" style={{ gap: 6 }}>
+      <button className="btn sm" disabled={busy || wait > 0} onClick={() => setOpenP(!openP)}>{wait > 0 ? `🎉 Next party in ${wait} day${wait > 1 ? "s" : ""}` : "🎉 Host a party at home"}</button>
+      {openP && wait <= 0 && (
+        <>
+          <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+            {known.map((r) => { const on = pick.includes(r.npcId); return <button key={r.npcId} className={`btn sm ${on ? "primary" : "ghost"}`} onClick={() => setPick(on ? pick.filter((x) => x !== r.npcId) : [...pick, r.npcId].slice(0, 8))}>{NPC_BY_ID[r.npcId].name.split(" ")[0]}</button>; })}
+          </div>
+          <ConfirmButton className="btn sm primary" disabled={busy || !pick.length} ask="Throw the party?" details={{ where: "Your home, between 4 and 10 pm", time: "About 4 hours", cost: `About GH₵${60 * (pick.length + 1)} for food and drinks (more in pricier areas)`, changes: "Everyone you invite gets closer to you; lots of social and fun.", undo: "The jollof is eaten." }} onConfirm={() => act({ type: "party", guests: pick })}>Invite {pick.length} and start</ConfirmButton>
+        </>
+      )}
     </div>
   );
 }

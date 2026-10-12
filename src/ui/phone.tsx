@@ -180,6 +180,15 @@ function DreamApp() {
   return (
     <>
       <AppHead id="dream" sub="From a room in Kaneshie to a home in the Valley" />
+      <div className="card col" style={{ marginBottom: 10, gap: 6 }}>
+        <div className="spread"><b>Your life so far</b><span className="pill gold">Life score {state.player.lifeScore.total}</span></div>
+        <div className="tiny muted">Not just money: eight parts of a life, each out of 100.</div>
+        {state.player.lifeScore.parts.map((x) => (
+          <div key={x.key} className="hud-bar"><label><span>{x.icon} {x.label}</span><span className="num">{x.value}</span></label><Bar value={x.value} color="#f2b705" /></div>
+        ))}
+        {state.player.milestones.length > 0 && <b style={{ marginTop: 6 }}>Milestones</b>}
+        {state.player.milestones.slice(0, 12).map((m, i) => <div key={i} className="tiny"><span className="muted">Day {m.day + 1}</span> · {m.text}</div>)}
+      </div>
       {chapters.map((c) => {
         const gs = GOALS.filter((g) => g.chapter === c);
         const done = gs.filter((g) => state.goals.find((x) => x.id === g.id)?.done).length;
@@ -808,6 +817,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
         <div className="tiny muted">{backend.mode === "server" ? "Your progress is saved on the game server after every action." : "Offline demo: your progress is saved in this browser. The full game uses an authoritative server."}</div>
         <div className="kv"><span>Character</span><span>{state.player.name}</span></div>
         <div className="kv"><span>Day</span><span>{state.time.day + 1}</span></div>
+        {backend.mode === "offline" && <SaveBackup />}
         <ConfirmButton className="btn ghost sm" ask="Forget this character?" onConfirm={logout}>New character</ConfirmButton>
       </div>
       {state.devTools && (
@@ -882,6 +892,45 @@ function StoryApp() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+/** Download a backup of this browser's save, or restore one (offline play only). */
+function SaveBackup() {
+  const [msg, setMsg] = useState<string | null>(null);
+  const download = async () => {
+    try {
+      const { exportSave } = await import("../net/offline-engine.ts");
+      const text = await exportSave();
+      const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ghana-your-story-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setMsg("Backup downloaded. Keep it somewhere safe; restore it here or on another device.");
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Couldn't make a backup.");
+    }
+  };
+  const restore = async (f: File | undefined) => {
+    if (!f) return;
+    if (!confirm("Replace the game in this browser with the backup? The current progress here will be lost unless you've backed it up.")) return;
+    try {
+      const { importSave } = await import("../net/offline-engine.ts");
+      await importSave(await f.text());
+    } catch (e) {
+      setMsg(e instanceof Error ? e.message : "Couldn't restore that file.");
+    }
+  };
+  return (
+    <div className="col" style={{ gap: 6, marginTop: 6 }}>
+      <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
+        <button className="btn sm" onClick={download}>⬇️ Download backup</button>
+        <label className="btn sm ghost" style={{ cursor: "pointer" }}>⬆️ Restore backup<input type="file" accept="application/json,.json" style={{ display: "none" }} onChange={(e) => restore(e.target.files?.[0])} /></label>
+      </div>
+      <div className="tiny muted">{msg ?? "Saves live in this browser until the game server is hosted. A backup file lets you keep your life safe or carry it to another device."}</div>
     </div>
   );
 }

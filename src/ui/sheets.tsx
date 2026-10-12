@@ -53,6 +53,7 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
 
       {p.kind === "market" && <div className={`notice ${isMarketDay(p.id, state.time.day) ? "ok" : ""}`} style={{ marginTop: 10 }}>🧺 {isMarketDay(p.id, state.time.day) ? "It's market day: stock is 8% cheaper and there are twice the buyers." : `Market days here: ${marketDayNames(p.id)}.`}</div>}
       {state.player.events.filter((e) => e.placeId === p.id).map((e) => <EventCard key={e.id} ev={e} hour={gd.hour} />)}
+      <OwarePanel placeId={p.id} open={open} />
       <TradePanel placeId={p.id} hour={gd.hour + gd.min / 60} open={open} />
 
       {p.services.length > 0 && <h3>What you can do</h3>}
@@ -504,6 +505,45 @@ export function MarriagePanel({ npcId }: { npcId: string }) {
       {step === "knock" && <ConfirmButton className="btn sm primary" disabled={busy} ask={`${c.knocking}?`} details={{ where: `${first}'s family house, ${homeName}`, time: "3 hours, between 8 and 6", cost: `GH₵${Math.round(KNOCKING_COST * col)} for drinks and the envelope`, changes: c.knockingText, undo: "The families have met; that stays." }} onConfirm={() => act({ type: "marriage", npcId, step: "knock" })}>{c.knocking}</ConfirmButton>}
       {step === "ceremony" && <ConfirmButton className="btn sm primary" disabled={busy || daysLeft > 0} ask={`${c.ceremony}?`} details={{ where: `${homeName}, with both families`, time: "About 6 hours, starting 8 to 4", cost: `GH₵${Math.round(CUSTOMARY_BASE * col).toLocaleString()}`, changes: `${c.ceremonyText} ${first} moves in and pays half the rent and bills.`, undo: "You're married." }} onConfirm={() => act({ type: "marriage", npcId, step: "ceremony" })}>{daysLeft > 0 ? `${c.ceremony} in ${daysLeft} day${daysLeft > 1 ? "s" : ""}` : c.ceremony}</ConfirmButton>}
       {step === "celebrate" && <ConfirmButton className="btn sm" disabled={busy} ask={`${c.celebration}?`} details={{ where: `${homeName}${c.celebration === "Church wedding" ? ", on a Saturday" : ""}`, time: "About 7 hours, starting 9 to 3", cost: `GH₵${Math.round(CELEBRATION_BASE * col).toLocaleString()}`, changes: `${c.celebrationText} Optional: you're already married.`, undo: "No." }} onConfirm={() => act({ type: "marriage", npcId, step: "celebrate" })}>{c.celebration} (optional)</ConfirmButton>}
+    </div>
+  );
+}
+
+const PIT_LABEL = ["A", "B", "C", "D", "E", "F"];
+/** Oware at a chop bar, market or station: the server plays your opponent and checks every move. */
+function OwarePanel({ placeId, open }: { placeId: string; open: boolean }) {
+  const { state, act, busy } = useGame();
+  const p = PLACE_BY_ID[placeId];
+  if (!state || !p || !["food", "transport", "nightlife", "market"].includes(p.kind)) return null;
+  const o = state.player.oware;
+  const here = NPCS.filter((n) => npcLocation(n, state.time.weekdayIndex, state.time.hour) === placeId);
+  if (!o || o.placeId !== placeId) {
+    return (
+      <div className="card col" style={{ marginTop: 10, gap: 6 }}>
+        <b>🟤 Oware</b>
+        <div className="tiny muted">The board comes out in the afternoon. Sow seeds round the board; land your last seed to make 2 or 3 in their row to capture. First to 25. You've won {state.player.owareWins} of {state.player.owareGames}.</div>
+        <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+          <button className="btn sm" disabled={busy || !open || !!o} onClick={() => act({ type: "oware", step: "start", placeId })}>Play a regular</button>
+          {here.map((n) => <button key={n.id} className="btn sm ghost" disabled={busy || !open || !!o} onClick={() => act({ type: "oware", step: "start", placeId, npcId: n.id })}>Play {n.name.split(" ")[0]}</button>)}
+        </div>
+      </div>
+    );
+  }
+  const g = o.game;
+  const pit = (i: number, mine: boolean) => (
+    <button key={i} className={`oware-pit ${g.last[mine ? 0 : 1] === i ? "last" : ""}`} disabled={!mine || busy || g.over || !o.legal.includes(i)} onClick={() => act({ type: "oware", step: "move", pit: i })} style={{ width: 44, height: 44, borderRadius: 22, border: "2px solid #6b4528", background: mine && o.legal.includes(i) && !g.over ? "#a8743f" : "#7a5230", color: "#fff", fontWeight: 800 }}>{g.pits[i]}</button>
+  );
+  return (
+    <div className="card col" style={{ marginTop: 10, gap: 8, background: "#3b2817" }}>
+      <div className="spread"><b>🟤 Oware with {o.opponent}</b><span className="pill gold">You {g.store[0]} · {g.store[1]} Them</span></div>
+      <div className="row" style={{ gap: 4, justifyContent: "center" }}>{[11, 10, 9, 8, 7, 6].map((i) => pit(i, false))}</div>
+      <div className="row" style={{ gap: 4, justifyContent: "center" }}>{[0, 1, 2, 3, 4, 5].map((i) => pit(i, true))}</div>
+      <div className="row tiny muted" style={{ gap: 4, justifyContent: "center" }}>{PIT_LABEL.map((l) => <span key={l} style={{ width: 44, textAlign: "center" }}>{l}</span>)}</div>
+      <div className="tiny muted">{g.over ? (g.winner === 0 ? "You won!" : g.winner === 1 ? "They won." : "A draw.") : "Your row is the bottom one; seeds travel right along your row and back along theirs."}</div>
+      <div className="row" style={{ gap: 6 }}>
+        {!g.over && <button className="btn sm ghost" disabled={busy} onClick={() => act({ type: "oware", step: "resign" })}>Resign</button>}
+        <button className="btn sm" disabled={busy} onClick={() => act({ type: "oware", step: "leave" })}>{g.over ? "Leave the board" : "Walk away"}</button>
+      </div>
     </div>
   );
 }

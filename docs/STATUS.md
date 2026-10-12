@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v21. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v22. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -87,7 +87,33 @@ Acceptance from the brief: intercity movement changes available work, contacts, 
 | Routines | ✅ market days, worship days and customs, dumsor groups, festivals by town |
 | Places | ✅ 20 playable towns, day trips to real sites |
 | Stories | ✅ six regional arcs; marriage happens in the partner's hometown |
-| ⏳ | rural spokes (villages around hubs), more towns per region, reviewed regional content packs |
+| Rural spokes | ✅ five villages around hubs (Bonwire, Nyankpala, Elmina, Paga, Wli) with their own work and rooms |
+| ⏳ | more towns per region; regional content packs reviewed by people from each region |
+
+## Stage 5 progress ("community, competition and civic play")
+
+The brief's acceptance is about human players: disconnect recovery, privacy, server-settled rewards. **Anything involving other real players needs the hosted server**, so it isn't built yet. Solo pieces that are:
+
+| Item | State |
+|---|---|
+| Minigames | ✅ oware (Abapa rules), played and validated on the server, opponent strength grows with your wins |
+| Parties and visits | ✅ host a party for people you know (NPCs); ❌ other players visiting needs hosting |
+| Civic play | ✅ monthly communal clean-up; ⏳ further civic features need local review first, as the brief says |
+| Collectibles | ✅ regions, sites, festivals, dishes (Ghana app), oware record |
+| Life score / replay | ✅ eight-part life score and milestones |
+| Player markets, leaderboards, multiplayer | ❌ need hosting, accounts, moderation and anti-cheat |
+
+## Stage 6 progress ("commercial readiness")
+
+| Item | State |
+|---|---|
+| Save migration | ✅ additive schema migrations on load, tested with every new column |
+| Backups / moving device | ✅ download and restore a save file (offline play); ❌ real accounts and recovery need hosting |
+| Onboarding, help, settings, accessibility | ✅ intro, update notes, needs pace, interface size, reduced motion, captions |
+| Performance | ✅ quality levels; ⏳ needs testing on a mid-range Android |
+| Localization | ❌ English only; Twi/Ewe/Ga/Dagbani UI needs translators |
+| Telemetry, moderation, support, release process | ❌ need hosting and a team |
+| Monetization review | ❌ not started; the brief rules out pay-to-win and coercive paywalls |
 
 ## Next slices, in order
 

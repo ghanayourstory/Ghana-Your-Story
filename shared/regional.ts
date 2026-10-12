@@ -619,6 +619,71 @@ const TOWNS_SPEC: TownSpec[] = [
       { id: "dambai_church", name: "Catholic Church, Dambai", kind: "church", services: ["church"], open: [6, 20], blurb: "Mass, then the market." },
     ],
   },
+  // Rural spokes: villages around the hubs, reached by trotro or taxi from town.
+  {
+    id: "bonwire", city: "kumasi", name: "Bonwire", tagline: "Where kente is woven", mood: "Looms clacking in every compound. Weavers, apprentices and buyers from Kumasi.",
+    style: "town", geo: { lat: 6.788, lon: -1.437 }, roads: { main: "Bonwire Road", cross: "Weavers' Lane" }, bearing: 0,
+    costOfLiving: 0.6, crowd: 0.35, traffic: 0.25, nightlife: 0.15, palette: "forest", landmark: "Bonwire Kente Weaving Centre",
+    places: [
+      station("bonwire_stop", "Bonwire Lorry Stop", "Trotros to Kumasi (Kejetia) and Ejisu."),
+      { id: "bonwire_weaving", name: "Bonwire Kente Weaving Centre", kind: "work", services: ["kente_viewing"], open: [7, 18], blurb: "Narrow strips woven on wooden looms, sewn into cloths worth months of wages." },
+      { id: "bonwire_market", name: "Bonwire Village Market", kind: "market", services: ["market_haggle"], open: [6, 18], blurb: "Plantain, cocoyam, kontomire and cloth." },
+      { id: "bonwire_chop", name: "Maame Yaa's Chop Bar", kind: "food", services: ["abenkwan", "ampesi", "palm_wine"], open: [8, 21], blurb: "Fufu pounded to order." },
+      { id: "bonwire_palace", name: "Bonwire Chief's Palace", kind: "landmark", services: ["libation"], open: [8, 17], blurb: "Greet the chief's linguist before you do anything else in town." },
+      lodge("bonwire_lodge", "Kente Village Guesthouse"),
+    ],
+  },
+  {
+    id: "nyankpala", city: "tamale", name: "Nyankpala", tagline: "Farms on the edge of Tamale", mood: "Maize, soya and rice fields; tractors for hire; an agric campus down the road.",
+    style: "savanna", geo: { lat: 9.401, lon: -0.982 }, roads: { main: "Tamale–Tolon Road", cross: "Farm Road" }, bearing: 0,
+    costOfLiving: 0.5, crowd: 0.3, traffic: 0.3, nightlife: 0.1, palette: "savanna", landmark: "Nyankpala Farmers' Cooperative",
+    places: [
+      station("nyankpala_stop", "Nyankpala Junction", "Shared taxis and motorbikes to Tamale."),
+      { id: "nyankpala_coop", name: "Nyankpala Farmers' Cooperative", kind: "work", open: [5, 17], blurb: "Members share tractors, seed and a store for the harvest." },
+      { id: "nyankpala_market", name: "Nyankpala Market", kind: "market", services: ["market_haggle", "koko_koose"], open: [6, 17], blurb: "Grain by the bowl, shea by the ball." },
+      { id: "nyankpala_tz", name: "Mma Ayishetu's TZ", kind: "food", services: ["tz", "tubaani", "pito"], open: [10, 21], blurb: "TZ under a neem tree." },
+      { id: "nyankpala_mosque", name: "Nyankpala Mosque", kind: "mosque", services: ["mosque", "jumah"], open: [4, 22], blurb: "Whitewashed and full on Friday." },
+      lodge("nyankpala_lodge", "Junction Guesthouse"),
+    ],
+  },
+  {
+    id: "elmina", city: "cape_coast", name: "Elmina", tagline: "Canoes, castle and the lagoon", mood: "Hundreds of painted canoes in the lagoon, fish smoking in every yard, St George's Castle above it all.",
+    style: "coastal", geo: { lat: 5.084, lon: -1.350 }, roads: { main: "Elmina Main Road", cross: "Lagoon Road" }, bearing: 0,
+    costOfLiving: 0.7, crowd: 0.7, traffic: 0.45, nightlife: 0.3, palette: "coast", landmark: "Elmina Castle",
+    places: [
+      station("elmina_station", "Elmina Station", "Trotros to Cape Coast and Takoradi."),
+      { id: "elmina_harbour", name: "Elmina Fishing Harbour", kind: "work", open: [4, 16], blurb: "Canoes go out before dawn and come in heavy (or not)." },
+      { id: "elmina_market", name: "Elmina Fish Market", kind: "market", services: ["market_haggle"], open: [5, 17], blurb: "Fresh, smoked and salted fish, sold by the women who run the trade." },
+      { id: "elmina_chop", name: "Lagoon Side Chop Bar", kind: "food", services: ["fante_kenkey", "akyeke"], open: [7, 22], blurb: "Kenkey, fried fish, pepper. The view is free." },
+      { id: "elmina_church", name: "Elmina Methodist Church", kind: "church", services: ["church"], open: [6, 20], blurb: "Hymns over the sound of the sea." },
+      lodge("elmina_lodge", "Lagoon Guesthouse"),
+    ],
+  },
+  {
+    id: "paga", city: "bolgatanga", name: "Paga", tagline: "Crocodiles and the border", mood: "Sacred crocodiles in the pond, traders heading to Burkina, mud houses painted in geometric patterns.",
+    style: "savanna", geo: { lat: 10.986, lon: -1.114 }, roads: { main: "Bolgatanga–Paga Road", cross: "Pond Road" }, bearing: 0,
+    costOfLiving: 0.5, crowd: 0.4, traffic: 0.35, nightlife: 0.15, palette: "savanna", landmark: "Paga Crocodile Pond",
+    places: [
+      station("paga_station", "Paga Station", "Buses to Bolgatanga; the border post is up the road."),
+      { id: "paga_pond", name: "Paga Crocodile Pond", kind: "tour", open: [7, 18], services: [], blurb: "The crocodiles are said to carry the souls of the clan. Guides hold the chicken." },
+      { id: "paga_market", name: "Paga Market", kind: "market", services: ["market_haggle"], open: [6, 18], blurb: "Every third day the border traders come." },
+      { id: "paga_chop", name: "Pito Bar & Chop", kind: "food", services: ["tz", "pito", "guinea_fowl"], open: [10, 22], blurb: "Calabashes of pito and grilled guinea fowl." },
+      { id: "paga_palace", name: "Paga Pio's Palace", kind: "landmark", services: ["libation"], open: [8, 17], blurb: "The paramount chief's palace, mud walls and painted patterns." },
+      lodge("paga_lodge", "Border Rest Stop"),
+    ],
+  },
+  {
+    id: "wli", city: "ho", name: "Wli", tagline: "Ghana's highest waterfall", mood: "A quiet village under the Agumatsa hills, bats over the falls, hikers in the morning.",
+    style: "town", geo: { lat: 7.124, lon: 0.594 }, roads: { main: "Hohoe–Wli Road", cross: "Falls Road" }, bearing: 0,
+    costOfLiving: 0.55, crowd: 0.25, traffic: 0.2, nightlife: 0.1, palette: "forest", landmark: "Wli Waterfalls",
+    places: [
+      station("wli_stop", "Wli Lorry Stop", "Trotros to Hohoe, then on to Ho."),
+      { id: "wli_falls_gate", name: "Wli Falls Gate", kind: "tour", open: [7, 17], services: [], blurb: "Pay the community fee, cross the streams, hear the falls before you see them." },
+      { id: "wli_guesthouse", name: "Waterfall Lodge", kind: "lodge", services: ["lodge"], blurb: "Rooms with a view of the falls." },
+      { id: "wli_chop", name: "Agumatsa Chop Bar", kind: "food", services: ["akple", "abolo"], open: [8, 21], blurb: "Akple and fetri detsi after the hike." },
+      { id: "wli_church", name: "Wli E.P. Church", kind: "church", services: ["church"], open: [6, 20], blurb: "The village gathers here on Sunday." },
+    ],
+  },
 ];
 
 const NO_REALTOR = new Set(["jamestown", "airport_city"]);
@@ -679,5 +744,10 @@ export const REGIONAL_JOBS: Record<string, Job> = {
   park_ranger: J({ id: "park_ranger", title: "Park ranger assistant", placeId: "mole_desk", pay: 140, hours: 8, shiftWindow: [5, 8], requires: { fitness: 15 }, energyCost: 36, skillGain: { fitness: 2, charisma: 1 }, blurb: "Escort walking safaris and count elephants at the waterhole." }),
   basket_weaver: J({ id: "basket_weaver", title: "Basket weaver", placeId: "bolga_crafts", pay: 90, hours: 7, shiftWindow: [7, 12], requires: {}, energyCost: 22, skillGain: { business: 1, charisma: 1 }, blurb: "Twist dyed elephant grass into the famous Bolga baskets." }),
   bead_maker: J({ id: "bead_maker", title: "Bead maker", placeId: "bead_market", pay: 100, hours: 7, shiftWindow: [7, 12], requires: {}, energyCost: 22, skillGain: { business: 1, charisma: 1 }, blurb: "Crush bottles, fill clay moulds, fire the kiln, string the beads." }),
+  kente_apprentice: J({ id: "kente_apprentice", title: "Kente weaving apprentice", placeId: "bonwire_weaving", pay: 70, hours: 8, shiftWindow: [7, 10], requires: {}, energyCost: 22, skillGain: { business: 1, charisma: 1 }, blurb: "Learn the loom from a master weaver: patterns have names and meanings." }),
+  farmhand: J({ id: "farmhand", title: "Cooperative farmhand", placeId: "nyankpala_coop", pay: 60, hours: 7, shiftWindow: [5, 9], requires: {}, energyCost: 38, skillGain: { fitness: 2 }, blurb: "Weeding, planting and harvest by hand when the tractor is booked." }),
+  fishing_crew: J({ id: "fishing_crew", title: "Canoe fishing crew", placeId: "elmina_harbour", pay: 85, hours: 7, shiftWindow: [4, 7], requires: { fitness: 10 }, energyCost: 40, skillGain: { fitness: 2 }, blurb: "Paddle out at dawn, haul the net, share the catch money." }),
+  pond_guide: J({ id: "pond_guide", title: "Crocodile pond guide", placeId: "paga_pond", pay: 80, hours: 6, shiftWindow: [7, 11], requires: { charisma: 6 }, energyCost: 18, skillGain: { charisma: 2 }, blurb: "Tell the story of the pond and keep visitors (and crocodiles) calm." }),
+  falls_guide: J({ id: "falls_guide", title: "Waterfall guide", placeId: "wli_falls_gate", pay: 90, hours: 6, shiftWindow: [7, 10], requires: { fitness: 10 }, energyCost: 28, skillGain: { fitness: 1, charisma: 1 }, blurb: "Lead hikers to the lower falls, and the brave ones to the upper." }),
   lodge_receptionist: J({ id: "lodge_receptionist", title: "Lodge receptionist", placeId: "cape_lodge", pay: 120, hours: 8, shiftWindow: [6, 14], requires: { charisma: 6 }, energyCost: 22, skillGain: { charisma: 1, business: 1 }, blurb: "Check in tourists and find them a taxi to Kakum." }),
 };

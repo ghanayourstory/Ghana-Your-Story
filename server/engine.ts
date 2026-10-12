@@ -8,6 +8,7 @@ import { GOODS, LUGGAGE_PER_UNIT, canBuyGood, canBuyHere, canSellHere, carryCapa
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { MISSIONS, type MissionState } from "../shared/missions.ts";
+import { aiMove, legalMoves, newOware, playMove, type OwareGame } from "../shared/oware.ts";
 import { ADOPTION_DAYS, ADOPTION_FEE, DAYS_PER_CHILD_YEAR, GROWN_AGE, NAMING_COST, NAMING_DAY, PREGNANCY_DAYS, SCHOOL_AGE, childAge, childMonthly, namingName, sanitizeChildName, suggestedNames } from "../shared/children.ts";
 import { CELEBRATION_BASE, CUSTOMARY_BASE, KNOCKING_COST, KNOCK_TO_CEREMONY_DAYS, PROPOSAL_RING, customFor, partnerHometown } from "../shared/marriage.ts";
 import { LANGUAGES, PRIORITIES, homeLanguage, languagesOfCity, sanitizeLanguages, sanitizePriorities } from "../shared/identity.ts";
@@ -81,6 +82,11 @@ export interface PlayerRow {
   missions: string;
   family_plan: string;
   last_work_day: number;
+  oware: string;
+  oware_wins: number;
+  oware_games: number;
+  party_day: number;
+  cleanup_day: number;
   helped_day: number;
   last_police_min: number;
   last_gig_day: number;
@@ -148,11 +154,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?, family_plan=?, last_work_day=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?, languages=?, priorities=?, productive_day=?, chores=?, missions=?, family_plan=?, last_work_day=?, oware=?, oware_wins=?, oware_games=?, party_day=?, cleanup_day=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions, p.family_plan, p.last_work_day,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended, p.languages, p.priorities, p.productive_day, p.chores, p.missions, p.family_plan, p.last_work_day, p.oware, p.oware_wins, p.oware_games, p.party_day, p.cleanup_day,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -474,6 +480,112 @@ function childrenView(db: Db, p: PlayerRow) {
       seed: c.seed,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Oware at the chop bar or lorry station. The server plays the opponent and
+// checks every move, so a win can't be faked.
+
+type OwareSession = { game: OwareGame; opponent: string; npcId: string | null; placeId: string; strength: number };
+const owareOf = (p: PlayerRow): OwareSession | null => { try { return p.oware ? JSON.parse(p.oware) as OwareSession : null; } catch { return null; } };
+
+function actOware(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const sess = owareOf(p);
+  if (a.step === "start") {
+    if (sess && !sess.game.over) throw new GameError("busy", "Finish (or resign) the game you're playing first.");
+    const place = requirePlace(p, a.placeId);
+    if (!["food", "transport", "nightlife", "market"].includes(place.kind)) throw new GameError("no_board", "Oware boards come out at chop bars, markets and lorry stations.");
+    if (!isOpenAt(place.open, toGameDate(p.game_min).hour)) throw new GameError("closed", `${place.name} is closed.`);
+    requireAwake(p, 5, "concentrate");
+    let npcId: string | null = null;
+    let opponent = place.kind === "transport" ? "an old driver waiting for his car to fill" : "a regular who never loses at home";
+    if (typeof a.npcId === "string" && NPC_BY_ID[a.npcId]) {
+      const gd = toGameDate(p.game_min);
+      if (npcLocation(NPC_BY_ID[a.npcId], gd.weekdayIndex, gd.hour) !== place.id) throw new GameError("not_here", "They're not here.");
+      npcId = a.npcId;
+      opponent = NPC_BY_ID[a.npcId].name;
+    }
+    const strength = Math.min(0.9, 0.35 + p.oware_wins * 0.03 + (npcId ? 0.2 : 0));
+    p.oware = JSON.stringify({ game: newOware(), opponent, npcId, placeId: place.id, strength } satisfies OwareSession);
+    fb.add(`🟤 You sit down to oware with ${opponent}. You play the near row; sow from any of your pits.`, [], "info");
+    return null;
+  }
+  if (!sess) throw new GameError("no_game", "You're not playing.");
+  if (a.step === "leave") {
+    if (!sess.game.over) { p.oware_games += 1; fb.add(`You get up from the board. ${sess.opponent} counts it as a win.`, [], "info"); }
+    p.oware = "";
+    return null;
+  }
+  if (p.district !== PLACE_BY_ID[sess.placeId].district) { p.oware = ""; throw new GameError("left", "You walked away from the board."); }
+  if (a.step === "resign") {
+    sess.game = { ...sess.game, over: true, winner: 1 };
+  } else if (a.step === "move") {
+    if (sess.game.over || sess.game.turn !== 0) throw new GameError("not_turn", "Not your turn.");
+    try { sess.game = playMove(sess.game, Number(a.pit)).game; } catch { throw new GameError("illegal", "You can't sow from that pit (empty, or your opponent must be fed)."); }
+    if (!sess.game.over) sess.game = playMove(sess.game, aiMove(sess.game, sess.strength, p.id * 13 + sess.game.moves)).game;
+    advance(ctx, p, 2, fb, { quiet: true });
+  } else throw new GameError("bad_step", "Move or resign?");
+  if (sess.game.over) {
+    const g = sess.game;
+    p.oware_games += 1;
+    const won = g.winner === 0;
+    if (won) p.oware_wins += 1;
+    if (sess.npcId) {
+      const rel = relationship(ctx.db, p.id, sess.npcId);
+      rel.affinity = clamp(rel.affinity + (won ? 3 : 4), -100, 100);
+      if (won) pushMemory(rel, p.game_min, "you beat me at oware");
+      saveRel(ctx.db, p.id, rel);
+    }
+    applyEffects(p, won ? { fun: 16, social: 8, charisma: 0.4 } : { fun: 9, social: 6 }, fb,
+      won ? `🏆 You win at oware, ${g.store[0]}–${g.store[1]}! ${sess.opponent} wants a rematch.` : g.winner === null ? `🤝 A draw at oware, 24–24. Nobody believes it.` : `🟤 ${sess.opponent} wins at oware, ${g.store[1]}–${g.store[0]}. "Come back when you've practised."`);
+  }
+  p.oware = JSON.stringify(sess);
+  return { game: sess.game };
+}
+
+// ---------------------------------------------------------------------------
+// Parties at home and communal clean-up.
+
+export const PARTY_PER_GUEST = 60;
+function actParty(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("not_here", "Parties are at your home.");
+  const gd = toGameDate(p.game_min);
+  const day = dayOf(p.game_min);
+  if (day - p.party_day < 7) throw new GameError("too_soon", "You had people round this week. Give it a few days.");
+  if (gd.hour < 16 || gd.hour >= 22) throw new GameError("hours", "Parties start between 4 and 10 in the evening.");
+  const ids = Array.isArray(a.guests) ? [...new Set(a.guests.filter((x): x is string => typeof x === "string"))].slice(0, 8) : [];
+  const guests = ids.map((id) => ({ id, rel: ctx.db.get<RelRow>("SELECT * FROM relationships WHERE player_id = ? AND npc_id = ?", p.id, id) })).filter((g) => g.rel && g.rel.affinity >= 15 && NPC_BY_ID[g.id]);
+  if (!guests.length) throw new GameError("no_guests", "Invite at least one person you know (acquaintance or closer).");
+  requireAwake(p, 15, "host");
+  const cost = minor(Math.round(priceFor(PARTY_PER_GUEST, p.district) * (guests.length + 1)));
+  const money = chargeStrict(ctx, p, cost, "party", `Party at home: food and drinks for ${guests.length} guest${guests.length > 1 ? "s" : ""}`);
+  advance(ctx, p, 240, fb, { quiet: true });
+  for (const g of guests) {
+    const rel = g.rel!;
+    rel.affinity = clamp(rel.affinity + 7, -100, 100);
+    pushMemory(rel, p.game_min, "you had us round for a party");
+    saveRel(ctx.db, p.id, rel);
+  }
+  p.party_day = day;
+  applyEffects(p, { social: 45, fun: 40, hunger: 30, energy: -18, reputation: Math.min(4, guests.length * 0.5) }, fb,
+    `🎉 A party at yours: ${guests.map((g) => NPC_BY_ID[g.id].name.split(" ")[0]).join(", ")}. Jollof, kelewele, music and loud arguments about football.`, money);
+  return null;
+}
+
+/** Communal labour: the first Saturday of the month, 7 to 10, everyone sweeps and clears the gutters. */
+export const isCleanupDay = (day: number) => { const d = toGameDate(day * MINUTES_PER_DAY); return d.weekdayIndex === 6 && d.date <= 7; };
+function actCleanup(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const day = dayOf(p.game_min);
+  const gd = toGameDate(p.game_min);
+  if (!isCleanupDay(day)) throw new GameError("not_today", "Clean-up day is the first Saturday of each month, 7 to 10 in the morning.");
+  if (p.cleanup_day === day) throw new GameError("already", "You've done your part today.");
+  if (gd.hour < 7 || gd.hour >= 10) throw new GameError("hours", "The clean-up runs from 7 to 10.");
+  requireAwake(p, 15, "sweep");
+  advance(ctx, p, 120, fb, { quiet: true });
+  p.cleanup_day = day;
+  rememberAcrossDistrict(ctx.db, p, p.district, "you came out for the clean-up");
+  applyEffects(p, { social: 18, reputation: 3, fitness: 0.5, energy: -14, hygiene: -15 }, fb, `🧹 Communal labour in ${DISTRICTS[p.district].name}: brooms, shovels, the gutters cleared and the assemblyman taking photos.`);
+  return null;
 }
 
 const firstName2 = (name: string) => (["Auntie", "Mr.", "Dr.", "Uncle", "Nurse", "Hajia", "Madam", "Nana", "Alhaji"].includes(name.split(" ")[0]) ? name.split(" ").slice(0, 2).join(" ") : name.split(" ")[0]);
@@ -1110,6 +1222,9 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "family_chore": return actFamilyChore(ctx, p, a, fb);
     case "marriage": return actMarriage(ctx, p, a, fb);
     case "household": return actHousehold(ctx, p, a, fb);
+    case "oware": return actOware(ctx, p, a, fb);
+    case "party": return actParty(ctx, p, a, fb);
+    case "cleanup": return actCleanup(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
     case "settings": return actSettings(p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
@@ -2598,6 +2713,40 @@ function trackMissions(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   if (changed) p.missions = JSON.stringify(st);
 }
 
+/**
+ * A life score that isn't just money: eight parts, each 0–100, averaged.
+ * Wealth counts, but so do people, family, community, health, learning and the
+ * country you've seen.
+ */
+function lifeScore(db: Db, p: PlayerRow) {
+  const nw = netWorth(db, p).total / 100;
+  const rels = db.all<{ affinity: number }>("SELECT affinity FROM relationships WHERE player_id = ?", p.id);
+  const fam = db.all<{ closeness: number }>("SELECT closeness FROM family WHERE player_id = ?", p.id);
+  const kids = db.all<{ closeness: number }>("SELECT closeness FROM children WHERE player_id = ?", p.id);
+  const disc = list(p.discovered);
+  const regions = new Set(list(p.visited).map((d) => (DISTRICTS[d] ? TOWN_BY_ID[DISTRICTS[d].city]?.region : undefined)).filter(Boolean)).size;
+  const certs = db.get<{ n: number }>("SELECT COUNT(*) AS n FROM courses WHERE player_id = ? AND status = 'done'", p.id)!.n;
+  const cap = (v: number) => Math.round(Math.max(0, Math.min(100, v)));
+  const parts = [
+    { key: "wealth", label: "Wealth", icon: "💰", value: cap(Math.log10(Math.max(1, nw)) * 16) },
+    { key: "work", label: "Work & skills", icon: "💼", value: cap((p.work + p.business) / 2 + (p.job_id ? 10 : 0)) },
+    { key: "people", label: "Friends", icon: "🤝", value: cap(rels.filter((r) => r.affinity >= 40).length * 12 + rels.filter((r) => r.affinity >= 70).length * 10) },
+    { key: "family", label: "Family", icon: "👪", value: cap((fam.length ? fam.reduce((a, b) => a + b.closeness, 0) / fam.length : 50) * 0.7 + (isMarried(db, p.id) ? 15 : 0) + Math.min(15, kids.length * 8)) },
+    { key: "community", label: "Standing", icon: "⭐", value: cap(p.reputation + 20) },
+    { key: "health", label: "Wellbeing", icon: "💪", value: cap((p.health + p.energy + p.fun + p.social) / 4) },
+    { key: "learning", label: "Learning", icon: "🎓", value: cap(certs * 20 + p.charisma / 2) },
+    { key: "ghana", label: "Ghana seen", icon: "🇬🇭", value: cap(regions * 7 + disc.filter((d) => d.startsWith("site:") || d.startsWith("fest:")).length * 3) },
+  ];
+  return { total: Math.round(parts.reduce((a, b) => a + b.value, 0) / parts.length), parts };
+}
+
+const MILESTONE = /^(🏆|💍|👶|🧒|🌅|🏡|📖|🎉|🚪|🤰|🎓|🔑|🏪|🧑‍💼|🧑‍🔧|🚗)/u;
+function milestones(db: Db, p: PlayerRow) {
+  return db.all<{ game_min: number; text: string }>("SELECT game_min, text FROM log WHERE player_id = ? ORDER BY id DESC LIMIT 400", p.id)
+    .filter((l) => MILESTONE.test(l.text) || l.text.includes("arrives in Accra")).slice(0, 40)
+    .map((l) => ({ day: dayOf(l.game_min), text: l.text }));
+}
+
 function missionsView(p: PlayerRow) {
   const st = missionState(p) ?? { done: [], paid: [] };
   return MISSIONS.map((m) => ({
@@ -3108,6 +3257,10 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       languages: JSON.parse(p.languages || "[]") as string[],
       missions: missionsView(p),
       children: childrenView(db, p),
+      lifeScore: lifeScore(db, p),
+      milestones: milestones(db, p),
+      oware: (() => { const o = owareOf(p); return o ? { game: o.game, opponent: o.opponent, placeId: o.placeId, legal: legalMoves(o.game) } : null; })(),
+      owareWins: p.oware_wins, owareGames: p.oware_games, partyDay: p.party_day, cleanupDay: p.cleanup_day, cleanupToday: isCleanupDay(dayOf(p.game_min)),
       familyPlan: planOf(p),
       priorities: JSON.parse(p.priorities || "[]") as string[],
       family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ where: familyWhereabouts(m, m.town, toGameDate(p.game_min).weekdayIndex, toGameDate(p.game_min).hour), id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),
