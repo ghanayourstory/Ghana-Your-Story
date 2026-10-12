@@ -295,14 +295,13 @@ function Game() {
         <div className="modal-wrap" onClick={closeNews}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="pill gold">🆕 Update · {BUILD_VERSION}</div>
-            <h2 style={{ margin: "10px 0 4px" }}>Real homes, real streets 🏠</h2>
-            <p className="muted small" style={{ marginTop: 0 }}>Sika City is now <b>Ghana: Your Story</b>. Your saved game carries over. Your home now matches what you can afford, and test characters get GH₵500M to try everything.</p>
+            <h2 style={{ margin: "10px 0 4px" }}>Live it, don't just click it 🏠</h2>
+            <p className="muted small" style={{ marginTop: 0 }}>Your home is now a place you live in, and rides actually drive you there.</p>
             <div className="col small">
-              <div>🏠 <b>Homes you can walk into:</b> sleep, bath, cook, watch TV. A compound room has a shared bathroom and a coal pot; a northern room has bucket baths; penthouses and mansions get chef kitchens, ensuites, pools and gatehouses.</div>
-              <div>🛣️ <b>Streets:</b> real open gutters with rubbish and slab crossings, three-light traffic signals, hawkers in traffic, burglar bars, balconies, alleys and walkways, and the gated Trasacco Valley Estate.</div>
-              <div>🧍 <b>People:</b> different faces, heights and builds, wheelchair users and people on crutches, street preachers. Shrines and more mosques.</div>
-              <div>✈️ <b>Airport City:</b> Kotoka apron, buy a hangar, then a plane or helicopter, and fly yourself between airports.</div>
-              <div>🚶 Slower, natural walking pace (hold Shift to run). Smaller minimap.</div>
+              <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
+              <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
+              <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>🚻 Pay toilets at lorry stations, markets and malls. The green 🏠 button takes you home from anywhere.</div>
             </div>
             <div className="row" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>
               <button className="btn primary" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "travel", ctx: "phone", scope: "ghana" }); }}>🗺️ Ghana map</button>
