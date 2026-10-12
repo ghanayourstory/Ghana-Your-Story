@@ -8,6 +8,7 @@ import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../sha
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { MISSIONS, type MissionState } from "../shared/missions.ts";
+import { CELEBRATION_BASE, CUSTOMARY_BASE, KNOCKING_COST, KNOCK_TO_CEREMONY_DAYS, PROPOSAL_RING, customFor, partnerHometown } from "../shared/marriage.ts";
 import { LANGUAGES, PRIORITIES, homeLanguage, languagesOfCity, sanitizeLanguages, sanitizePriorities } from "../shared/identity.ts";
 import { tx, type Db } from "./db.ts";
 import { balance, ensureAccount, GameError, post, recentLedger, type Leg } from "./ledger.ts";
@@ -275,6 +276,85 @@ function logEntry(db: Db, playerId: number, gameMin: number, kind: string, text:
 function isPartnered(db: Db, playerId: number) {
   return !!db.get("SELECT 1 FROM relationships WHERE player_id = ? AND partner = 1", playerId);
 }
+
+function isMarried(db: Db, playerId: number) {
+  return !!db.get("SELECT 1 FROM relationships WHERE player_id = ? AND stage = 'married'", playerId);
+}
+
+/** Propose, knock, the customary marriage (or nikah), and an optional celebration. */
+function actMarriage(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const npc = typeof a.npcId === "string" ? NPC_BY_ID[a.npcId] : undefined;
+  if (!npc) throw new GameError("bad_npc", "Who?");
+  const rel = relationship(ctx.db, p.id, npc.id);
+  if (!rel.partner) throw new GameError("not_partner", `You and ${firstName2(npc.name)} aren't a couple.`);
+  const home = partnerHometown(npc.id, DISTRICTS[npc.district].city);
+  const c = customFor(npc.id, DISTRICTS[npc.district].city);
+  const first = firstName2(npc.name);
+  const inHometown = DISTRICTS[p.district].city === home;
+  const col = Math.min(1.3, Math.max(0.7, DISTRICTS[districtsIn(home)[0]]?.costOfLiving ?? 1));
+  const gd = toGameDate(p.game_min);
+  const day = dayOf(p.game_min);
+  switch (a.step) {
+    case "propose": {
+      if (rel.stage) throw new GameError("already", "You're already engaged.");
+      const where = npcLocation(npc, gd.weekdayIndex, gd.hour);
+      if (!where || PLACE_BY_ID[where].district !== p.district) throw new GameError("not_here", `${first} isn't around right now. Ask in person.`);
+      if (rel.affinity < 70 || rel.romance < 60) throw new GameError("too_soon", `It's too soon. Spend more time together first (closeness ${Math.round(rel.affinity)}/70, romance ${Math.round(rel.romance)}/60).`);
+      const money = chargeStrict(ctx, p, minor(PROPOSAL_RING), "gift", `Engagement ring for ${npc.name}`);
+      rel.stage = "engaged";
+      rel.stage_day = day;
+      pushMemory(rel, p.game_min, "you asked me to marry you");
+      saveRel(ctx.db, p.id, rel);
+      applyEffects(p, { social: 20, fun: 15 }, fb, `💍 You asked ${first} to marry you. Yes! Next, your family goes to knock at their family's door in ${CITIES[home]?.name ?? home}.`, money);
+      return null;
+    }
+    case "knock": {
+      if (rel.stage !== "engaged") throw new GameError("wrong_step", rel.stage ? "You've already done the knocking." : "Propose first.");
+      if (!inHometown) throw new GameError("not_here", `The knocking is at ${first}'s family house in ${CITIES[home]?.name ?? home}. Travel there.`);
+      if (gd.hour < 8 || gd.hour >= 18) throw new GameError("hours", "Families receive visitors in the day, between 8 and 6.");
+      const money = chargeStrict(ctx, p, minor(Math.round(KNOCKING_COST * col)), "ceremony", `${c.knocking}: drinks and envelope for ${first}'s family`);
+      advance(ctx, p, 180, fb, { quiet: true });
+      rel.stage = "knocked";
+      rel.stage_day = day;
+      pushMemory(rel, p.game_min, "your family came to knock at our door");
+      saveRel(ctx.db, p.id, rel);
+      ctx.db.run("UPDATE family SET closeness = MIN(100, closeness + 5), last_contact_day = ? WHERE player_id = ?", day, p.id);
+      applyEffects(p, { social: 15, reputation: 2 }, fb, `🚪 ${c.knocking}: ${c.knockingText} The door is open. ${first}'s family will prepare for the ${c.ceremony.toLowerCase()}; come back in ${KNOCK_TO_CEREMONY_DAYS} days or more.`, money);
+      return null;
+    }
+    case "ceremony": {
+      if (rel.stage !== "knocked") throw new GameError("wrong_step", rel.stage === "married" ? "You're already married." : "The knocking comes first.");
+      if (day < rel.stage_day + KNOCK_TO_CEREMONY_DAYS) throw new GameError("too_soon", `The family is still preparing. ${rel.stage_day + KNOCK_TO_CEREMONY_DAYS - day} more day(s).`);
+      if (!inHometown) throw new GameError("not_here", `The ${c.ceremony.toLowerCase()} is in ${CITIES[home]?.name ?? home}. Travel there.`);
+      if (gd.hour < 8 || gd.hour >= 16) throw new GameError("hours", "Ceremonies start in the morning, by 4 at the latest.");
+      const money = chargeStrict(ctx, p, minor(Math.round(CUSTOMARY_BASE * col)), "ceremony", `${c.ceremony} with ${npc.name}'s family`, true);
+      advance(ctx, p, 360, fb, { quiet: true });
+      rel.stage = "married";
+      rel.stage_day = day;
+      rel.affinity = clamp(rel.affinity + 10, -100, 100);
+      pushMemory(rel, p.game_min, "we were married");
+      saveRel(ctx.db, p.id, rel);
+      ctx.db.run("UPDATE family SET closeness = MIN(100, closeness + 10), last_contact_day = ? WHERE player_id = ?", day, p.id);
+      applyEffects(p, { social: 35, fun: 25, hunger: 40, reputation: 6 }, fb, `💍 ${c.ceremony}: ${c.ceremonyText} Congratulations! ${first} moves in with you and pays half the rent and bills from now on.`, money);
+      return null;
+    }
+    case "celebrate": {
+      if (rel.stage !== "married") throw new GameError("wrong_step", "Get married first.");
+      if (rel.wedded) throw new GameError("already", "You've had your celebration.");
+      if (!inHometown) throw new GameError("not_here", `Celebrate in ${CITIES[home]?.name ?? home}, with both families.`);
+      if (c.celebration === "Church wedding" && gd.weekdayIndex !== 6) throw new GameError("saturday", "Church weddings are on Saturdays.");
+      if (gd.hour < 9 || gd.hour >= 15) throw new GameError("hours", "Start between 9 and 3.");
+      const money = chargeStrict(ctx, p, minor(Math.round(CELEBRATION_BASE * col)), "ceremony", `${c.celebration} with ${npc.name}`, true);
+      advance(ctx, p, 420, fb, { quiet: true });
+      rel.wedded = 1;
+      saveRel(ctx.db, p.id, rel);
+      applyEffects(p, { social: 40, fun: 40, hunger: 40, energy: -20, reputation: 8 }, fb, `🎉 ${c.celebration}: ${c.celebrationText}`, money);
+      return null;
+    }
+  }
+  throw new GameError("bad_step", "Which step?");
+}
+const firstName2 = (name: string) => (["Auntie", "Mr.", "Dr.", "Uncle", "Nurse", "Hajia", "Madam", "Nana", "Alhaji"].includes(name.split(" ")[0]) ? name.split(" ").slice(0, 2).join(" ") : name.split(" ")[0]);
 
 /** Passive needs over time. */
 function decay(p: PlayerRow, minutes: number, sleeping: boolean, partnered: boolean) {
@@ -638,7 +718,7 @@ function monthlyBills(ctx: Ctx, p: PlayerRow, fb: Feedback, monthName: string) {
       p.rent_credit -= 1;
       items.push("rent (prepaid)");
     } else {
-      const rent = minor(r.rent * (r.id === "tetteh_room" && hasUnlock(p, "tetteh_discount") ? 0.85 : 1));
+      const rent = minor(r.rent * (r.id === "tetteh_room" && hasUnlock(p, "tetteh_discount") ? 0.85 : 1) * (isMarried(db, p.id) ? 0.5 : 1));
       const res = chargeFlexible(ctx, p, rent, "rent", `${monthName} rent: ${r.name}`);
       total += rent - res.unpaid;
       items.push("rent");
@@ -656,7 +736,8 @@ function monthlyBills(ctx: Ctx, p: PlayerRow, fb: Feedback, monthName: string) {
   const running = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)
     .reduce((a, v) => a + Math.max(20, Math.round((VEHICLES[v.type]?.price ?? 0) * 0.0018)), 0);
   if (running) items.push("vehicle costs");
-  const bills = utilities + minor(PHONE_DATA_MONTHLY) + minor(running);
+  // A spouse pays their half of the household's water and refuse.
+  const bills = Math.round(utilities * (isMarried(db, p.id) ? 0.5 : 1)) + minor(PHONE_DATA_MONTHLY) + minor(running);
   const ub = chargeFlexible(ctx, p, bills, "bills", `${monthName} water, refuse & phone data${running ? ", vehicle insurance & servicing" : ""}`);
   total += bills - ub.unpaid;
   items.push("utilities", "data");
@@ -723,6 +804,9 @@ interface RelRow {
   last_topic: string | null;
   dates_done: number;
   memories: string;
+  stage: string;
+  stage_day: number;
+  wedded: number;
 }
 
 function relationship(db: Db, playerId: number, npcId: string): RelRow {
@@ -732,8 +816,8 @@ function relationship(db: Db, playerId: number, npcId: string): RelRow {
 
 function saveRel(db: Db, playerId: number, r: RelRow) {
   db.run(
-    "UPDATE relationships SET affinity=?, romance=?, partner=?, talks_today=?, last_talk_day=?, last_gift_day=?, last_topic=?, dates_done=?, memories=? WHERE player_id=? AND npc_id=?",
-    round1(r.affinity), round1(r.romance), r.partner, r.talks_today, r.last_talk_day, r.last_gift_day, r.last_topic, r.dates_done, r.memories, playerId, r.npc_id,
+    "UPDATE relationships SET affinity=?, romance=?, partner=?, talks_today=?, last_talk_day=?, last_gift_day=?, last_topic=?, dates_done=?, memories=?, stage=?, stage_day=?, wedded=? WHERE player_id=? AND npc_id=?",
+    round1(r.affinity), round1(r.romance), r.partner, r.talks_today, r.last_talk_day, r.last_gift_day, r.last_topic, r.dates_done, r.memories, r.stage, r.stage_day, r.wedded, playerId, r.npc_id,
   );
 }
 
@@ -891,6 +975,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "family_send": return actFamilySend(ctx, p, a, fb);
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
     case "family_chore": return actFamilyChore(ctx, p, a, fb);
+    case "marriage": return actMarriage(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
     case "settings": return actSettings(p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
@@ -2284,6 +2369,9 @@ function missionChecks(ctx: Ctx, p: PlayerRow): Record<string, () => boolean> {
     standing_25: () => p.reputation >= 25,
     date: () => has("SELECT 1 FROM dates WHERE player_id = ? AND status = 'attended'"),
     partner: () => isPartnered(db, p.id),
+    engaged: () => has("SELECT 1 FROM relationships WHERE player_id = ? AND stage IN ('engaged', 'knocked', 'married')"),
+    knocked: () => has("SELECT 1 FROM relationships WHERE player_id = ? AND stage IN ('knocked', 'married')"),
+    married: () => isMarried(db, p.id),
   };
 }
 
@@ -2707,6 +2795,7 @@ function moodFor(db: Db, p: PlayerRow) {
     homeTier: homeSpecFor(db, p).tier,
     comfort: homeComfort(db, p),
     partnered: isPartnered(db, p.id),
+    married: isMarried(db, p.id),
     rentArrears: p.rent_arrears > 0,
     hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
     helpedFamily: p.helped_day >= dayOf(p.game_min) - 2,
@@ -2849,7 +2938,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       ledger: recentLedger(db, p.id, 40),
     },
     relationships: rels.map((r) => ({
-      npcId: r.npc_id, affinity: r.affinity, romance: r.romance, partner: !!r.partner, tier: tierFor(r.affinity),
+      npcId: r.npc_id, affinity: r.affinity, romance: r.romance, partner: !!r.partner, tier: tierFor(r.affinity), stage: r.stage, stageDay: r.stage_day, wedded: !!r.wedded,
       memories: JSON.parse(r.memories) as { day: number; text: string }[], lastTalkDay: r.last_talk_day,
     })),
     dates: db.all("SELECT id, npc_id AS npcId, place_id AS placeId, start_min AS startMin, status FROM dates WHERE player_id = ? ORDER BY id DESC LIMIT 10", p.id),

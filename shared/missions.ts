@@ -101,6 +101,15 @@ export const MISSIONS: MissionArc[] = [
     ],
   },
 ];
+MISSIONS.push({
+  id: "family_of_your_own", icon: "💍", title: "A family of your own", reward: 500, reputation: 5,
+  blurb: "Optional, and only if it's right. Marriage joins two families.",
+  steps: [
+    S("engaged", "Get engaged", "Once you're a couple and very close, ask in person (People → your partner)."),
+    S("knocked", "The knocking", "Go with your family to your partner's family house in their hometown."),
+    S("married", "The marriage ceremony", "A few days after the knocking, the families meet again: customary marriage or nikah."),
+  ],
+});
 export const MISSION_BY_ID = Object.fromEntries(MISSIONS.map((m) => [m.id, m]));
 
 export interface MissionState {

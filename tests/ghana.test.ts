@@ -5,7 +5,7 @@ import { auditPlayer } from "../server/ledger.ts";
 import { REGIONS, TOWNS, routeBetween } from "../shared/ghana.ts";
 import { intercityQuote } from "../shared/cities.ts";
 import { DISTRICTS, JOBS, PLACES, SERVICES } from "../shared/world.ts";
-import { NPCS } from "../shared/people.ts";
+import { NPCS, npcLocation } from "../shared/people.ts";
 import { SITES } from "../shared/regional.ts";
 import { COURSES, VEHICLES } from "../shared/life.ts";
 import { outageWindow, powerOff } from "../shared/power.ts";
@@ -703,5 +703,49 @@ test("story arc pays out once when every step is done", () => {
   const arc = st.player.missions.find((m) => m.id === "new_in_town")!;
   assert.ok(arc.complete, JSON.stringify(arc.steps));
   assert.ok(bal(ctx, id, "bank") >= before + 300 * 100 - 0, "reward paid to the bank");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("marriage: propose in person, knock in their hometown, the ceremony days later, then a shared household", () => {
+  const { ctx, id } = rich();
+  const selasi = NPCS.find((n) => n.id === "selasi")!;
+  ctx.db.run("INSERT INTO relationships (player_id, npc_id, affinity, romance, partner) VALUES (?, 'selasi', 50, 40, 1)", id);
+  // Not yet close enough.
+  const findHer = () => {
+    for (let h = 0; h < 48; h++) {
+      const gd = toGameDate(gameMin(ctx, id));
+      const at = npcLocation(selasi, gd.weekdayIndex, gd.hour);
+      if (at && gd.hour >= 8 && gd.hour < 20) {
+        const d = PLACES.find((p) => p.id === at)!.district;
+        if (district(ctx, id) !== d) assert.ok(act(ctx, id, { type: "travel", to: d, mode: "taxi" }).ok);
+        if (npcLocation(selasi, toGameDate(gameMin(ctx, id)).weekdayIndex, toGameDate(gameMin(ctx, id)).hour) === at) return;
+      }
+      skip(ctx, id, 1);
+    }
+    throw new Error("never found Selasi");
+  };
+  findHer();
+  assert.equal(act(ctx, id, { type: "marriage", npcId: "selasi", step: "propose" }).code, "too_soon");
+  ctx.db.run("UPDATE relationships SET affinity = 80, romance = 75 WHERE player_id = ? AND npc_id = 'selasi'", id);
+  assert.equal(act(ctx, id, { type: "marriage", npcId: "selasi", step: "knock" }).code, "wrong_step");
+  const pr = act(ctx, id, { type: "marriage", npcId: "selasi", step: "propose" });
+  assert.ok(pr.ok, pr.error);
+  // The knocking happens at her family's house in Ho.
+  assert.equal(act(ctx, id, { type: "marriage", npcId: "selasi", step: "knock" }).code, "not_here");
+  skipTo(ctx, id, 7);
+  assert.ok(act(ctx, id, { type: "travel", to: "ho", mode: "bus" }).ok);
+  skipTo(ctx, id, 10);
+  const kn = act(ctx, id, { type: "marriage", npcId: "selasi", step: "knock" });
+  assert.ok(kn.ok, kn.error);
+  assert.equal(act(ctx, id, { type: "marriage", npcId: "selasi", step: "ceremony" }).code, "too_soon");
+  skip(ctx, id, 24 * 3);
+  skipTo(ctx, id, 9);
+  const cer = act(ctx, id, { type: "marriage", npcId: "selasi", step: "ceremony" });
+  assert.ok(cer.ok, cer.error);
+  assert.ok(cer.feedback.some((f) => f.text.includes("Customary marriage")));
+  const st = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.ok(st.player.mood.moodlets.some((m) => m.id === "married"));
+  assert.equal(st.relationships.find((r) => r.npcId === "selasi")!.stage, "married");
+  assert.ok(st.player.missions.find((m) => m.id === "family_of_your_own")!.complete);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });

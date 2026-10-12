@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { isMarketDay, marketDayNames } from "../../shared/weekly.ts";
 import { LANGUAGES, languagesOfCity } from "../../shared/identity.ts";
+import { CELEBRATION_BASE, CUSTOMARY_BASE, KNOCKING_COST, KNOCK_TO_CEREMONY_DAYS, PROPOSAL_RING, customFor, partnerHometown } from "../../shared/marriage.ts";
 import { startGigShift } from "./gig.ts";
 import { GOODS, canBuyHere, canSellHere, sellPrice } from "../../shared/trade.ts";
 import { useGame } from "../store.tsx";
@@ -201,6 +202,7 @@ export function TalkSheet({ npcId, world, onClose }: { npcId: string; world: Wor
         {npc.romanceable && !rel?.partner && <button className="btn" disabled={busy} onClick={() => say("ask_out", "Would you go out with me?")}>❤️ Ask out</button>}
         {!unlocked && <button className="btn" disabled={busy} title={npc.favour.reward} onClick={() => say("favour", npc.favour.ask + "?")}>🤝 {npc.favour.ask} {aff < npc.favour.threshold ? `(${npc.favour.threshold}+)` : ""}</button>}
       </div>
+      <MarriagePanel npcId={npcId} />
       {rel && rel.memories.length > 0 && (
         <>
           <h3>{npc.name.split(" ")[0]} remembers</h3>
@@ -474,6 +476,33 @@ function EventCard({ ev, hour }: { ev: { id: string; kind: "funeral" | "wedding"
           <ConfirmButton className="btn primary sm" disabled={busy || !on} ask={ev.kind === "funeral" ? "Go to the funeral?" : "Go to the wedding?"} details={{ time: "About 3 hours", cost: `GH₵${gift || 0} ${ev.kind === "funeral" ? "donation" : "gift"} (people give at least GH₵${ev.gift})`, changes: ev.kind === "funeral" ? "You greet the family, eat, and meet half the neighbourhood: social, fun, food and a little standing." : "Dancing, jollof and photos: a lot of social and fun, a full belly and a little standing.", undo: "The gift is given. You can only go once." }} onConfirm={() => act({ type: "event_attend", eventId: ev.id, gift: Math.round(Number(gift || 0) * 100) })}>{on ? "Go" : `From ${ev.hours[0]}:00`}</ConfirmButton>
         </div>
       )}
+    </div>
+  );
+}
+
+/** The road to marriage with your partner: propose, knock, the ceremony, and an optional celebration. */
+export function MarriagePanel({ npcId }: { npcId: string }) {
+  const { state, act, busy } = useGame();
+  if (!state) return null;
+  const rel = state.relationships.find((r) => r.npcId === npcId);
+  const npc = NPC_BY_ID[npcId];
+  if (!rel?.partner || !npc) return null;
+  const first = npc.name.split(" ")[0];
+  const fallback = DISTRICTS[npc.district].city;
+  const home = partnerHometown(npcId, fallback);
+  const homeName = CITIES[home]?.name ?? home;
+  const c = customFor(npcId, fallback);
+  const col = Math.min(1.3, Math.max(0.7, DISTRICTS[districtsIn(home)[0]]?.costOfLiving ?? 1));
+  const daysLeft = rel.stage === "knocked" ? Math.max(0, rel.stageDay + KNOCK_TO_CEREMONY_DAYS - state.time.day) : 0;
+  const step = !rel.stage ? "propose" : rel.stage === "engaged" ? "knock" : rel.stage === "knocked" ? "ceremony" : !rel.wedded ? "celebrate" : null;
+  return (
+    <div className="card col" style={{ marginTop: 10, gap: 6 }} onClick={(e) => e.stopPropagation()}>
+      <b>💍 {rel.stage === "married" ? `Married to ${first}` : rel.stage ? `Engaged to ${first}` : "The future"}</b>
+      <div className="tiny muted">{first}'s family lives in {homeName}. {rel.stage === "married" ? `${first} lives with you and pays half the rent and bills.` : "Marriage joins two families: the knocking and the ceremony happen there."}</div>
+      {step === "propose" && <ConfirmButton className="btn sm primary" disabled={busy} ask={`Ask ${first} to marry you?`} details={{ where: `In person, wherever ${first} is`, time: "A moment", cost: `GH₵${PROPOSAL_RING} ring`, changes: `You're engaged. Needs closeness 70+ and romance 60+ (now ${Math.round(rel.affinity)} / ${Math.round(rel.romance)}).`, undo: "Not really." }} onConfirm={() => act({ type: "marriage", npcId, step: "propose" })}>Propose</ConfirmButton>}
+      {step === "knock" && <ConfirmButton className="btn sm primary" disabled={busy} ask={`${c.knocking}?`} details={{ where: `${first}'s family house, ${homeName}`, time: "3 hours, between 8 and 6", cost: `GH₵${Math.round(KNOCKING_COST * col)} for drinks and the envelope`, changes: c.knockingText, undo: "The families have met; that stays." }} onConfirm={() => act({ type: "marriage", npcId, step: "knock" })}>{c.knocking}</ConfirmButton>}
+      {step === "ceremony" && <ConfirmButton className="btn sm primary" disabled={busy || daysLeft > 0} ask={`${c.ceremony}?`} details={{ where: `${homeName}, with both families`, time: "About 6 hours, starting 8 to 4", cost: `GH₵${Math.round(CUSTOMARY_BASE * col).toLocaleString()}`, changes: `${c.ceremonyText} ${first} moves in and pays half the rent and bills.`, undo: "You're married." }} onConfirm={() => act({ type: "marriage", npcId, step: "ceremony" })}>{daysLeft > 0 ? `${c.ceremony} in ${daysLeft} day${daysLeft > 1 ? "s" : ""}` : c.ceremony}</ConfirmButton>}
+      {step === "celebrate" && <ConfirmButton className="btn sm" disabled={busy} ask={`${c.celebration}?`} details={{ where: `${homeName}${c.celebration === "Church wedding" ? ", on a Saturday" : ""}`, time: "About 7 hours, starting 9 to 3", cost: `GH₵${Math.round(CELEBRATION_BASE * col).toLocaleString()}`, changes: `${c.celebrationText} Optional: you're already married.`, undo: "No." }} onConfirm={() => act({ type: "marriage", npcId, step: "celebrate" })}>{c.celebration} (optional)</ConfirmButton>}
     </div>
   );
 }

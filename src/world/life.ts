@@ -117,6 +117,12 @@ function crutches(): THREE.Group {
   return g;
 }
 
+/** Height of a little hop over the roadside drain (people step across it, never through it). */
+function hopY(z: number): number {
+  const a = Math.abs(z) - (ROAD_HALF + 0.1);
+  return a > 0 && a < 0.9 ? Math.sin((Math.PI * a) / 0.9) * 0.38 : 0;
+}
+
 export interface NpcActor {
   npc: Npc;
   rig: Person;
@@ -408,6 +414,7 @@ export class CityLife {
           const k = Math.min(1, (1.3 * dt) / dist);
           p.x += dx * k;
           p.z += dz * k;
+          p.y = 0.16 + hopY(p.z);
           n.rig.root.rotation.y = Math.atan2(dx, dz);
         }
         animatePerson(n.rig, dt, 1.3);
@@ -617,6 +624,7 @@ export class CityLife {
           const k = Math.min(1, (sp * dt) / dist);
           p.x += dx * k;
           p.z += dz * k;
+          p.y = 0.16 + hopY(p.z);
           a.rig.root.rotation.y = Math.atan2(dx, dz);
         }
         animatePerson(a.rig, dt, sp);

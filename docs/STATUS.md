@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v18. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v19. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -70,14 +70,13 @@ Acceptance from the brief: each system has a useful start-to-finish path, meanin
 | Property, construction, rentals | ✅ rent → buy land → staged build → live in or rent out → upgrade |
 | Furnishing | ✅ shops → items → comfort, mood and home activities |
 | Transport ownership | ✅ licence → buy → wear, service, insurance, police checks → work-and-pay or gig work → sell |
-| Family & relationships | ✅ family routines, calls, help, visits, chores; friends, dates, partners. ⏳ marriage (knocking ceremony) and household arcs |
+| Family & relationships | ✅ family routines, calls, help, visits, chores; friends, dates, partners; proposal → knocking → customary marriage or nikah in the partner's hometown → shared household (spouse pays half, home in the evenings). ⏳ children, spouse inside the home |
 | Story missions | ✅ eight arcs checked by the server against real state, paid once |
 | Events | ✅ life events, Saturday funerals/weddings, festivals |
 
 ## Next slices, in order
 
 1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner.)*
-2. Relationship arc: engagement, the knocking ceremony and marriage, regionally varied; a shared household.
-3. Regional refinement pass, one region at a time: hand-written characters to replace the generated townsfolk, local reviewers for names, language and customs.
-4. Festival days as 3D events (durbars, processions) like the Saturday funerals.
-5. Learn a language through lessons or time spent in a town.
+2. Regional refinement pass, one region at a time: hand-written characters to replace the generated townsfolk, local reviewers for names, language and customs.
+3. Festival days as 3D events (durbars, processions) like the Saturday funerals.
+4. Learn a language through lessons or time spent in a town.

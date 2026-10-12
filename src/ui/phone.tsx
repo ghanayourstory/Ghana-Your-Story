@@ -1,4 +1,5 @@
 import { BUILD_VERSION } from "../version.ts";
+import { MarriagePanel } from "./sheets.tsx";
 import { LANGUAGES, MAX_LANGUAGES, MAX_PRIORITIES, PRIORITIES } from "../../shared/identity.ts";
 import { gigVehicle, startGigShift } from "./gig.ts";
 import { getCaptions, getReduceMotion, getUiScale, setCaptions, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
@@ -482,6 +483,7 @@ function PeopleApp({ minute }: { minute: number }) {
                 <div style={{ marginTop: 4 }}><b>Dream:</b> {n.goal}</div>
                 <div style={{ marginTop: 4 }}><b>Usually:</b> {n.schedule.map((b) => `${PLACE_BY_ID[b.place].name} ${b.from}:00–${b.to}:00 (${b.days})`).join(" · ")}</div>
                 {met && <div style={{ marginTop: 4 }}><b>Favour:</b> {state.player.unlocks.includes(n.favour.unlock) ? `✅ ${n.favour.reward}` : `"${n.favour.ask}" at ${n.favour.threshold} affinity — ${n.favour.reward}`}</div>}
+                {r?.partner && <MarriagePanel npcId={n.id} />}
                 {r && r.memories.length > 0 && <div style={{ marginTop: 6 }}><b>Memories</b>{r.memories.slice().reverse().map((m, i) => <div key={i} className="tiny muted">• Day {m.day + 1}: {m.text}</div>)}</div>}
               </div>
             )}

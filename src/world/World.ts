@@ -2,6 +2,7 @@
 // city life, atmosphere, interactions, interiors and sound.
 import { powerOff } from "../../shared/power.ts";
 import { familyWhereabouts } from "../../shared/family.ts";
+import { NPC_BY_ID, npcLocation } from "../../shared/people.ts";
 import * as THREE from "three";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
@@ -184,6 +185,8 @@ export class World {
   private weather: Weather = "sunny";
   private rings: THREE.Mesh[] = [];
   private jumpY = 0;
+  /** Horizontal velocity locked in for a hop, so a jump carries you across a drain. */
+  private hopVel: THREE.Vector3 | null = null;
   private jumpYPrev = 0;
   private vy = 0;
   private boom = 13;
@@ -357,6 +360,7 @@ export class World {
     this.updateParked(s);
     this.updateFamily(s);
     this.updateEvents(s);
+    this.updateSpouse();
     if (this.district) this.district.homeLabel.visible = s.player.home.district === this.district.id;
     if (this.life) this.lastNpcHour = -1; // re-sync NPC labels with new tiers
   }
@@ -571,7 +575,43 @@ export class World {
     this.scene.add(group);
   }
 
+  private spouse: { rig: Person; label: THREE.Sprite; key: string } | null = null;
+
+  /** Your husband or wife waits at home in the evenings and on days off (whenever their own schedule doesn't have them out). */
+  private updateSpouse() {
+    const s = this.state, d = this.district;
+    const rel = s?.relationships.find((r) => r.stage === "married");
+    const npc = rel ? NPC_BY_ID[rel.npcId] : undefined;
+    const gd = toGameDate(Math.floor(this.minuteNow));
+    const show = !!(npc && d && s && s.player.home.district === d.id && !this.inside && gd.hour >= 6 && gd.hour < 23 && !npcLocation(npc, gd.weekdayIndex, gd.hour));
+    const key = show ? `${d!.id}:${npc!.id}` : "";
+    if (this.spouse && this.spouse.key === key) return;
+    if (this.spouse) { this.scene.remove(this.spouse.rig.root, this.spouse.label); this.spouse = null; }
+    if (!show || !npc || !d) return;
+    const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: "wax" }, { key: true });
+    const side = Math.sign(d.homeDoor.z) || 1;
+    rig.root.position.set(d.homeDoor.x + 1.4, 0.16, d.homeDoor.z - side * 1.1);
+    rig.root.rotation.y = side > 0 ? Math.PI : 0;
+    const tex = T.label(`${npc.name.split(" ")[0]} 💍`, { bg: "rgba(176,58,98,0.92)" });
+    const label = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
+    const img = tex.image as HTMLCanvasElement;
+    label.scale.set(0.45 * (img.width / img.height), 0.45, 1);
+    label.position.copy(rig.root.position).add(new THREE.Vector3(0, npc.look.height + 0.5, 0));
+    this.scene.add(rig.root, label);
+    this.spouse = { rig, label, key };
+  }
+
   private animateEvents(dt: number, t: number, hour: number) {
+    if (this.spouse) {
+      const p = this.spouse.rig.root.position;
+      const dx = this.pos.x - p.x, dz = this.pos.z - p.z;
+      if (dx * dx + dz * dz < 64) {
+        let dy = Math.atan2(dx, dz) - this.spouse.rig.root.rotation.y;
+        dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+        this.spouse.rig.root.rotation.y += dy * Math.min(1, dt * 3);
+      }
+      animatePerson(this.spouse.rig, dt, 0);
+    }
     if (!this.eventScene) return;
     for (const c of this.eventScene.crowds) {
       const on = hour >= c.hours[0] && hour < c.hours[1];
@@ -1572,8 +1612,20 @@ export class World {
   }
 
   jump() {
-    if (this.inside || this.jumpY > 0.02 || this.frozen) return;
-    this.vy = 3.4; // about 0.6 m clearance: enough to clear a gutter
+    if (this.inside || this.jumpY > 0.02 || this.frozen || this.drive || this.ride) return;
+    this.vy = 3.4; // about 0.6 m clearance and 0.7 s in the air
+    // A jump while moving is a stride across: at least 2.4 m/s, enough to clear a 0.6 m drain from a walk.
+    const sp = Math.hypot(this.vel.x, this.vel.z);
+    if (sp > 0.3) this.hopVel = new THREE.Vector3(this.vel.x, 0, this.vel.z).multiplyScalar(Math.max(sp, 2.4) / sp);
+  }
+
+  /** Is there an open drain just ahead in this direction? */
+  private gutterAhead(dir: THREE.Vector3): boolean {
+    const px = this.pos.x + dir.x * 0.6, pz = this.pos.z + dir.z * 0.6;
+    for (const c of this.district?.colliders ?? []) {
+      if (c.kind === "gutter" && px > c.minX && px < c.maxX && pz > c.minZ - 0.05 && pz < c.maxZ + 0.05) return true;
+    }
+    return false;
   }
 
   private pushOutBox(p: THREE.Vector3, r: number, minX: number, maxX: number, minZ: number, maxZ: number) {
@@ -1594,7 +1646,7 @@ export class World {
       for (const c of this.interior.colliders) this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
       return;
     }
-    const airborne = this.jumpY > 0.18;
+    const airborne = this.jumpY > 0.05 || !!this.hopVel;
     for (const c of this.district?.colliders ?? []) {
       if (c.kind === "gutter" && airborne) continue; // jumping clears the drain
       this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
@@ -1694,12 +1746,17 @@ export class World {
     } else {
       this.vel.multiplyScalar(Math.max(0, 1 - dt * 12));
     }
-    this.pos.addScaledVector(this.vel, dt);
+    // Walking into an open drain: hop across it, the way everyone does.
+    if (!this.inside && !this.hopVel && this.jumpY === 0 && !this.drive && !this.ride) {
+      const sp = Math.hypot(this.vel.x, this.vel.z);
+      if (sp > 0.5 && this.gutterAhead(new THREE.Vector3(this.vel.x / sp, 0, this.vel.z / sp))) this.jump();
+    }
+    this.pos.addScaledVector(this.hopVel ?? this.vel, dt);
     this.resolve(this.pos, 0.32);
     // Jumping.
     this.vy -= 9.8 * dt;
     this.jumpY = Math.max(0, this.jumpY + this.vy * dt);
-    if (this.jumpY === 0) this.vy = 0;
+    if (this.jumpY === 0) { this.vy = 0; this.hopVel = null; }
     const gy = this.groundY(this.pos);
     if (this.player) {
       this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y - this.jumpYPrev, gy, Math.min(1, dt * 14)) + this.jumpY, this.pos.z);
@@ -1772,6 +1829,7 @@ export class World {
         const animate = this.npcHourSeen !== -1 && (gd.hour - this.npcHourSeen + 24) % 24 === 1 && this.npcDistrictSeen === this.district.id;
         this.lastNpcHour = this.npcHourSeen = gd.hour;
         if (this.state) this.updateFamily(this.state);
+        this.updateSpouse();
         this.npcDistrictSeen = this.district.id;
         this.life.syncNpcs(gd.weekdayIndex, gd.hour, this.tiers, animate);
       }
