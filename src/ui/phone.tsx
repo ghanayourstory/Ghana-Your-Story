@@ -307,7 +307,7 @@ function MoneyApp() {
   const m = state.money;
   const minor = Math.round(Number(amt || 0) * 100);
   const rows: [string, number, string?][] = [
-    ["Cash", m.cash], ["Bank savings", m.bank], ["Dollars", m.usdInGhs, usd(m.usd)], ["Treasury bills", m.tbill],
+    ["Cash", m.cash], ["MoMo wallet", m.momo], ["Bank savings", m.bank], ["Stock to sell", m.stock], ["Dollars", m.usdInGhs, usd(m.usd)], ["Treasury bills", m.tbill],
     ["Land", m.land], ["Buildings", m.buildings], ["Businesses", m.businesses], ["Vehicles", m.vehicles],
   ];
   if (m.payroll) rows.push(["Salary owed to you", m.payroll]);
@@ -332,6 +332,21 @@ function MoneyApp() {
             <div className="kv"><span>Credit score</span><b>{state.player.creditScore}</b></div>
           </div>
         </>
+      )}
+      {tab === "transfer" && (
+        <div className="card col" style={{ marginBottom: 10 }}>
+          <b>📱 MoMo wallet · {money(m.momo)}</b>
+          <div className="tiny muted">Pay vendors, rides and food from your phone. Cash-in at any agent is free; cash-out costs 1% (min GH₵0.50); moving between MoMo and the bank is free. Game money only.</div>
+          <div className="row"><input className="input num" inputMode="decimal" value={amt} onChange={(e) => setAmt(e.target.value.replace(/[^\d.]/g, ""))} /><span className="muted">GH₵</span></div>
+          <div className="row">
+            <button className="btn green grow" disabled={busy || minor <= 0} onClick={() => act({ type: "momo_move", from: "cash", to: "momo", amount: minor })}>Cash → MoMo</button>
+            <button className="btn grow" disabled={busy || minor <= 0} onClick={() => act({ type: "momo_move", from: "momo", to: "cash", amount: minor })}>MoMo → Cash</button>
+          </div>
+          <div className="row">
+            <button className="btn grow" disabled={busy || minor <= 0} onClick={() => act({ type: "momo_move", from: "bank", to: "momo", amount: minor })}>Bank → MoMo</button>
+            <button className="btn grow" disabled={busy || minor <= 0} onClick={() => act({ type: "momo_move", from: "momo", to: "bank", amount: minor })}>MoMo → Bank</button>
+          </div>
+        </div>
       )}
       {tab === "transfer" && (
         <div className="card col">

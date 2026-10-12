@@ -52,6 +52,7 @@ export const DAILY_GOALS: Record<string, DailyGoalDef> = {
   business: { id: "business", icon: "🏪", label: "Check on your business", hint: "Collect the till in person.", target: 1, reward: 35, eligible: (c) => c.hasBusiness },
   class: { id: "class", icon: "📚", label: "Attend a class", hint: "Go to your course.", target: 1, reward: 30, eligible: (c) => c.enrolled },
   farm: { id: "farm", icon: "🌱", label: "Work on your farm", hint: "Plant or harvest.", target: 1, reward: 35, eligible: (c) => c.hasFarm },
+  trade: { id: "trade", icon: "🧺", label: "Buy stock at a market and sell it", hint: "Sachet water, oranges or bread sell fast at lorry stations.", target: 1, reward: 25, eligible: always },
   post: { id: "post", icon: "📸", label: "Post on Vibes", hint: "Share something from your day.", target: 1, reward: 15, eligible: always },
 };
 /** Bonus for doing all three. */

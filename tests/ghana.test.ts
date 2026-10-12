@@ -295,6 +295,55 @@ test("today's hustle: three goals that fit your life, rewards once each, one swa
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
 
+test("market hustle: buy at the market, sell at the station for a margin; fruit goes off; you can only carry so much", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 7);
+  const station = PLACES.find((p) => p.district === "kaneshie" && p.kind === "transport")!;
+  assert.equal(act(ctx, id, { type: "trade_buy", placeId: station.id, goodId: "pure_water", qty: 5 }).code, "not_market");
+  const cash0 = bal(ctx, id, "cash");
+  assert.ok(act(ctx, id, { type: "trade_buy", placeId: "kaneshie_market", goodId: "pure_water", qty: 10 }).ok);
+  assert.equal(act(ctx, id, { type: "trade_buy", placeId: "kaneshie_market", goodId: "clothes", qty: 25 }).code, "too_much");
+  assert.ok(act(ctx, id, { type: "trade_buy", placeId: "kaneshie_market", goodId: "oranges", qty: 10 }).ok);
+  // Tomatoes only sell in markets.
+  assert.ok(act(ctx, id, { type: "trade_buy", placeId: "kaneshie_market", goodId: "tomatoes", qty: 1 }).ok);
+  assert.equal(act(ctx, id, { type: "trade_sell", placeId: station.id, goodId: "tomatoes", qty: 1 }).code, "no_buyers");
+  const r = act(ctx, id, { type: "trade_sell", placeId: station.id, goodId: "pure_water", qty: 10 });
+  assert.ok(r.ok, r.error);
+  const w = buildState(ctx, loadPlayer(ctx.db, id)).player;
+  assert.ok(!w.stock.some((s) => s.id === "pure_water"));
+  // Ten bags of water: bought at ~GH₵7, sold at ~GH₵11.
+  assert.ok(bal(ctx, id, "cash") > cash0 - (10 * 9 + 45) * 100 + 10 * 9 * 100);
+  assert.equal(act(ctx, id, { type: "trade_sell", placeId: station.id, goodId: "pure_water", qty: 1 }).code, "no_stock");
+  // Oranges spoil overnight.
+  const before = w.stock.find((s) => s.id === "oranges")!.qty;
+  assert.ok(act(ctx, id, { type: "sleep", hours: 8 }).ok);
+  assert.ok(act(ctx, id, { type: "sleep", hours: 8 }).ok);
+  const after = buildState(ctx, loadPlayer(ctx.db, id)).player.stock.find((s) => s.id === "oranges")?.qty ?? 0;
+  assert.ok(after < before);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("MoMo wallet: cash in free, cash out costs an agent fee, street payments use cash then MoMo", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 9);
+  const cash0 = bal(ctx, id, "cash");
+  assert.ok(act(ctx, id, { type: "momo_move", from: "cash", to: "momo", amount: cash0 }).ok);
+  assert.equal(bal(ctx, id, "cash"), 0);
+  assert.equal(bal(ctx, id, "momo"), cash0);
+  // A trotro fare with no cash in hand comes out of MoMo, not the bank.
+  const bank0 = bal(ctx, id, "bank");
+  assert.ok(act(ctx, id, { type: "travel", to: "osu", mode: "trotro" }).ok);
+  assert.ok(bal(ctx, id, "momo") < cash0);
+  assert.equal(bal(ctx, id, "bank"), bank0);
+  // Cash out 100: 1% agent fee.
+  const m = bal(ctx, id, "momo");
+  assert.ok(act(ctx, id, { type: "momo_move", from: "momo", to: "cash", amount: 10000 }).ok);
+  assert.equal(bal(ctx, id, "cash"), 10000);
+  assert.equal(bal(ctx, id, "momo"), m - 10100);
+  assert.equal(act(ctx, id, { type: "momo_move", from: "cash", to: "bank", amount: 100 }).code, "bad_move");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
 test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {
   const env = makeCtx({ devTools: true });
   const id = newPlayer(env.ctx, "graduate", true);

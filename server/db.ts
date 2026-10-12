@@ -117,6 +117,23 @@ CREATE TABLE IF NOT EXISTS ledger (
 );
 CREATE INDEX IF NOT EXISTS ledger_player ON ledger (player_id, account);
 
+CREATE TABLE IF NOT EXISTS stock (
+  player_id INTEGER NOT NULL,
+  good_id TEXT NOT NULL,
+  qty INTEGER NOT NULL,
+  cost INTEGER NOT NULL,
+  PRIMARY KEY (player_id, good_id)
+);
+
+CREATE TABLE IF NOT EXISTS trade_sales (
+  player_id INTEGER NOT NULL,
+  place_id TEXT NOT NULL,
+  good_id TEXT NOT NULL,
+  day INTEGER NOT NULL,
+  sold INTEGER NOT NULL,
+  PRIMARY KEY (player_id, place_id, good_id, day)
+);
+
 CREATE TABLE IF NOT EXISTS idempotency (
   player_id INTEGER NOT NULL,
   key TEXT NOT NULL,

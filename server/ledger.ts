@@ -15,6 +15,7 @@ export class GameError extends Error {
 export const ACCOUNT_DEFS: Record<string, { currency: Currency; allowNegative: boolean; label: string }> = {
   cash: { currency: "GHS", allowNegative: false, label: "Cash" },
   bank: { currency: "GHS", allowNegative: false, label: "Bank savings" },
+  momo: { currency: "GHS", allowNegative: false, label: "MoMo wallet" },
   usd: { currency: "USD", allowNegative: false, label: "Dollar account" },
   tbill: { currency: "GHS", allowNegative: false, label: "Treasury bills" },
   loan: { currency: "GHS", allowNegative: false, label: "Loan owed" },

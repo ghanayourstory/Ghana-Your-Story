@@ -1,5 +1,6 @@
 // The authoritative game engine. Every state change happens here, inside a
 // single SQL transaction per action, with money moving only through the ledger.
+import { GOODS, canBuyHere, canSellHere, carryCapacity, sellPrice } from "../shared/trade.ts";
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { tx, type Db } from "./db.ts";
@@ -269,30 +270,40 @@ function decay(p: PlayerRow, minutes: number, sleeping: boolean, partnered: bool
 // ---------------------------------------------------------------------------
 // Money helpers
 
-/** Charge cash first, then bank (mobile money). Throws if the total isn't there. */
+/**
+ * Pay from what you have on you: cash first, then your MoMo wallet, then the
+ * bank. App payments (preferBank) go MoMo → bank → cash. Throws if the total
+ * isn't there.
+ */
 function chargeStrict(ctx: Ctx, p: PlayerRow, amount: number, kind: string, memo: string, preferBank = false): Change[] {
   if (amount <= 0) return [];
-  const cash = balance(ctx.db, p.id, "cash");
-  const bank = balance(ctx.db, p.id, "bank");
-  if (cash + bank < amount) throw new GameError("insufficient_funds", `You need ${formatMoney(amount)} but have ${formatMoney(cash + bank)} across cash and bank.`);
-  const first = preferBank ? "bank" : "cash";
-  const second = preferBank ? "cash" : "bank";
-  const firstBal = preferBank ? bank : cash;
-  const a = Math.min(firstBal, amount);
-  const legs: Leg[] = [{ account: first, amount: -a }, { account: second, amount: -(amount - a) }];
+  const order = preferBank ? ["momo", "bank", "cash"] : ["cash", "momo", "bank"];
+  const have = order.map((a) => balance(ctx.db, p.id, a));
+  const total = have.reduce((a, b) => a + b, 0);
+  if (total < amount) throw new GameError("insufficient_funds", `You need ${formatMoney(amount)} but have ${formatMoney(total)} across cash, MoMo and bank.`);
+  let left = amount;
+  const legs: Leg[] = [];
+  order.forEach((account, i) => {
+    const take = Math.min(have[i], left);
+    if (take > 0) legs.push({ account, amount: -take });
+    left -= take;
+  });
   post(ctx.db, p.id, legs, { kind, memo, gameMin: p.game_min, nowMs: ctx.now() });
-  return legs.filter((l) => l.amount).map((l) => ({ k: l.account, d: l.amount }));
+  return legs.map((l) => ({ k: l.account, d: l.amount }));
 }
 
 /** Charge bank then cash, paying as much as possible. Returns the unpaid shortfall. */
 function chargeFlexible(ctx: Ctx, p: PlayerRow, amount: number, kind: string, memo: string): { unpaid: number; changes: Change[] } {
-  const bank = balance(ctx.db, p.id, "bank");
-  const cash = balance(ctx.db, p.id, "cash");
-  const fromBank = Math.min(bank, amount);
-  const fromCash = Math.min(cash, amount - fromBank);
-  const legs: Leg[] = [{ account: "bank", amount: -fromBank }, { account: "cash", amount: -fromCash }].filter((l) => l.amount);
+  // Bills go out by direct debit: bank, then MoMo, then whatever cash you left at home.
+  let left = amount;
+  const legs: Leg[] = [];
+  for (const account of ["bank", "momo", "cash"]) {
+    const take = Math.min(balance(ctx.db, p.id, account), left);
+    if (take > 0) legs.push({ account, amount: -take });
+    left -= take;
+  }
   if (legs.length) post(ctx.db, p.id, legs, { kind, memo, gameMin: p.game_min, nowMs: ctx.now() });
-  return { unpaid: amount - fromBank - fromCash, changes: legs.map((l) => ({ k: l.account, d: l.amount })) };
+  return { unpaid: left, changes: legs.map((l) => ({ k: l.account, d: l.amount })) };
 }
 
 function credit(ctx: Ctx, p: PlayerRow, account: string, amount: number, kind: string, memo: string, idemKey?: string): Change[] {
@@ -447,6 +458,7 @@ function eventMultiplier(db: Db, playerId: number, day: number): number {
 
 /** Daily settlement. Runs once per game day per player (guarded by last_day_processed). */
 function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
+  spoilStock(ctx, p, fb);
   const db = ctx.db;
   const y = day - 1;
   const ydate = toGameDate(y * MINUTES_PER_DAY + 12 * 60);
@@ -823,6 +835,9 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "social_post": return actSocialPost(ctx, p, a, fb);
     case "event_choose": return actEventChoose(ctx, p, a, fb);
     case "daily_swap": return actDailySwap(ctx, p, a, fb);
+    case "trade_buy": return actTradeBuy(ctx, p, a, fb);
+    case "momo_move": return actMomoMove(ctx, p, a, fb);
+    case "trade_sell": return actTradeSell(ctx, p, a, fb);
     case "settings": return actSettings(p, a, fb);
     case "dev_grant": return actDevGrant(ctx, p, a, fb);
     case "dev_skip": return actDevSkip(ctx, p, a, fb);
@@ -1837,6 +1852,7 @@ export function netWorth(db: Db, p: PlayerRow) {
   const day = dayOf(p.game_min);
   const cash = balance(db, p.id, "cash");
   const bank = balance(db, p.id, "bank");
+  const momo = balance(db, p.id, "momo");
   const usd = balance(db, p.id, "usd");
   const tbill = balance(db, p.id, "tbill");
   const loan = balance(db, p.id, "loan");
@@ -1860,8 +1876,9 @@ export function netWorth(db: Db, p: PlayerRow) {
   const goods = db.all<{ price: number }>("SELECT price FROM items WHERE player_id = ?", p.id).reduce((a, i) => a + Math.round(i.price * 0.4), 0);
   const farms = db.all<{ price: number }>("SELECT price FROM farms WHERE player_id = ?", p.id).reduce((a, f) => a + f.price, 0);
   land += farms;
-  const total = cash + bank + usdInGhs + tbill + land + buildings + biz + vehicles + goods + p.payroll_accrued - loan - p.rent_arrears;
-  return { cash, bank, usd, usdInGhs, tbill, loan, land, buildings, businesses: biz, vehicles, goods, payroll: p.payroll_accrued, arrears: p.rent_arrears, total };
+  const stock = db.all<{ cost: number }>("SELECT cost FROM stock WHERE player_id = ?", p.id).reduce((a, r) => a + r.cost, 0);
+  const total = cash + bank + momo + stock + usdInGhs + tbill + land + buildings + biz + vehicles + goods + p.payroll_accrued - loan - p.rent_arrears;
+  return { cash, bank, momo, stock, usd, usdInGhs, tbill, loan, land, buildings, businesses: biz, vehicles, goods, payroll: p.payroll_accrued, arrears: p.rent_arrears, total };
 }
 
 // ---------------------------------------------------------------------------
@@ -1927,6 +1944,7 @@ function dailyHits(a: Action, discovered: boolean): string[] {
     case "course_attend": hits.push("class"); break;
     case "farm_plant": case "farm_harvest": hits.push("farm"); break;
     case "social_post": hits.push("post"); break;
+    case "trade_sell": hits.push("trade"); break;
   }
   if (discovered) hits.push("explore");
   return hits;
@@ -1955,6 +1973,91 @@ function trackDaily(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback, discovered:
     fb.add(`🏆 All of today's goals done${st.streak > 1 ? ` · ${st.streak}-day streak` : ""}.`, money, "goal");
   }
   p.daily = JSON.stringify(st);
+}
+
+// ---------------------------------------------------------------------------
+// Buying and selling (the market hustle)
+
+function stockOf(db: Db, p: PlayerRow) {
+  return db.all<{ good_id: string; qty: number; cost: number }>("SELECT good_id, qty, cost FROM stock WHERE player_id = ? AND qty > 0", p.id);
+}
+
+function actTradeBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const place = requirePlace(p, a.placeId);
+  const g = GOODS[String(a.goodId)];
+  if (!g) throw new GameError("bad_good", "Nobody sells that here.");
+  if (!canBuyHere(place)) throw new GameError("not_market", "You buy stock at a market.");
+  if (!isOpenAt(place.open, toGameDate(p.game_min).hour)) throw new GameError("closed", `${place.name} is closed now.`);
+  const qty = Math.floor(Number(a.qty));
+  if (!Number.isFinite(qty) || qty < 1 || qty > 200) throw new GameError("bad_qty", "Pick how many to buy.");
+  const carrying = stockOf(ctx.db, p).reduce((n, r) => n + r.qty, 0);
+  const cap = carryCapacity(!!ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id));
+  if (carrying + qty > cap) throw new GameError("too_much", `You can carry ${cap} units${cap < 100 ? " on foot (more with a car)" : ""}; you have ${carrying}.`);
+  const cost = minor(priceFor(g.buy, place.district)) * qty;
+  const money = chargeStrict(ctx, p, cost, "trade_buy", `Stock: ${qty} × ${g.name} (${g.unit}) at ${place.name}`);
+  ctx.db.run("INSERT INTO stock (player_id, good_id, qty, cost) VALUES (?, ?, ?, ?) ON CONFLICT(player_id, good_id) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost", p.id, g.id, qty, cost);
+  advance(ctx, p, 15 + Math.ceil(qty / 10) * 5, fb, { quiet: true });
+  applyEffects(p, { energy: -Math.min(10, qty / 4) }, fb, `${g.icon} Bought ${qty} ${g.unit}${qty > 1 ? "s" : ""} of ${g.name.toLowerCase()}.${g.spoil ? " Sell them soon: they won't keep." : ""}`, money);
+  return null;
+}
+
+function actTradeSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const place = requirePlace(p, a.placeId);
+  const g = GOODS[String(a.goodId)];
+  if (!g) throw new GameError("bad_good", "You don't have that.");
+  if (!canSellHere(place, g)) throw new GameError("no_buyers", `Nobody here is buying ${g.name.toLowerCase()}. Try ${g.sellAt.includes("transport") ? "a lorry station or " : ""}a market.`);
+  const gd = toGameDate(p.game_min);
+  if (place.kind === "market" && !isOpenAt(place.open, gd.hour)) throw new GameError("closed", `${place.name} is closed now.`);
+  const row = ctx.db.get<{ qty: number; cost: number }>("SELECT qty, cost FROM stock WHERE player_id = ? AND good_id = ?", p.id, g.id);
+  const qty = Math.floor(Number(a.qty));
+  if (!row || row.qty < 1) throw new GameError("no_stock", `You have no ${g.name.toLowerCase()} to sell.`);
+  if (!Number.isFinite(qty) || qty < 1 || qty > row.qty) throw new GameError("bad_qty", `You have ${row.qty} to sell.`);
+  requireAwake(p, Math.ceil((qty * g.minutesPerUnit) / 20), "hawk all afternoon");
+  const day = dayOf(p.game_min);
+  let sold = ctx.db.get<{ sold: number }>("SELECT sold FROM trade_sales WHERE player_id = ? AND place_id = ? AND good_id = ? AND day = ?", p.id, place.id, g.id, day)?.sold ?? 0;
+  let takings = 0;
+  for (let i = 0; i < qty; i++) takings += minor(sellPrice(g, place.district, gd.hour + gd.min / 60, sold++));
+  const costBasis = Math.round((row.cost * qty) / row.qty);
+  ctx.db.run("UPDATE stock SET qty = qty - ?, cost = cost - ? WHERE player_id = ? AND good_id = ?", qty, costBasis, p.id, g.id);
+  ctx.db.run("INSERT INTO trade_sales (player_id, place_id, good_id, day, sold) VALUES (?, ?, ?, ?, ?) ON CONFLICT(player_id, place_id, good_id, day) DO UPDATE SET sold = excluded.sold", p.id, place.id, g.id, day, sold);
+  advance(ctx, p, qty * g.minutesPerUnit, fb, { quiet: true });
+  const money = credit(ctx, p, "cash", takings, "trade_sale", `Sold ${qty} × ${g.name} at ${place.name}`);
+  const profit = takings - costBasis;
+  applyEffects(p, { energy: -Math.min(25, (qty * g.minutesPerUnit) / 12), social: Math.min(8, qty / 3), business: Math.min(1, qty / 40) }, fb,
+    `${g.icon} Sold ${qty} ${g.name.toLowerCase()} at ${place.name}: ${formatMoney(takings)} in, ${profit >= 0 ? `${formatMoney(profit)} profit` : `${formatMoney(-profit)} loss`} after what you paid.${sold > g.demand ? " Buyers here are getting scarce today." : ""}`, money);
+  return null;
+}
+
+/** Perishable stock goes off overnight. */
+function spoilStock(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  for (const r of stockOf(ctx.db, p)) {
+    const g = GOODS[r.good_id];
+    if (!g?.spoil) continue;
+    const lost = Math.min(r.qty, Math.max(1, Math.round(r.qty * g.spoil)));
+    const costLost = Math.round((r.cost * lost) / r.qty);
+    ctx.db.run("UPDATE stock SET qty = qty - ?, cost = cost - ? WHERE player_id = ? AND good_id = ?", lost, costLost, p.id, r.good_id);
+    fb.add(`${g.icon} ${lost} ${g.unit}${lost > 1 ? "s" : ""} of ${g.name.toLowerCase()} went off overnight.`, [], "bad");
+  }
+  ctx.db.run("DELETE FROM trade_sales WHERE player_id = ? AND day < ?", p.id, dayOf(p.game_min) - 1);
+}
+
+/** Fictional MoMo fees: cash-in and wallet↔bank are free; cashing out at an agent costs 1% (min GH₵0.50). */
+export function momoFee(from: string, to: string, amount: number) {
+  return from === "momo" && to === "cash" ? Math.max(50, Math.round(amount * 0.01)) : 0;
+}
+
+function actMomoMove(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const from = String(a.from), to = String(a.to);
+  const ok = [["cash", "momo"], ["momo", "cash"], ["bank", "momo"], ["momo", "bank"]].some(([f, t]) => f === from && t === to);
+  if (!ok) throw new GameError("bad_move", "Move money between cash, MoMo and bank.");
+  const amount = requireAmount(a.amount);
+  const fee = momoFee(from, to, amount);
+  if (balance(ctx.db, p.id, from) < amount + fee) throw new GameError("insufficient_funds", `Not enough in your ${from === "momo" ? "MoMo wallet" : from}${fee ? ` (with the ${formatMoney(fee)} agent fee)` : ""}.`);
+  const legs: Leg[] = [{ account: from, amount: -(amount + fee) }, { account: to, amount }];
+  post(ctx.db, p.id, legs, { kind: "momo", memo: from === "cash" ? "Cash-in at a MoMo agent" : to === "cash" ? `Cash-out at a MoMo agent${fee ? ` (fee ${formatMoney(fee)})` : ""}` : from === "bank" ? "Bank to MoMo" : "MoMo to bank", gameMin: p.game_min, nowMs: ctx.now() });
+  if (from === "cash" || to === "cash") advance(ctx, p, 5, fb, { quiet: true });
+  fb.add(`📱 ${formatMoney(amount)} ${from === "cash" ? "cashed in to MoMo" : to === "cash" ? "cashed out" : from === "bank" ? "moved from bank to MoMo" : "moved from MoMo to bank"}${fee ? ` · agent fee ${formatMoney(fee)}` : ""}.`, legs.map((l) => ({ k: l.account, d: l.amount })), "info");
+  return null;
 }
 
 function actSettings(p: PlayerRow, a: Action, fb: Feedback) {
@@ -2099,6 +2202,9 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       mood: moodFor(db, p),
       daily: dailyView(ctx, p),
       settings: { needsPace: p.needs_pace },
+      stock: stockOf(db, p).map((r) => ({ id: r.good_id, qty: r.qty, avgCost: Math.round(r.cost / r.qty) })),
+      carryCap: carryCapacity(!!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)),
+      tradeSold: Object.fromEntries(db.all<{ place_id: string; good_id: string; sold: number }>("SELECT place_id, good_id, sold FROM trade_sales WHERE player_id = ? AND day = ?", p.id, dayOf(p.game_min)).map((r) => [`${r.place_id}:${r.good_id}`, r.sold])),
       skills: { work: round1(p.work), fitness: round1(p.fitness), charisma: round1(p.charisma), business: round1(p.business) },
       reputation: round1(p.reputation), creditScore: p.credit_score,
       job: p.job_id ? { id: p.job_id, rank: p.job_rank, rankTitle: RANK_TITLES[p.job_rank], shifts: p.job_shifts, nextRankAt: p.job_rank < MAX_RANK ? SHIFTS_PER_RANK * (p.job_rank + 1) : null, payPerShift: minor(rankPay(JOBS[p.job_id].pay, p.job_rank)) } : null,

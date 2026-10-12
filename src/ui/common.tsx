@@ -19,6 +19,7 @@ const KEY_LABEL: Record<string, [string, string]> = {
   reputation: ["⭐", "Standing"],
   cash: ["💵", "Cash"],
   bank: ["🏦", "Bank"],
+  momo: ["📱", "MoMo"],
   usd: ["💲", "Dollars"],
   tbill: ["📜", "T-bills"],
   loan: ["🧾", "Loan"],

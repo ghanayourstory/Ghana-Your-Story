@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { GOODS, canBuyHere, canSellHere, sellPrice } from "../../shared/trade.ts";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, EffectsPreview, Sheet, initials, money } from "./common.tsx";
 import { CITIES } from "../../shared/cities.ts";
@@ -45,6 +46,8 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
           </div>
         );
       })}
+
+      <TradePanel placeId={p.id} hour={gd.hour + gd.min / 60} open={open} />
 
       {p.services.length > 0 && <h3>What you can do</h3>}
       {p.services.map((sid) => {
@@ -382,5 +385,59 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
       {!focus && <HomeGoods />}
       <button className="btn ghost block" style={{ marginTop: 12 }} onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
     </Sheet>
+  );
+}
+
+/** Buy stock at markets; sell it where buyers are. Shows cost, time and margin before you commit. */
+function TradePanel({ placeId, hour, open }: { placeId: string; hour: number; open: boolean }) {
+  const { state, act, busy } = useGame();
+  const [qty, setQty] = useState(5);
+  const p = PLACE_BY_ID[placeId];
+  if (!state || !p) return null;
+  const st = state.player;
+  const carrying = st.stock.reduce((n, x) => n + x.qty, 0);
+  const buyHere = canBuyHere(p);
+  const sellable = st.stock.filter((x) => GOODS[x.id] && canSellHere(p, GOODS[x.id]));
+  if (!buyHere && !sellable.length) return null;
+  return (
+    <>
+      <h3>🧺 {buyHere ? "Buy stock to sell" : "Sell your stock"}</h3>
+      <div className="tiny muted" style={{ marginBottom: 6 }}>Carrying {carrying}/{st.carryCap}. {buyHere ? "Sell at lorry stations and markets; busy hours (6–9, 12–2, 4:30–7:30) pay more." : ""}</div>
+      {buyHere && (
+        <>
+          <div className="seg" style={{ marginBottom: 6 }}>{[1, 5, 10, 20].map((n) => <button key={n} className={qty === n ? "on" : ""} onClick={() => setQty(n)}>×{n}</button>)}</div>
+          {Object.values(GOODS).map((g) => {
+            const price = priceFor(g.buy, p.district);
+            return (
+              <div className="svc" key={g.id}>
+                <span className="goal-icon">{g.icon}</span>
+                <div className="grow">
+                  <div className="bold">{g.name} <span className="tiny muted">per {g.unit}</span></div>
+                  <div className="tiny muted">Buy {money(price * 100)} · sells for about {money(g.sell * 100)} at {g.sellAt.includes("transport") ? "stations & markets" : "markets"}{g.spoil ? ` · goes off (${Math.round(g.spoil * 100)}% a night)` : " · keeps"}</div>
+                </div>
+                <button className="btn primary sm" disabled={busy || !open || carrying + qty > st.carryCap} onClick={() => act({ type: "trade_buy", placeId: p.id, goodId: g.id, qty })}>Buy {qty} · {money(price * qty * 100)}</button>
+              </div>
+            );
+          })}
+        </>
+      )}
+      {sellable.map((x) => {
+        const g = GOODS[x.id];
+        const sold = st.tradeSold[`${p.id}:${g.id}`] ?? 0;
+        const now = sellPrice(g, p.district, hour, sold);
+        const n = Math.min(x.qty, qty);
+        return (
+          <div className="svc" key={x.id}>
+            <span className="goal-icon">{g.icon}</span>
+            <div className="grow">
+              <div className="bold">Sell {g.name.toLowerCase()} · you have {x.qty}</div>
+              <div className="tiny muted">About {money(now * 100)} each here now (you paid {money(x.avgCost)}) · {Math.round(n * g.minutesPerUnit)} min for {n}{sold > g.demand ? " · buyers getting scarce" : ""}</div>
+            </div>
+            <button className="btn sm" disabled={busy || (p.kind === "market" && !open)} onClick={() => act({ type: "trade_sell", placeId: p.id, goodId: g.id, qty: n })}>Sell {n}</button>
+            {x.qty > n && <button className="btn sm ghost" disabled={busy || (p.kind === "market" && !open)} onClick={() => act({ type: "trade_sell", placeId: p.id, goodId: g.id, qty: x.qty })}>All</button>}
+          </div>
+        );
+      })}
+    </>
   );
 }
