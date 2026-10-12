@@ -198,7 +198,8 @@ export const SERVICES: Record<string, Service> = {
   clinic: { id: "clinic", name: "Doctor's consultation", verb: "See a doctor", cost: 150, minutes: 90, effects: { health: 30 } },
   pharmacy: { id: "pharmacy", name: "Vitamins & ORS", verb: "Buy medicine", cost: 35, minutes: 10, effects: { health: 8 } },
   haircut: { id: "haircut", name: "Fresh cut", verb: "Get a haircut", cost: 40, minutes: 40, effects: { social: 6, charisma: 1, reputation: 1 }, hours: [8, 21] },
-  church: { id: "church", name: "Service & fellowship", verb: "Attend service", cost: 10, minutes: 120, effects: { social: 12, reputation: 2, energy: -4 } },
+  church: { id: "church", name: "Midweek fellowship", verb: "Attend fellowship", cost: 5, minutes: 90, effects: { social: 10, reputation: 1, energy: -3 } },
+  sunday_service: { id: "sunday_service", name: "Sunday service", verb: "Go to church", cost: 10, minutes: 180, effects: { social: 20, fun: 10, reputation: 2, energy: -6 }, hours: [7, 12], days: [0] },
   nap: { id: "nap", name: "Nap", verb: "Take a nap", cost: 0, minutes: 120, effects: { energy: 22, hunger: -6 } },
   sleep: { id: "sleep", name: "Sleep", verb: "Sleep 8 hours", cost: 0, minutes: 480, effects: { energy: 70, hunger: -18, health: 4 } },
   course: { id: "course", name: "Evening course", verb: "Take a class", cost: 120, minutes: 180, effects: { energy: -18, work: 2, business: 1 }, hours: [17, 21] },
@@ -356,6 +357,9 @@ for (const p of PLACES) {
 }
 PLACES.push(...REGIONAL_PLACES);
 Object.assign(JOBS, REGIONAL_JOBS);
+
+// Every church holds its Sunday service.
+for (const p of PLACES) if (p.kind === "church" && !p.services.includes("sunday_service")) p.services.unshift("sunday_service");
 
 // Going out is fun as well as social: anything sociable lifts Fun too.
 for (const s of Object.values(SERVICES)) if (!s.effects.fun && (s.effects.social ?? 0) >= 10) s.effects.fun = Math.round((s.effects.social ?? 0) * 1.2);

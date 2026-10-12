@@ -123,6 +123,10 @@ export interface NpcActor {
   placeId: string;
   home: THREE.Vector3;
   label: THREE.Sprite;
+  /** Waypoints while commuting (walking to work, home, or the trotro stop). */
+  path: THREE.Vector3[];
+  /** Walking off to catch transport; removed when the path ends. */
+  leaving?: boolean;
 }
 
 export class CityLife {
@@ -291,7 +295,7 @@ export class CityLife {
   }
 
   /** Update NPC characters to match their routines at this hour. */
-  syncNpcs(weekday: number, hour: number, tiers: Map<string, string>) {
+  syncNpcs(weekday: number, hour: number, tiers: Map<string, string>, animate = false) {
     const present = new Set<string>();
     for (const npc of NPCS) {
       const where = npcLocation(npc, weekday, hour);
@@ -300,6 +304,16 @@ export class CityLife {
       const door = this.d.placeDoors.get(where);
       if (!door) continue;
       let a = this.npcs.get(npc.id);
+      const off0 = (NPCS.indexOf(npc) % 3 - 1) * 1.6;
+      const dest = door.clone().add(new THREE.Vector3(off0 + 1.2, 0.16, door.z > 0 ? -0.6 : 0.6));
+      if (a && a.placeId !== where && animate) {
+        // Walk from the old spot to the new one along the pavement.
+        a.placeId = where;
+        a.leaving = false;
+        a.path = this.route(a.rig.root.position, dest);
+        a.home = dest;
+        continue;
+      }
       if (!a || a.placeId !== where) {
         if (a) this.group.remove(a.rig.root, a.label);
         const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: npc.id === "esi" || npc.id === "nii" ? "wax" : npc.id === "selasi" ? "kente" : "plain" }, { key: true });
@@ -312,16 +326,49 @@ export class CityLife {
         lbl.scale.set(0.5 * (img.width / img.height), 0.5, 1);
         lbl.position.copy(home).add(new THREE.Vector3(0, npc.look.height + 0.55, 0));
         this.group.add(rig.root, lbl);
-        a = { npc, rig, placeId: where, home, label: lbl };
+        a = { npc, rig, placeId: where, home, label: lbl, path: [] };
         this.npcs.set(npc.id, a);
+        if (animate) {
+          // Arriving for the day: step off at the stop (or walk in from the end of the street).
+          const from = this.arrivalPoint(home);
+          rig.root.position.copy(from);
+          a.path = this.route(from, home);
+        }
       }
     }
     for (const [id, a] of this.npcs) {
-      if (!present.has(id)) {
+      if (!present.has(id) && animate && !a.leaving) {
+        // Off home (or to work elsewhere): walk to the stop and go.
+        a.leaving = true;
+        a.path = this.route(a.rig.root.position, this.arrivalPoint(a.rig.root.position));
+        continue;
+      }
+      if (!present.has(id) && !a.leaving) {
         this.group.remove(a.rig.root, a.label);
         this.npcs.delete(id);
       }
     }
+  }
+
+  /** Nearest trotro/taxi stop, else the end of the street, on the pavement. */
+  private arrivalPoint(near: THREE.Vector3): THREE.Vector3 {
+    const lane = (Math.sign(near.z) || 1) * (WALK_IN + 1.6);
+    let x = near.x < 0 ? -EXTENT_X + 4 : EXTENT_X - 4;
+    for (const sx of this.stops) if (Math.abs(sx - near.x) < Math.abs(x - near.x)) x = sx;
+    return new THREE.Vector3(x + 1.5, 0.16, lane);
+  }
+
+  /** Pavement route between two street-side spots, crossing at the junction if needed. */
+  private route(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3[] {
+    const la = (Math.sign(a.z) || 1) * (WALK_IN + 1.6);
+    const lb = (Math.sign(b.z) || 1) * (WALK_IN + 1.6);
+    const pts = [new THREE.Vector3(a.x, 0.16, la)];
+    if (la !== lb) {
+      const cx = (a.x + b.x) / 2 < 0 ? -(CROSS_HALF + 2) : CROSS_HALF + 2;
+      pts.push(new THREE.Vector3(cx, 0.16, la), new THREE.Vector3(cx, 0.16, lb));
+    }
+    pts.push(new THREE.Vector3(b.x, 0.16, lb), b.clone());
+    return pts;
   }
 
   update(dt: number, t: number, player: THREE.Vector3, night: boolean, camera: THREE.Camera) {
@@ -482,7 +529,29 @@ export class CityLife {
     }
 
     // Named characters: idle, face the player when close.
-    for (const a of this.npcs.values()) {
+    for (const [id, a] of this.npcs) {
+      if (a.path.length) {
+        const p = a.rig.root.position, tgt = a.path[0];
+        const dx = tgt.x - p.x, dz = tgt.z - p.z, dist = Math.hypot(dx, dz);
+        const sp = 1.35;
+        if (dist < 0.15) {
+          a.path.shift();
+          if (!a.path.length && a.leaving) {
+            this.group.remove(a.rig.root, a.label);
+            this.npcs.delete(id);
+            continue;
+          }
+        } else {
+          const k = Math.min(1, (sp * dt) / dist);
+          p.x += dx * k;
+          p.z += dz * k;
+          a.rig.root.rotation.y = Math.atan2(dx, dz);
+        }
+        animatePerson(a.rig, dt, sp);
+        a.label.position.set(p.x, a.npc.look.height + 0.71, p.z);
+        a.label.visible = Math.hypot(player.x - p.x, player.z - p.z) < 30;
+        continue;
+      }
       const dx = player.x - a.home.x, dz = player.z - a.home.z;
       const dist = Math.hypot(dx, dz);
       const targetYaw = dist < 6 ? Math.atan2(dx, dz) : a.home.z > 0 ? Math.PI : 0;

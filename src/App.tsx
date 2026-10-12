@@ -382,6 +382,10 @@ function Game() {
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>⚫💍 <b>Saturdays:</b> funerals and weddings in town. Canopies go up, guests come in black and red or kente. Go along with a donation or gift (Today card, or the venue). Social, fun, food, and a little standing if you give well.</div>
+              <div>⛪ <b>Weekly rhythm:</b> Sunday service at every church (Friday Jumu'ah at the mosque), with a Fellowship mood. Each market has two market days: stock 8% cheaper, twice the buyers.</div>
+              <div>⚡ <b>Prepaid light:</b> electricity is now prepaid units (SikaBank → Power). Units drop each day with what you plug in; when they run out the house goes dark until you top up. Water stays on the monthly bill.</div>
+              <div>🚶 <b>People commute:</b> named people now walk to work from the trotro stop in the morning, cross to their next place, and walk off home in the evening.</div>
               <div>🚗 <b>Drive for the app:</b> ride-app and delivery shifts are real now. Tap "Start driving", follow the green beacon to pick up, the yellow one to drop off. Pay per trip, fuel comes off, tips sometimes.</div>
               <div>🤒 <b>Feeling ill:</b> malaria in the rains (sleep under a net), flu in the Harmattan, a running stomach if hygiene slips. The clinic treats malaria; the pharmacy handles the rest.</div>
               <div>🚦 <b>Dumsor at the junction:</b> when the power goes, the traffic lights die and a warden in a reflective vest waves traffic through.</div>

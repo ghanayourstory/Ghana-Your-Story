@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { isMarketDay, marketDayNames } from "../../shared/weekly.ts";
 import { startGigShift } from "./gig.ts";
 import { GOODS, canBuyHere, canSellHere, sellPrice } from "../../shared/trade.ts";
 import { useGame } from "../store.tsx";
@@ -48,6 +49,8 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
         );
       })}
 
+      {p.kind === "market" && <div className={`notice ${isMarketDay(p.id, state.time.day) ? "ok" : ""}`} style={{ marginTop: 10 }}>🧺 {isMarketDay(p.id, state.time.day) ? "It's market day: stock is 8% cheaper and there are twice the buyers." : `Market days here: ${marketDayNames(p.id)}.`}</div>}
+      {state.player.events.filter((e) => e.placeId === p.id).map((e) => <EventCard key={e.id} ev={e} hour={gd.hour} />)}
       <TradePanel placeId={p.id} hour={gd.hour + gd.min / 60} open={open} />
 
       {p.services.length > 0 && <h3>What you can do</h3>}
@@ -436,7 +439,7 @@ function TradePanel({ placeId, hour, open }: { placeId: string; hour: number; op
       {sellable.map((x) => {
         const g = GOODS[x.id];
         const sold = st.tradeSold[`${p.id}:${g.id}`] ?? 0;
-        const now = sellPrice(g, p.district, hour, sold);
+        const now = sellPrice(g, p.district, hour, sold, p.kind === "market" && isMarketDay(p.id, state.time.day));
         const n = Math.min(x.qty, qty);
         return (
           <div className="svc" key={x.id}>
@@ -451,5 +454,24 @@ function TradePanel({ placeId, hour, open }: { placeId: string; hour: number; op
         );
       })}
     </>
+  );
+}
+
+/** A funeral or wedding happening here today. */
+function EventCard({ ev, hour }: { ev: { id: string; kind: "funeral" | "wedding"; title: string; host: string; hours: [number, number]; gift: number; blurb: string; attended: boolean }; hour: number }) {
+  const { act, busy } = useGame();
+  const [gift, setGift] = useState(String(ev.gift));
+  const on = hour >= ev.hours[0] && hour < ev.hours[1];
+  return (
+    <div className="card col" style={{ marginTop: 10, gap: 6 }}>
+      <b>{ev.kind === "funeral" ? "⚫🔴" : "💍"} {ev.title}</b>
+      <div className="tiny muted">Hosted by {ev.host} · {ev.hours[0]}:00–{ev.hours[1]}:00 · {ev.blurb}</div>
+      {ev.attended ? <span className="pill green">You went</span> : (
+        <div className="row" style={{ gap: 6 }}>
+          <input className="input num" style={{ width: 90 }} inputMode="decimal" value={gift} onChange={(e) => setGift(e.target.value.replace(/[^\d.]/g, ""))} />
+          <ConfirmButton className="btn primary sm" disabled={busy || !on} ask={ev.kind === "funeral" ? "Go to the funeral?" : "Go to the wedding?"} details={{ time: "About 3 hours", cost: `GH₵${gift || 0} ${ev.kind === "funeral" ? "donation" : "gift"} (people give at least GH₵${ev.gift})`, changes: ev.kind === "funeral" ? "You greet the family, eat, and meet half the neighbourhood: social, fun, food and a little standing." : "Dancing, jollof and photos: a lot of social and fun, a full belly and a little standing.", undo: "The gift is given. You can only go once." }} onConfirm={() => act({ type: "event_attend", eventId: ev.id, gift: Math.round(Number(gift || 0) * 100) })}>{on ? "Go" : `From ${ev.hours[0]}:00`}</ConfirmButton>
+        </div>
+      )}
+    </div>
   );
 }

@@ -46,11 +46,11 @@ export function rushHour(hour: number) {
 }
 
 /** Street price for the next unit here, now, after `soldToday` units at this spot. */
-export function sellPrice(g: Good, district: DistrictId, hour: number, soldToday: number): number {
+export function sellPrice(g: Good, district: DistrictId, hour: number, soldToday: number, marketDay = false): number {
   const d = DISTRICTS[district];
   const area = 1 + Math.max(0, d.prestige) / 200; // nicer areas pay a little more
   const rush = rushHour(hour) ? 1.12 : hour >= 21 || hour < 5 ? 0.8 : 1;
-  const sag = Math.max(0.55, 1 - Math.max(0, soldToday - g.demand) * 0.04);
+  const sag = Math.max(0.55, 1 - Math.max(0, soldToday - g.demand * (marketDay ? 2 : 1)) * 0.04);
   return Math.round(g.sell * area * rush * sag * 100) / 100;
 }
 

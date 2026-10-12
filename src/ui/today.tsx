@@ -42,13 +42,19 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
           <span>{dumsor ? "🕯️" : "💡"}</span>
           <div className="grow">
             <b>{dumsor ? `Dumsor in ${DISTRICTS[p.home.district]?.name ?? "your area"}: lights off ${fmtHour(dumsor[0])}–${fmtHour(dumsor[1])}` : "Power should stay on at home today"}</b>
-            <div className="tiny muted">Load-shedding group {GROUP_NAME[powerGroup(p.home.district)]}.{dumsor ? (p.generator ? " Your generator will keep the TV on (fuel extra)." : " No TV or laptop at home then; a generator from Melcom helps.") : ""}</div>
+            <div className="tiny muted">Prepaid meter: {p.power.units} kWh, about {Math.floor(p.power.units / Math.max(0.1, p.power.perDay))} days{p.power.units <= p.power.perDay * 2 ? " (top up soon: Phone → SikaBank → Power)" : ""}. Load-shedding group {GROUP_NAME[powerGroup(p.home.district)]}.{dumsor ? (p.generator ? " Your generator will keep the TV on (fuel extra)." : " No TV or laptop at home then; a generator from Melcom helps.") : ""}</div>
           </div>
         </div>
         <div className="today-row">
           <span>💵</span>
           <div className="grow"><b>{money(state.money.cash)} cash · {money(state.money.bank)} in the bank</b><div className="tiny muted">Bills this month about {money(state.money.monthlyExpenses)}.</div></div>
         </div>
+        {(p.events.length ? p.events : p.nextEvents).slice(0, 2).map((e) => (
+          <div className="today-row" key={e.id}>
+            <span>{e.kind === "funeral" ? "⚫" : "💍"}</span>
+            <div className="grow"><b>{p.events.length ? "Today" : "Saturday"}: {e.title}</b><div className="tiny muted">At {PLACE_BY_ID[e.placeId]?.name}, {DISTRICTS[e.district]?.name} · {e.hours[0]}:00–{e.hours[1]}:00 · everyone's welcome; bring {e.kind === "funeral" ? "a donation" : "a gift"} (GH₵{e.gift}+).</div></div>
+          </div>
+        ))}
         {p.illness && (
           <div className="today-row">
             <span>🤒</span>

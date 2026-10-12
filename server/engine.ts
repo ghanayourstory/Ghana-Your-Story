@@ -1,5 +1,6 @@
 // The authoritative game engine. Every state change happens here, inside a
 // single SQL transaction per action, with money moving only through the ledger.
+import { isMarketDay, townEvents, weekdayOf } from "../shared/weekly.ts";
 import { fmtHour, outageWindow, powerOff } from "../shared/power.ts";
 import { mulberry32 } from "../shared/rng.ts";
 import { ROLE_LABEL, makeFamily, requestFor, type FamilyRequest, type FamilyRole } from "../shared/family.ts";
@@ -70,6 +71,9 @@ export interface PlayerRow {
   last_police_min: number;
   last_gig_day: number;
   illness: string;
+  power_units: number;
+  worship_day: number;
+  events_attended: string;
   ill_day: number;
   reputation: number;
   work: number;
@@ -130,11 +134,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?, daily=?, needs_pace=?, hometown=?, helped_day=?, last_police_min=?, last_gig_day=?, illness=?, ill_day=?, power_units=?, worship_day=?, events_attended=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder, p.daily, p.needs_pace, p.hometown, p.helped_day, p.last_police_min, p.last_gig_day, p.illness, p.ill_day, p.power_units, p.worship_day, p.events_attended,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -475,6 +479,13 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   spoilStock(ctx, p, fb);
   familyDay(ctx, p, day, fb);
   illnessDay(ctx, p, day, fb);
+  // The prepaid meter ticks down.
+  if (p.power_units > 0) {
+    const use = powerProfile(ctx.db, p).kwhPerDay;
+    p.power_units = Math.max(0, Math.round((p.power_units - use) * 10) / 10);
+    if (p.power_units <= 0) fb.add("🔌 Your prepaid units ran out overnight. Top up (Phone → SikaBank → Power) or it's candles tonight.", [], "bad");
+    else if (p.power_units < use * 2) fb.add(`🔌 Prepaid units low: ${p.power_units} kWh left (about ${Math.max(1, Math.floor(p.power_units / Math.max(0.1, use)))} day${p.power_units < use * 2 ? "" : "s"}).`, [], "info");
+  }
   const db = ctx.db;
   const y = day - 1;
   const ydate = toGameDate(y * MINUTES_PER_DAY + 12 * 60);
@@ -622,23 +633,20 @@ function monthlyBills(ctx: Ctx, p: PlayerRow, fb: Feedback, monthName: string) {
       }
     }
   }
-  const owned = ownedItems(db, p).map((i) => i.item_id);
-  const POWER_DRAW: Record<string, number> = { split_ac: 380, fridge: 90, deep_freezer: 85, smart_tv65: 35, washing_machine: 35, standing_cooker: 0, tv32: 15, ceiling_fan: 20, standing_fan: 12 };
-  let power = owned.reduce((a, i) => a + (POWER_DRAW[i] ?? 0), 0);
-  if (owned.includes("solar_inverter")) power *= 0.35;
-  const baseUtil = p.home_kind === "rental" ? RENTALS[p.home_ref].utilities : 150 * baseComfort(db, p);
-  const utilities = minor(baseUtil * (owned.includes("solar_inverter") ? 0.6 : 1) + power);
+  // Electricity is prepaid (units bought separately); this is water and refuse.
+  const prof = powerProfile(db, p);
+  const utilities = minor(prof.waterMonthly);
   // Personal vehicles: insurance, roadworthy, servicing.
   const running = db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id)
     .reduce((a, v) => a + Math.max(20, Math.round((VEHICLES[v.type]?.price ?? 0) * 0.0018)), 0);
   if (running) items.push("vehicle costs");
   const bills = utilities + minor(PHONE_DATA_MONTHLY) + minor(running);
-  const ub = chargeFlexible(ctx, p, bills, "bills", `${monthName} ECG, water & phone data${running ? ", vehicle insurance & servicing" : ""}`);
+  const ub = chargeFlexible(ctx, p, bills, "bills", `${monthName} water, refuse & phone data${running ? ", vehicle insurance & servicing" : ""}`);
   total += bills - ub.unpaid;
   items.push("utilities", "data");
   if (ub.unpaid > 0) {
     applyEffects(p, { social: -4, health: -3 }, null);
-    fb.add("💡 ECG cut your power for unpaid bills.", [], "bad");
+    fb.add("🚰 The water bill went unpaid; the landlord is asking.", [], "bad");
   }
   const loan = balance(db, p.id, "loan");
   if (loan > 0) {
@@ -858,6 +866,8 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "police_check": return actPoliceCheck(ctx, p, a, fb);
     case "road_test": return actRoadTest(ctx, p, a, fb);
     case "gig_shift": return actGigShift(ctx, p, a, fb);
+    case "buy_power": return actBuyPower(ctx, p, a, fb);
+    case "event_attend": return actEventAttend(ctx, p, a, fb);
     case "family_send": return actFamilySend(ctx, p, a, fb);
     case "family_visit": return actFamilyVisit(ctx, p, a, fb);
     case "trade_sell": return actTradeSell(ctx, p, a, fb);
@@ -907,6 +917,7 @@ function actService(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const money = chargeStrict(ctx, p, cost, "spend", `${s.name} at ${place.name}`);
   advance(ctx, p, s.minutes, fb, { quiet: true, sleeping: sid === "lodge" });
   applyEffects(p, s.effects, fb, s.site ? `Day trip: ${s.name}` : s.festival ? `🎉 ${s.name}` : `${s.verb} at ${place.name}`, money);
+  if (["sunday_service", "church", "jumah", "mosque"].includes(sid)) p.worship_day = dayOf(p.game_min);
   if (p.illness && (sid === "clinic" || (sid === "pharmacy" && p.illness !== "malaria"))) {
     fb.add(sid === "clinic" ? (p.illness === "malaria" ? "🩺 The test is positive for malaria. The doctor prescribes a full antimalarial course: you'll feel better by tomorrow. Sleep under a net." : "🩺 The doctor checks you over and sends you home with medicine. You're on the mend.") : p.illness === "flu" ? "💊 Paracetamol, vitamin C and hot water with lemon. The flu loosens its grip." : "💊 ORS sachets and rest. Your stomach settles.", [], "good");
     p.illness = "";
@@ -1673,16 +1684,74 @@ function actHomeActivity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if ((act.effects.energy ?? 0) < -5) requireAwake(p, 10, act.verb.toLowerCase());
   // Dumsor: screens need power. A generator keeps them going, for the price of fuel.
   let genFuel = 0;
-  if (POWERED.includes(act.id) && powerOff(p.district, p.game_min)) {
+  if (POWERED.includes(act.id) && homeDark(ctx.db, p)) {
     if (!hasGenerator(ctx.db, p)) {
-      const w = outageWindow(p.district, dayOf(p.game_min))!;
-      throw new GameError("dumsor", `Lights off (dumsor) until ${fmtHour(w[1])}. A generator would keep the TV on.`);
+      const w = outageWindow(p.district, dayOf(p.game_min));
+      if (p.power_units <= 0 && !powerOff(p.district, p.game_min)) throw new GameError("no_units", "Your prepaid meter is empty. Top up units (Phone → SikaBank → Power).");
+      throw new GameError("dumsor", `Lights off (dumsor) until ${fmtHour(w ? w[1] : 24)}. A generator would keep the TV on.`);
     }
     genFuel = minor(Math.max(5, Math.round(act.minutes / 60) * 8));
   }
   const money = act.cost || genFuel ? chargeStrict(ctx, p, minor(act.cost) + genFuel, "spend", `${act.label}${genFuel ? " (generator fuel)" : ""}`) : [];
   advance(ctx, p, act.minutes, fb, { quiet: true });
   applyEffects(p, act.effects, fb, `${act.label}. ${act.note(spec)}${genFuel ? " The generator roars outside." : ""}`, money);
+  return null;
+}
+
+/** Go to a Saturday funeral or wedding in town: give a little, eat, dance, greet everyone. */
+function actEventAttend(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const day = dayOf(p.game_min);
+  const ev = townEvents(DISTRICTS[p.district].city, day).find((e) => e.id === a.eventId);
+  if (!ev) throw new GameError("no_event", "That isn't happening today.");
+  requireDistrict(p, ev.district, PLACE_BY_ID[ev.placeId].name);
+  const hour = toGameDate(p.game_min).hour;
+  if (hour < ev.hours[0] || hour >= ev.hours[1]) throw new GameError("not_now", `It runs ${ev.hours[0]}:00–${ev.hours[1]}:00.`);
+  const done = list(p.events_attended);
+  if (done.includes(ev.id)) throw new GameError("already", "You've already been. They're still talking about your dancing.");
+  const gift = requireAmount(a.gift);
+  if (gift < minor(ev.gift)) throw new GameError("small_gift", `People usually give at least GH₵${ev.gift}.`);
+  requireAwake(p, 12, "go out");
+  const money = chargeStrict(ctx, p, gift, "gift", `${ev.kind === "funeral" ? "Funeral donation" : "Wedding gift"}: ${ev.title}`);
+  p.events_attended = JSON.stringify([...done.slice(-20), ev.id]);
+  advance(ctx, p, 180, fb, { quiet: true });
+  const generous = gift >= minor(ev.gift * 3);
+  applyEffects(p, ev.kind === "funeral" ? { social: 18, fun: 8, hunger: 30, energy: -10, reputation: generous ? 2 : 1 } : { social: 22, fun: 20, hunger: 35, energy: -12, reputation: generous ? 2 : 1 }, fb,
+    ev.kind === "funeral"
+      ? `⚫🔴 You signed the book, made your donation and greeted ${ev.host}. The brass band played, the jollof packs came round, and you met half the neighbourhood.${generous ? " Your name was read out with the generous donors." : ""}`
+      : `💍 You queued for the photo booth, danced to highlife and ate well. ${ev.host[0].toUpperCase() + ev.host.slice(1)} thank you for the gift.`, money);
+  return null;
+}
+
+/** Fictional price of prepaid electricity (GH₵ per kWh). */
+export const KWH_PRICE = 2;
+
+/** What a home uses: electricity in kWh a day (prepaid) and water/refuse a month (billed). */
+function powerProfile(db: Db, p: PlayerRow) {
+  const owned = ownedItems(db, p).map((i) => i.item_id);
+  const POWER_DRAW: Record<string, number> = { split_ac: 380, fridge: 90, deep_freezer: 85, smart_tv65: 35, washing_machine: 35, standing_cooker: 0, tv32: 15, ceiling_fan: 20, standing_fan: 12 };
+  let appliances = owned.reduce((a, i) => a + (POWER_DRAW[i] ?? 0), 0);
+  const solar = owned.includes("solar_inverter");
+  if (solar) appliances *= 0.35;
+  const baseUtil = p.home_kind === "rental" ? RENTALS[p.home_ref].utilities : 150 * baseComfort(db, p);
+  const powerMonthly = baseUtil * 0.5 * (solar ? 0.6 : 1) + appliances;
+  return { kwhPerDay: Math.round((powerMonthly / 30 / KWH_PRICE) * 10) / 10, waterMonthly: baseUtil * 0.5 };
+}
+
+/** No mains power at home right now: dumsor, or the prepaid meter is empty. */
+function homeDark(db: Db, p: PlayerRow) {
+  const home = homeDistrict(db, p);
+  return powerOff(home, p.game_min) || p.power_units <= 0;
+}
+
+function actBuyPower(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const amount = requireAmount(a.amount);
+  if (amount < 1000) throw new GameError("too_small", "Top up at least GH₵10.");
+  const money = chargeStrict(ctx, p, amount, "power", "Prepaid electricity units", true);
+  const units = Math.round((amount / 100 / KWH_PRICE) * 10) / 10;
+  const wasEmpty = p.power_units <= 0;
+  p.power_units = Math.round((p.power_units + units) * 10) / 10;
+  const per = powerProfile(ctx.db, p).kwhPerDay;
+  fb.add(`🔌 ${units} kWh added to your meter${wasEmpty ? ": the lights come back on" : ""}. About ${Math.max(1, Math.floor(p.power_units / Math.max(0.1, per)))} days at your usage.`, money, "good");
   return null;
 }
 
@@ -2136,7 +2205,8 @@ function actTradeBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const carrying = stockOf(ctx.db, p).reduce((n, r) => n + r.qty, 0);
   const cap = carryCapacity(!!ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id));
   if (carrying + qty > cap) throw new GameError("too_much", `You can carry ${cap} units${cap < 100 ? " on foot (more with a car)" : ""}; you have ${carrying}.`);
-  const cost = minor(priceFor(g.buy, place.district)) * qty;
+  const md = isMarketDay(place.id, dayOf(p.game_min));
+  const cost = Math.round(minor(priceFor(g.buy, place.district)) * (md ? 0.92 : 1)) * qty;
   const money = chargeStrict(ctx, p, cost, "trade_buy", `Stock: ${qty} × ${g.name} (${g.unit}) at ${place.name}`);
   ctx.db.run("INSERT INTO stock (player_id, good_id, qty, cost) VALUES (?, ?, ?, ?) ON CONFLICT(player_id, good_id) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost", p.id, g.id, qty, cost);
   advance(ctx, p, 15 + Math.ceil(qty / 10) * 5, fb, { quiet: true });
@@ -2159,7 +2229,8 @@ function actTradeSell(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const day = dayOf(p.game_min);
   let sold = ctx.db.get<{ sold: number }>("SELECT sold FROM trade_sales WHERE player_id = ? AND place_id = ? AND good_id = ? AND day = ?", p.id, place.id, g.id, day)?.sold ?? 0;
   let takings = 0;
-  for (let i = 0; i < qty; i++) takings += minor(sellPrice(g, place.district, gd.hour + gd.min / 60, sold++));
+  const md = place.kind === "market" && isMarketDay(place.id, day);
+  for (let i = 0; i < qty; i++) takings += minor(sellPrice(g, place.district, gd.hour + gd.min / 60, sold++, md));
   const costBasis = Math.round((row.cost * qty) / row.qty);
   ctx.db.run("UPDATE stock SET qty = qty - ?, cost = cost - ? WHERE player_id = ? AND good_id = ?", qty, costBasis, p.id, g.id);
   ctx.db.run("INSERT INTO trade_sales (player_id, place_id, good_id, day, sold) VALUES (?, ?, ?, ?, ?) ON CONFLICT(player_id, place_id, good_id, day) DO UPDATE SET sold = excluded.sold", p.id, place.id, g.id, day, sold);
@@ -2397,7 +2468,9 @@ function moodFor(db: Db, p: PlayerRow) {
     hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
     helpedFamily: p.helped_day >= dayOf(p.game_min) - 2,
     illness: p.illness || undefined,
+    fellowship: p.worship_day === dayOf(p.game_min),
     dumsor: p.district === homeDistrict(db, p) && powerOff(p.district, p.game_min) && !hasGenerator(db, p),
+    noUnits: p.power_units <= 0 && !hasGenerator(db, p),
     missingHome: (() => {
       const last = db.get<{ d: number | null }>("SELECT MAX(last_contact_day) AS d FROM family WHERE player_id = ?", p.id)?.d;
       return last !== null && last !== undefined && dayOf(p.game_min) - last > 10;
@@ -2484,7 +2557,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
   const loanOwed = nw.loan;
   const expenses =
     (rental ? minor(rental.rent) : 0) +
-    minor(rental ? rental.utilities : 150 * homeComfort(db, p)) +
+    minor(powerProfile(db, p).waterMonthly + powerProfile(db, p).kwhPerDay * 30 * KWH_PRICE) +
     minor(PHONE_DATA_MONTHLY) +
     (loanOwed > 0 ? Math.max(minor(50), Math.ceil(loanOwed * LOAN_MIN_REPAYMENT)) : 0);
   const plots = db.all<{ id: number; plot_type: string; price: number; bought_min: number }>("SELECT * FROM plots WHERE player_id = ?", p.id);
@@ -2499,6 +2572,9 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       settings: { needsPace: p.needs_pace },
       lastGigDay: p.last_gig_day,
       illness: p.illness || null,
+      events: townEvents(DISTRICTS[p.district].city, dayOf(p.game_min)).map((e) => ({ ...e, attended: list(p.events_attended).includes(e.id) })),
+      nextEvents: townEvents(DISTRICTS[p.district].city, dayOf(p.game_min) + ((6 - weekdayOf(dayOf(p.game_min)) + 7) % 7 || 7)),
+      power: { units: p.power_units, perDay: powerProfile(db, p).kwhPerDay, price: KWH_PRICE },
       generator: hasGenerator(db, p),
       hometown: p.hometown,
       family: db.all<FamilyRow>("SELECT * FROM family WHERE player_id = ? ORDER BY id", p.id).map((m) => ({ id: m.id, role: m.role, name: m.name, age: m.age, town: m.town, feminine: m.feminine === 1, closeness: Math.round(m.closeness), lastContactDay: m.last_contact_day, request: m.request ? (JSON.parse(m.request) as FamilyRequest) : null })),

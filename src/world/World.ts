@@ -199,6 +199,11 @@ export class World {
   /** Your family, outside the family house when you're in your hometown. */
   private family: { group: THREE.Group; spot: THREE.Vector3; people: { rig: Person; seated: SpotUse | null; pos: THREE.Vector3 }[] } | null = null;
   private familyKey = "";
+  private npcHourSeen = -1;
+  /** Saturday funeral/wedding set-ups in this district: canopies, chairs and guests. */
+  private eventScene: { group: THREE.Group; crowds: { rig: Person; hours: [number, number]; seat: SpotUse | null }[] } | null = null;
+  private eventKey = "";
+  private npcDistrictSeen = "";
   private discovered = new Set<string>();
   private reported = new Set<string>();
   private nearby: Nearby | null = null;
@@ -350,6 +355,7 @@ export class World {
     this.updateSite(s);
     this.updateParked(s);
     this.updateFamily(s);
+    this.updateEvents(s);
     if (this.district) this.district.homeLabel.visible = s.player.home.district === this.district.id;
     if (this.life) this.lastNpcHour = -1; // re-sync NPC labels with new tiers
   }
@@ -369,6 +375,7 @@ export class World {
     for (const l of this.leaving) l.rig.group.removeFromParent();
     this.leaving = [];
     if (this.family) { this.scene.remove(this.family.group); this.family = null; this.familyKey = ""; }
+    if (this.eventScene) { this.scene.remove(this.eventScene.group); this.eventScene = null; this.eventKey = ""; }
     this.site = null;
     this.siteKey = "";
     this.parked = null;
@@ -476,6 +483,95 @@ export class World {
     group.add(label);
     this.scene.add(group);
     this.family = { group, spot, people };
+  }
+
+  private updateEvents(s: GameState) {
+    const d = this.district;
+    const evs = d ? s.player.events.filter((e) => DISTRICTS[d.id] && e.district === d.id && d.placeDoors.has(e.placeId)) : [];
+    const key = `${d?.id}:${evs.map((e) => e.id).join(",")}`;
+    if (key === this.eventKey) return;
+    this.eventKey = key;
+    if (this.eventScene) { this.scene.remove(this.eventScene.group); this.eventScene = null; }
+    if (!d || !evs.length) return;
+    const group = new THREE.Group();
+    const crowds: { rig: Person; hours: [number, number]; seat: SpotUse | null }[] = [];
+    evs.forEach((e, ei) => {
+      const door = d.placeDoors.get(e.placeId)!;
+      const side = Math.sign(door.z) || 1;
+      const zc = side * ((WALK_IN + WALK_OUT) / 2);
+      const funeral = e.kind === "funeral";
+      // Rented canopies over the pavement, the way every compound does it.
+      const cloth = new THREE.MeshStandardMaterial({ color: funeral ? (ei % 2 ? "#7a1414" : "#f4f1ea") : "#f7f1e1", roughness: 0.9, side: THREE.DoubleSide });
+      const trim = new THREE.MeshStandardMaterial({ color: funeral ? "#111111" : "#d4a017", roughness: 0.7 });
+      const pole = new THREE.MeshStandardMaterial({ color: "#9aa1a8", metalness: 0.7, roughness: 0.4 });
+      const chairMat = new THREE.MeshStandardMaterial({ color: funeral ? "#d9d4c8" : "#f2f2f2", roughness: 0.6 });
+      for (let c = 0; c < 2; c++) {
+        const cx = door.x + 4 + c * 5.4;
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(3.6, 1.0, 4, 1, true), cloth);
+        roof.rotation.y = Math.PI / 4;
+        roof.position.set(cx, 3.1, zc);
+        roof.scale.set(1, 1, 0.62);
+        group.add(roof);
+        const valance = new THREE.Mesh(new THREE.BoxGeometry(5.1, 0.28, 3.2), trim);
+        valance.position.set(cx, 2.48, zc);
+        group.add(valance);
+        for (const px of [-2.5, 2.5]) for (const pz of [-1.55, 1.55]) {
+          const pl = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 2.5, 6), pole);
+          pl.position.set(cx + px, 1.4, zc + pz);
+          group.add(pl);
+        }
+        // Rows of plastic chairs facing the venue's door side.
+        for (let row = 0; row < 2; row++) for (let k = 0; k < 4; k++) {
+          const ch = new THREE.Group();
+          const seat = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.05, 0.42), chairMat);
+          seat.position.y = 0.45;
+          const back = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.45, 0.04), chairMat);
+          back.position.set(0, 0.7, -0.2);
+          ch.add(seat, back);
+          for (const lx of [-0.19, 0.19]) for (const lz of [-0.18, 0.18]) {
+            const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.45, 5), chairMat);
+            leg.position.set(lx, 0.22, lz);
+            ch.add(leg);
+          }
+          const x = cx - 1.8 + k * 1.2, z = zc - side * (0.6 - row * 1.1);
+          ch.position.set(x, 0.16, z);
+          ch.rotation.y = side > 0 ? 0 : Math.PI;
+          group.add(ch);
+          // Guests fill most seats during the hours of the event.
+          const r = (ei * 31 + c * 8 + row * 4 + k) % 7;
+          if (r < 5) {
+            const look = randomLook(e.id.length * 977 + ei * 131 + c * 17 + row * 7 + k);
+            if (funeral) { look.shirt = r % 2 ? "#141414" : "#8e1b1b"; look.pants = "#141414"; look.pattern = "plain"; }
+            else { look.pattern = r % 2 ? "kente" : "wax"; if (r === 4) { look.shirt = "#f7f3e8"; look.pattern = "plain"; } }
+            const rig = buildPerson(look);
+            rig.root.position.set(x, 0.16, z);
+            rig.root.rotation.y = ch.rotation.y;
+            group.add(rig.root);
+            crowds.push({ rig, hours: e.hours, seat: { x, y: 0.63, z, look: [x, z + side * 3], pose: "sit" } });
+          }
+        }
+      }
+      // A banner so you know what's on.
+      const tex = T.label(funeral ? `${e.title} · ${e.hours[0]}:00` : `${e.title} · All welcome`, { icon: funeral ? "🕊️" : "💍", bg: funeral ? "rgba(20,20,20,0.92)" : "rgba(212,160,23,0.95)", fg: funeral ? "#f4f1ea" : "#1a1a1a" });
+      const banner = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex }));
+      const img = tex.image as HTMLCanvasElement;
+      banner.scale.set(0.6 * (img.width / img.height), 0.6, 1);
+      banner.position.set(door.x + 6.7, 4.2, zc);
+      group.add(banner);
+    });
+    this.eventScene = { group, crowds };
+    this.scene.add(group);
+  }
+
+  private animateEvents(dt: number, t: number, hour: number) {
+    if (!this.eventScene) return;
+    for (const c of this.eventScene.crowds) {
+      const on = hour >= c.hours[0] && hour < c.hours[1];
+      c.rig.root.visible = on;
+      if (!on) continue;
+      animatePerson(c.rig, dt, 0);
+      if (c.seat) applyPose(c.rig, c.seat, t);
+    }
   }
 
   private animateFamily(dt: number, t: number) {
@@ -672,7 +768,7 @@ export class World {
   private interiorPower(minute: number) {
     const s = this.state;
     if (!s || !this.interior) return;
-    const dark = powerOff(s.player.home.district as DistrictId, minute) && !s.player.generator;
+    const dark = (powerOff(s.player.home.district as DistrictId, minute) || s.player.power.units <= 0) && !s.player.generator;
     const key = `${dark}`;
     if (key === this.lastPower) return;
     this.lastPower = key;
@@ -1664,11 +1760,15 @@ export class World {
       for (const l of this.lampPool) l.intensity = night > 0.5 && !cut ? 160 : 0;
       this.district.ocean?.update(t, this.atmo.sunDir, this.atmo.skyColor, night);
       if (gd.hour !== this.lastNpcHour) {
-        this.lastNpcHour = gd.hour;
-        this.life.syncNpcs(gd.weekdayIndex, gd.hour, this.tiers);
+        // Hour ticked over while you're here: people walk to their next place instead of popping there.
+        const animate = this.npcHourSeen !== -1 && (gd.hour - this.npcHourSeen + 24) % 24 === 1 && this.npcDistrictSeen === this.district.id;
+        this.lastNpcHour = this.npcHourSeen = gd.hour;
+        this.npcDistrictSeen = this.district.id;
+        this.life.syncNpcs(gd.weekdayIndex, gd.hour, this.tiers, animate);
       }
       this.life.update(dt, t, this.pos, night > 0.55, this.camera);
       this.animateFamily(dt, t);
+      this.animateEvents(dt, t, gd.hour + gd.min / 60);
       if (this.life.hailedTaxi) {
         const c = this.life.hailedTaxi;
         if (c.speed < 0.3 && c.rig.group.position.distanceTo(this.pos) < 9) {

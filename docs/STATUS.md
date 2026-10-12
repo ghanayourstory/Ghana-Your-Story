@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v14. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v15. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -50,11 +50,14 @@ Last checked: game build v14. This is the Stage 0 "discovery" note from the foun
 - ✅ Gig shifts you drive: ride-app and delivery pick-ups and drop-offs, paid per trip less fuel, one shift a day, checked by the server (trip count comes from the browser; same caveat as the road test).
 - ✅ Illness and the clinic: malaria (rainy seasons, a net helps), flu (Harmattan) and stomach trouble (low hygiene); clinic and pharmacy treatments; mild, explained, and off when needs are off.
 - ✅ Dumsor at junctions: lights go dark and a traffic warden directs cars.
-- ⏳ Weekly NPC routines beyond the current daily schedules; school days for younger family; routine bills (prepaid electricity, water, data) as their own lines.
+- ✅ Weekly rhythm: two market days per market (cheaper stock, double demand), Sunday service at every church, Saturday funerals and weddings you attend with a donation or gift (canopies, chairs and guests in 3D).
+- ✅ Prepaid electricity units: drawn down daily by what you own, solar cuts the draw, empty meter darkens the home and blocks screens until you top up in SikaBank. Water, refuse and data stay a monthly bill.
+- ✅ Named people commute: they walk in from the trotro stop, between places, and off home as their schedule changes.
+- ⏳ School days for younger family; separate household members' routines; water as its own line if it adds play.
 
 ## Next slices, in order
 
 1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner.)*
-2. Weekly routines: market days, church/mosque days, Saturday funerals and weddings as events people attend.
-3. Prepaid electricity units and water as their own bills.
-4. Visible NPC lives: neighbours who go to work and come home on a schedule you can see.
+2. Language and priorities choice at character creation (Stage 1 gap).
+3. School days and chores for younger family members; festivals on the calendar (Homowo, Aboakyer, Hogbetsotso) as town events.
+4. Neighbours with homes on your street (not just workplaces), so evenings fill up as people come back.

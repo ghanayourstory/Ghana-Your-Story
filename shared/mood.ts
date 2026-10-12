@@ -13,6 +13,9 @@ export interface MoodInput {
   /** At home in the dark with no generator. */
   dumsor?: boolean;
   illness?: string;
+  /** Prepaid electricity has run out at home. */
+  noUnits?: boolean;
+  fellowship?: boolean;
 }
 export interface Moodlet {
   id: string;
@@ -62,6 +65,8 @@ export function moodOf(m: MoodInput): Mood {
   if (m.partnered) add("in_love", "❤️", "In love", "Someone special in your life.", 2);
   if (m.helpedFamily) add("helped_family", "🤲", "Helped the family", "You came through for someone at home.", 1);
   if (m.illness) add("ill", "🤒", m.illness === "malaria" ? "Malaria" : m.illness === "flu" ? "Flu" : "Running stomach", m.illness === "malaria" ? "Fever and aches. The clinic can test and treat it." : m.illness === "flu" ? "Sniffles and a sore throat. The pharmacy can help; it passes in a few days." : "Too many trips to the toilet. ORS from the pharmacy sorts it.", -2);
+  if (m.fellowship) add("fellowship", "🙏", "Fellowship", "Time with your congregation today.", 1);
+  if (m.noUnits) add("no_units", "🔌", "Prepaid ran out", "No light, no fan, no fridge. Top up your units.", -1);
   if (m.dumsor) add("dumsor", "🕯️", "Dumsor", "The lights are off and the fan has stopped.", -1);
   if (m.missingHome) add("missing_home", "🏡", "Missing home", "It's been a while since you called home.", -1);
   if (m.hasCar) add("wheels", "🚗", "Got wheels", "No more waiting for trotros.", 1);

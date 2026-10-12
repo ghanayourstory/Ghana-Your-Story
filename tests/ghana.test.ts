@@ -8,6 +8,7 @@ import { DISTRICTS, PLACES, SERVICES } from "../shared/world.ts";
 import { SITES } from "../shared/regional.ts";
 import { VEHICLES } from "../shared/life.ts";
 import { outageWindow, powerOff } from "../shared/power.ts";
+import { marketDays, townEvents } from "../shared/weekly.ts";
 import { MINUTES_PER_DAY, toGameDate } from "../shared/calendar.ts";
 import { buildState, createPlayer, loadPlayer, type Ctx } from "../server/engine.ts";
 import { districtsIn } from "../shared/world.ts";
@@ -475,6 +476,55 @@ test("illness: malaria needs the clinic, flu is fine with the pharmacy; both sho
   ctx.db.run("UPDATE players SET illness = 'flu', ill_day = 0 WHERE id = ?", id);
   assert.ok(act(ctx, id, { type: "service", placeId: "sankofa_clinic", serviceId: "pharmacy" }).ok);
   assert.equal(loadPlayer(ctx.db, id).illness, "");
+});
+
+test("prepaid electricity: units tick down daily; empty means no TV until you top up", () => {
+  const { ctx, id } = rich();
+  ctx.db.run("INSERT INTO items (player_id, item_id, price, bought_min) VALUES (?, 'tv32', 100, 0)", id);
+  ctx.db.run("UPDATE players SET power_units = 0.5 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "sleep", hours: 8 }).ok);
+  assert.ok(act(ctx, id, { type: "sleep", hours: 8 }).ok);
+  assert.ok(act(ctx, id, { type: "sleep", hours: 8 }).ok);
+  assert.equal(loadPlayer(ctx.db, id).power_units, 0);
+  // Pick an hour with no dumsor so only the meter matters.
+  for (let i = 0; i < 48 && powerOff("kaneshie", gameMin(ctx, id)); i++) skip(ctx, id, 1);
+  const r = act(ctx, id, { type: "home_activity", activity: "watch_tv" });
+  assert.equal(r.code, "no_units");
+  assert.ok(buildState(ctx, loadPlayer(ctx.db, id)).player.mood.moodlets.some((m) => m.id === "no_units"));
+  assert.ok(act(ctx, id, { type: "buy_power", amount: 5000 }).ok);
+  assert.equal(loadPlayer(ctx.db, id).power_units, 25);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).ok);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("weekly life: Saturday funerals and weddings, market days, Sunday service", () => {
+  const { ctx, id } = rich();
+  // Next Saturday.
+  while (toGameDate(gameMin(ctx, id)).weekdayIndex !== 6) skip(ctx, id, 12);
+  skipTo(ctx, id, 11);
+  const day = Math.floor(gameMin(ctx, id) / MINUTES_PER_DAY);
+  const evs = townEvents("accra", day);
+  assert.ok(evs.length >= 1);
+  const ev = evs[0];
+  if (district(ctx, id) !== ev.district) assert.ok(act(ctx, id, { type: "travel", to: ev.district, mode: "taxi" }).ok);
+  skipTo(ctx, id, 12);
+  assert.equal(act(ctx, id, { type: "event_attend", eventId: ev.id, gift: 100 }).code, "small_gift");
+  const r = act(ctx, id, { type: "event_attend", eventId: ev.id, gift: ev.gift * 100 });
+  assert.ok(r.ok, r.error);
+  assert.equal(act(ctx, id, { type: "event_attend", eventId: ev.id, gift: ev.gift * 100 }).code, "already");
+  // Sunday service gives fellowship.
+  skip(ctx, id, 12);
+  skipTo(ctx, id, 8);
+  assert.equal(toGameDate(gameMin(ctx, id)).weekdayIndex, 0);
+  if (district(ctx, id) !== "kaneshie") assert.ok(act(ctx, id, { type: "travel", to: "kaneshie", mode: "taxi" }).ok);
+  const sv = act(ctx, id, { type: "service", placeId: "kaneshie_church", serviceId: "sunday_service" });
+  assert.ok(sv.ok, sv.error);
+  assert.ok(buildState(ctx, loadPlayer(ctx.db, id)).player.mood.moodlets.some((m) => m.id === "fellowship"));
+  // Market days: two a week, never Sunday.
+  const md = marketDays("kaneshie_market");
+  assert.equal(md.length, 2);
+  assert.ok(!md.includes(0));
+  assert.ok(auditPlayer(ctx.db, id).ok);
 });
 
 test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {

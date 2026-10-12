@@ -312,7 +312,7 @@ function WorkApp({ world, onClose }: { world: World | null; onClose: () => void 
 
 function MoneyApp() {
   const { state, act, busy } = useGame();
-  const [tab, setTab] = useState<"overview" | "transfer" | "fx" | "tbills" | "loans" | "statement">("overview");
+  const [tab, setTab] = useState<"overview" | "transfer" | "power" | "fx" | "tbills" | "loans" | "statement">("overview");
   const [amt, setAmt] = useState("500");
   if (!state) return null;
   const m = state.money;
@@ -326,7 +326,7 @@ function MoneyApp() {
     <>
       <AppHead id="money" sub="Mobile banking · Coastline Bank" />
       <div className="tabs">
-        {(["overview", "transfer", "fx", "tbills", "loans", "statement"] as const).map((t) => <button key={t} className={t === tab ? "on" : ""} onClick={() => setTab(t)}>{{ overview: "Overview", transfer: "MoMo", fx: "Dollars", tbills: "T-bills", loans: "Loans", statement: "Statement" }[t]}</button>)}
+        {(["overview", "transfer", "power", "fx", "tbills", "loans", "statement"] as const).map((t) => <button key={t} className={t === tab ? "on" : ""} onClick={() => setTab(t)}>{{ overview: "Overview", transfer: "MoMo", power: "Power", fx: "Dollars", tbills: "T-bills", loans: "Loans", statement: "Statement" }[t]}</button>)}
       </div>
       {tab === "overview" && (
         <>
@@ -343,6 +343,15 @@ function MoneyApp() {
             <div className="kv"><span>Credit score</span><b>{state.player.creditScore}</b></div>
           </div>
         </>
+      )}
+      {tab === "power" && (
+        <div className="card col">
+          <b>🔌 Prepaid electricity · {state.player.power.units} kWh left</b>
+          <div className="tiny muted">Your home uses about {state.player.power.perDay} kWh a day (lights, fan{state.items.length ? " and your appliances" : ""}), so that's roughly {Math.floor(state.player.power.units / Math.max(0.1, state.player.power.perDay))} days. Units cost {money(state.player.power.price * 100)} per kWh, paid from MoMo first. When they run out the lights go off until you top up. Game money only.</div>
+          <div className="row" style={{ flexWrap: "wrap", gap: 6 }}>
+            {[20, 50, 100, 200].map((c) => <button key={c} className="btn sm" disabled={busy} onClick={() => act({ type: "buy_power", amount: c * 100 })}>GH₵{c} · {Math.round((c / state.player.power.price) * 10) / 10} kWh</button>)}
+          </div>
+        </div>
       )}
       {tab === "transfer" && (
         <div className="card col" style={{ marginBottom: 10 }}>
