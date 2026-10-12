@@ -39,6 +39,18 @@ export function TodaySheet({ onClose }: { onClose: () => void }) {
           <span>💵</span>
           <div className="grow"><b>{money(state.money.cash)} cash · {money(state.money.bank)} in the bank</b><div className="tiny muted">Bills this month about {money(state.money.monthlyExpenses)}.</div></div>
         </div>
+        {p.family.filter((m) => m.request).map((m) => (
+          <div className="today-row" key={m.id}>
+            <span>🙏</span>
+            <div className="grow"><b>{m.name.split(" ").slice(0, 2).join(" ")} asked for help</b><div className="tiny muted">{m.request!.reason}: GH₵{m.request!.amount} · Phone → Family. Only if you can.</div></div>
+          </div>
+        ))}
+        {p.stock.length > 0 && (
+          <div className="today-row">
+            <span>🧺</span>
+            <div className="grow"><b>Stock to sell: {p.stock.map((x) => `${x.qty} ${x.id.replace("_", " ")}`).join(", ")}</b><div className="tiny muted">Lorry stations and markets buy; fruit and bread go off overnight.</div></div>
+          </div>
+        )}
         <div className="today-row">
           <span>{p.mood.face}</span>
           <div className="grow"><b>Feeling {p.mood.label.toLowerCase()}</b><div className="tiny muted">{low.length ? low.map((n) => `${n.icon} ${n.label} is low: ${n.tip}`).join(" ") : "Your needs are fine for now."}</div></div>

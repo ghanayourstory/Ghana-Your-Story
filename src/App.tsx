@@ -45,11 +45,11 @@ export default function App() {
       <CharacterCreate
         busy={busy}
         error={error}
-        onCreate={async ({ name, background, look }) => {
+        onCreate={async ({ name, background, look, hometown }) => {
           setBusy(true);
           setError(null);
           try {
-            const res = await boot.backend.request<{ token?: string; state?: GameState; error?: string }>("POST", "/api/player", { name, background, look, test: boot.backend.mode === "offline" });
+            const res = await boot.backend.request<{ token?: string; state?: GameState; error?: string }>("POST", "/api/player", { name, background, look, hometown, test: boot.backend.mode === "offline" });
             if (res.json.token && res.json.state) {
               setToken(res.json.token);
               try { localStorage.setItem("sika.intro", "1"); } catch { /* ignore */ }
@@ -332,6 +332,9 @@ function Game() {
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>👪 <b>Family:</b> pick a hometown when you create a character. Your parents, grandmother and siblings live there with their own lives: call them, send MoMo when they ask for help (only if you can), or travel home to visit. Phone → Family.</div>
+              <div>🧺 <b>Market hustle:</b> buy sachet water, oranges, bread, tomatoes or second-hand clothes at a market, carry them and sell at lorry stations and markets. Rush hours pay more, buyers run out, fruit goes off.</div>
+              <div>📱 <b>MoMo wallet:</b> separate from cash and bank. Cash-in is free, cash-out costs a small agent fee. Plus bigger text and reduced motion in Settings.</div>
               <div>☀️ <b>Your day:</b> each game day opens with a morning card: weather, your shift, money, how you feel, and <b>Today's hustle</b>, three small goals that fit your life (swap one, skip any). Tap 🎯 Today any time. Needs can be slowed or paused in Phone → Settings.</div>
               <div>🚗 <b>Drive your own car:</b> walk up to it and press Drive. W/S or the stick to drive, A/D to steer, Shift to speed up. Park anywhere. Drive to the end of the road to pick where to go next.</div>
               <div>🏡 <b>Homes feel lived in:</b> tube lights, wall clocks, radios, fufu mortars, basins, chickens in the compound; pendant lamps, art and a piano in bigger homes. Softer shadows on High quality.</div>

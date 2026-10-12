@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v10. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v11. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -23,17 +23,17 @@ Last checked: game build v10. This is the Stage 0 "discovery" note from the foun
 
 | Item | State |
 |---|---|
-| Character creator and starter household | ✅ (no hometown / language / priorities choice yet) |
+| Character creator and starter household | ✅ hometown choice and a family there (no language / priorities choice yet) |
 | Interactive home and nearby street | ✅ dollhouse home, Kaneshie street |
 | Neighbourhood map with a real transport route | ✅ trotro, taxi, ride app; rides drive you there |
-| One job and one self-employed hustle | ✅ jobs; ⚠️ the hustle is a bought business, not yet a buy-stock/sell-it market trade |
-| Food routine and a social/family interaction | ✅ food; ⚠️ family members are not modelled yet |
+| One job and one self-employed hustle | ✅ jobs; ✅ market trading: buy stock, carry it, sell it, with spoilage, demand and rush hours |
+| Food routine and a social/family interaction | ✅ food; ✅ family: call, send MoMo, visit; they ask for help and send parcels |
 | Needs, skills, a daily goal | ✅ |
-| Cash, bank/mobile wallet and a ledger | ✅ cash + bank (MoMo is the bank with agent fees); ⚠️ no separate MoMo wallet yet |
+| Cash, bank/mobile wallet and a ledger | ✅ cash, MoMo wallet and bank, all in the ledger |
 | Starter property with an upgrade/construction stage | ✅ |
 | Server-backed save, relogin, second device | ❌ **on the playable link saves live in one browser.** The server exists and is tested, but it isn't hosted. |
 | Every action answers what/where/how long/cost/what changes | ⚠️ most actions show cost and time; not all show "what changes / can I undo" |
-| Help, settings, accessibility | ⚠️ graphics, sound, needs speed; no text size, reduced motion or captions yet |
+| Help, settings, accessibility | ✅ graphics, sound, needs speed, interface size, reduced motion; ⚠️ no captions yet |
 
 ## Biggest risks
 
@@ -44,9 +44,8 @@ Last checked: game build v10. This is the Stage 0 "discovery" note from the foun
 
 ## Next slices, in order
 
-1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop.
-2. A real market-trading hustle: buy stock, carry it, sell it, with spoilage and margins.
-3. A separate MoMo wallet with agents (cash-in/out), plus "what changes / undo" on every confirm.
-4. Family and household members with their own routines.
-5. Hometown and background choice that changes starting contacts and places.
-6. Accessibility pass: text size, reduced motion, captions, colour-safe bars.
+1. Host the server (accounts, Postgres or SQLite with backups) so one character works on phone and laptop. *(Deferred by the owner: "we will handle hosting later".)*
+2. "What changes / can I undo" on every confirm button.
+3. Family members you can meet in the 3D world when you visit, not only through the phone.
+4. Traffic that reacts to your car: braking, honking, police stops for driving without a licence.
+5. Captions for important sounds; colour-safe need bars.

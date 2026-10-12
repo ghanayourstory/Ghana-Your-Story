@@ -7,7 +7,8 @@ import { intercityQuote } from "../shared/cities.ts";
 import { DISTRICTS, PLACES, SERVICES } from "../shared/world.ts";
 import { SITES } from "../shared/regional.ts";
 import { MINUTES_PER_DAY, toGameDate } from "../shared/calendar.ts";
-import { buildState, loadPlayer, type Ctx } from "../server/engine.ts";
+import { buildState, createPlayer, loadPlayer, type Ctx } from "../server/engine.ts";
+import { districtsIn } from "../shared/world.ts";
 
 function rich() {
   const env = makeCtx({ devTools: true });
@@ -341,6 +342,38 @@ test("MoMo wallet: cash in free, cash out costs an agent fee, street payments us
   assert.equal(bal(ctx, id, "cash"), 10000);
   assert.equal(bal(ctx, id, "momo"), m - 10100);
   assert.equal(act(ctx, id, { type: "momo_move", from: "cash", to: "bank", amount: 100 }).code, "bad_move");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("family: a hometown family with local names; call, send MoMo for a request, visit in person", () => {
+  const env = makeCtx({ devTools: true });
+  const { ctx } = env;
+  const id = createPlayer(ctx, { name: "Fati Mahama", look: {}, background: "graduate", hometown: "tamale", isTest: true });
+  grant(ctx, id, 9_000_000);
+  skipTo(ctx, id, 9);
+  let fam = buildState(ctx, loadPlayer(ctx.db, id)).player.family;
+  assert.equal(fam.length, 5);
+  assert.ok(fam.every((m) => m.town === "tamale" || m.town === "kumasi"));
+  assert.ok(fam.find((m) => m.role === "father")!.name.endsWith("Mahama"));
+  const mum = fam.find((m) => m.role === "mother")!;
+  assert.ok(act(ctx, id, { type: "family_call", memberId: mum.id }).ok);
+  fam = buildState(ctx, loadPlayer(ctx.db, id)).player.family;
+  assert.ok(fam.find((m) => m.id === mum.id)!.closeness > mum.closeness);
+  // Give the younger sibling a school-fees request and pay it on MoMo.
+  const kid = fam.find((m) => m.age < 20)!;
+  const day = buildState(ctx, loadPlayer(ctx.db, id)).time.day;
+  ctx.db.run("UPDATE family SET request = ? WHERE id = ?", JSON.stringify({ reason: "school fees", amount: 300, dueDay: day + 5 }), kid.id);
+  assert.equal(act(ctx, id, { type: "family_send", memberId: kid.id, amount: 30000 }).code, "insufficient_funds");
+  assert.ok(act(ctx, id, { type: "momo_move", from: "bank", to: "momo", amount: 50000 }).ok);
+  assert.ok(act(ctx, id, { type: "family_send", memberId: kid.id, amount: 30000 }).ok);
+  const st = buildState(ctx, loadPlayer(ctx.db, id)).player;
+  assert.equal(st.family.find((m) => m.id === kid.id)!.request, null);
+  assert.ok(st.mood.moodlets.some((m) => m.id === "helped_family"));
+  // Visiting needs you to be in Tamale.
+  assert.equal(act(ctx, id, { type: "family_visit", memberId: mum.id }).code, "not_here");
+  const r = act(ctx, id, { type: "travel", to: districtsIn("tamale")[0], mode: "bus" });
+  assert.ok(r.ok, r.error);
+  assert.ok(act(ctx, id, { type: "family_visit", memberId: mum.id }).ok);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
 

@@ -254,3 +254,7 @@ canvas.world { position: fixed; inset: 0; width: 100%; height: 100%; display: bl
 .today-row .grow { flex: 1; }
 .svc.goal .goal-icon { font-size: 22px; width: 30px; text-align: center; }
 .svc.goal.done { opacity: 0.65; }
+/* Accessibility: text/UI size and reduced motion (Phone → Settings). */
+:root { --ui-scale: 1; }
+.hud-top, .rail, .sheet, .phone, .modal, .ride-banner, .action-bar, .toasts, .minimap, .speedo { zoom: var(--ui-scale); }
+.reduce-motion *, .reduce-motion *::before, .reduce-motion *::after { transition: none !important; animation: none !important; }

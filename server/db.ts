@@ -125,6 +125,21 @@ CREATE TABLE IF NOT EXISTS stock (
   PRIMARY KEY (player_id, good_id)
 );
 
+CREATE TABLE IF NOT EXISTS family (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  role TEXT NOT NULL,
+  name TEXT NOT NULL,
+  age INTEGER NOT NULL,
+  town TEXT NOT NULL,
+  feminine INTEGER NOT NULL,
+  closeness REAL NOT NULL,
+  last_contact_day INTEGER NOT NULL,
+  last_call_day INTEGER NOT NULL DEFAULT -1,
+  last_visit_day INTEGER NOT NULL DEFAULT -1,
+  request TEXT NOT NULL DEFAULT ''
+);
+
 CREATE TABLE IF NOT EXISTS trade_sales (
   player_id INTEGER NOT NULL,
   place_id TEXT NOT NULL,
@@ -335,6 +350,8 @@ const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
   ["players", "bladder", "REAL NOT NULL DEFAULT 80"],
   ["players", "daily", "TEXT NOT NULL DEFAULT ''"],
   ["players", "needs_pace", "REAL NOT NULL DEFAULT 1"],
+  ["players", "hometown", "TEXT NOT NULL DEFAULT ''"],
+  ["players", "helped_day", "INTEGER NOT NULL DEFAULT -99"],
 ];
 
 export function migrate(db: Db) {

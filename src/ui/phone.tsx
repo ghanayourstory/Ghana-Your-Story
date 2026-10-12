@@ -1,4 +1,6 @@
 import { BUILD_VERSION } from "../version.ts";
+import { getReduceMotion, getUiScale, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
+import { FamilyApp } from "./family.tsx";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
@@ -13,7 +15,7 @@ import { FarmApp, GarageApp, GhanaApp, VibesApp } from "./ghana.tsx";
 import type { GameState } from "../../server/engine.ts";
 import type { Quality as GfxQuality } from "../world/World.ts";
 
-type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage";
+type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage" | "family";
 
 const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string }[] = [
   { id: "dream", name: "Dream", icon: "⭐", bg: "linear-gradient(160deg,#ffd34d,#f2a900)" },
@@ -21,6 +23,7 @@ const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string
   { id: "work", name: "Work", icon: "💼", bg: "linear-gradient(160deg,#7c83ff,#4c56d9)" },
   { id: "money", name: "SikaBank", icon: "🏦", bg: "linear-gradient(160deg,#3ddc84,#1f7a4d)" },
   { id: "people", name: "People", icon: "👥", bg: "linear-gradient(160deg,#ff7a6b,#d6453a)" },
+  { id: "family", name: "Family", icon: "👪", bg: "linear-gradient(160deg,#f6a5c0,#c2185b)" },
   { id: "news", name: "News", icon: "📰", bg: "linear-gradient(160deg,#a5adb8,#6b7480)" },
   { id: "map", name: "Map", icon: "🗺️", bg: "linear-gradient(160deg,#5ec8f2,#1d84c4)" },
   { id: "bet", name: "Bet", icon: "⚽", bg: "linear-gradient(160deg,#2fa36a,#0d5a35)" },
@@ -86,6 +89,7 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
             {app === "ghana" && <><AppHead id="ghana" sub="Sixteen regions, one country" /><GhanaApp /></>}
             {app === "vibes" && <><AppHead id="vibes" sub="Post, grow, get paid" /><VibesApp /></>}
             {app === "farm" && <><AppHead id="farm" sub="Seasons, rain and harvests" /><FarmApp /></>}
+            {app === "family" && <><AppHead id="family" sub="The people at home" /><FamilyApp onTravel={() => onTravel("phone")} /></>}
             {app === "garage" && <><AppHead id="garage" sub="Vehicles, licences and your things" /><GarageApp /></>}
           </div>
           <div className="phone-nav">
@@ -756,6 +760,7 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
         <div className="tiny muted">Low turns off shadows for older phones.</div>
       </div>
       <SoundSettings />
+      <A11ySettings />
       <div className="card col" style={{ marginTop: 10 }}>
         <b>Needs</b>
         <div className="seg">{([[1, "Normal"], [0.5, "Slow"], [0, "Off"]] as const).map(([v, label]) => <button key={v} className={state.player.settings.needsPace === v ? "on" : ""} disabled={busy} onClick={() => act({ type: "settings", needsPace: v })}>{label}</button>)}</div>
@@ -785,3 +790,21 @@ function SettingsApp({ quality, setQuality }: { quality: GfxQuality; setQuality:
   );
 }
 
+
+function A11ySettings() {
+  const [scale, setScale] = useState<UiScale>(getUiScale());
+  const [reduce, setReduce] = useState(getReduceMotion());
+  return (
+    <div className="card col" style={{ marginTop: 10 }}>
+      <b>Accessibility</b>
+      <div className="tiny muted">Interface size</div>
+      <div className="seg">{([[1, "Normal"], [1.15, "Large"], [1.3, "Larger"]] as const).map(([v, label]) => <button key={v} className={scale === v ? "on" : ""} onClick={() => { setUiScale(v); setScale(v); }}>{label}</button>)}</div>
+      <div className="tiny muted">Motion</div>
+      <div className="seg">
+        <button className={!reduce ? "on" : ""} onClick={() => { setReduceMotion(false); setReduce(false); }}>Full</button>
+        <button className={reduce ? "on" : ""} onClick={() => { setReduceMotion(true); setReduce(true); }}>Reduced</button>
+      </div>
+      <div className="tiny muted">Reduced motion turns off menu and screen animations.</div>
+    </div>
+  );
+}

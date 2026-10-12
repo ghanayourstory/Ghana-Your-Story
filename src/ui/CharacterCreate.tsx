@@ -1,4 +1,5 @@
 import { SKIN_TONES } from "../world/people.ts";
+import { CITIES } from "../../shared/cities.ts";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { buildPerson, animatePerson, type PersonLook, type HairStyle, type Pattern } from "../world/people.ts";
@@ -18,8 +19,12 @@ const BACKGROUNDS = [
   { id: "returnee", title: "Returnee", text: "Back from abroad with $450 and some savings. People call you 'burger' at first.", icon: "✈️" },
 ];
 
-export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { name: string; background: string; look: PersonLook }) => void; error: string | null; busy: boolean }) {
+// Hometowns you can travel back to and walk around, grouped by region.
+const HOMETOWN_OPTIONS = Object.values(CITIES).filter((c) => c.playable).sort((a, b) => a.region.localeCompare(b.region) || a.name.localeCompare(b.name));
+
+export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { name: string; background: string; look: PersonLook; hometown: string }) => void; error: string | null; busy: boolean }) {
   const [name, setName] = useState("");
+  const [hometown, setHometown] = useState("kumasi");
   const [bg, setBg] = useState("graduate");
   const [look, setLook] = useState<PersonLook>({ skin: SKINS[3], shirt: OUTFITS[0], pants: PANTS[0], hair: "#111111", feminine: false, height: 1.75, build: 1, hairStyle: "low", pattern: "kente" });
   const canvas = useRef<HTMLCanvasElement>(null);
@@ -119,6 +124,13 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
             <b>Name</b>
             <input className="input" maxLength={24} value={name} placeholder="e.g. Kofi Mensah" onChange={(e) => setName(e.target.value)} />
           </label>
+          <label className="col" style={{ gap: 6 }}>
+            <b>Hometown</b>
+            <select className="input" value={hometown} onChange={(e) => setHometown(e.target.value)}>
+              {HOMETOWN_OPTIONS.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.region}</option>)}
+            </select>
+            <div className="tiny muted">Your family lives here: parents, a grandmother, a brother or sister. You start in Accra; you can call, send MoMo or travel home to visit.</div>
+          </label>
           <div className="col" style={{ gap: 6 }}>
             <b>Background</b>
             {BACKGROUNDS.map((b) => (
@@ -152,7 +164,7 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
             <div className="swatches">{PANTS.map((c) => <button key={c} className={`swatch ${look.pants === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ pants: c })} aria-label="Trousers colour" />)}</div>
           </div>
           {error && <div className="notice err">{error}</div>}
-          <button className="btn primary" style={{ padding: 16, fontSize: 17 }} disabled={!valid || busy} onClick={() => onCreate({ name: name.trim(), background: bg, look })}>{busy ? "Arriving…" : "Arrive in Accra →"}</button>
+          <button className="btn primary" style={{ padding: 16, fontSize: 17 }} disabled={!valid || busy} onClick={() => onCreate({ name: name.trim(), background: bg, look, hometown })}>{busy ? "Arriving…" : "Arrive in Accra →"}</button>
         </div>
       </div>
     </div>
