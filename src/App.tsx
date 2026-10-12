@@ -97,6 +97,7 @@ function Game() {
   const [nearby, setNearby] = useState<Nearby | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [ride, setRide] = useState<{ label: string; icon: string } | null>(null);
+  const [doing, setDoing] = useState<{ label: string; icon: string; p: number } | null>(null);
   const [road, setRoad] = useState("");
   const [district, setDistrict] = useState<DistrictId>(state!.player.district);
   const [muted, setMuted] = useState(() => { try { return localStorage.getItem("sika.muted") === "1"; } catch { return false; } });
@@ -118,7 +119,10 @@ function Game() {
       },
       onTaxiArrived: () => setPanel({ kind: "travel", ctx: "taxi" }),
       onRide: setRide,
+      onSpot: (id) => (id === "exit" ? w.exitHome() : setPanel({ kind: "bed", focus: id })),
+      onActivity: setDoing,
     }, quality);
+    (window as unknown as { __world?: World }).__world = w; // handy for automated play-tests
     w.audio.muted = muted;
     w.audio.settings = readMix();
     const onMix = (e: Event) => w.audio.setMix((e as CustomEvent).detail);
@@ -261,8 +265,18 @@ function Game() {
       <Hud world={world} onOpen={open} />
       <Minimap world={world} road={road} district={district} />
       <Rail onOpen={open} badges={{ phone: (state?.event ? 1 : 0) + (state?.businesses.filter((b) => b.till > 0).length ? 1 : 0), people: pendingDates }} world={world} muted={muted} setMuted={setMuted} />
-      {!panel && !ride && <ActionBar nearby={nearby} onUse={use} />}
+      {!panel && !ride && !doing && <ActionBar nearby={nearby} onUse={use} />}
       {!panel && !ride && <Joystick world={world} />}
+      {doing && (
+        <div className="ride-banner doing">
+          <span className="ride-icon">{doing.icon}</span>
+          <div className="grow">
+            <b>{doing.label}</b>
+            <div className="bar"><i style={{ width: `${Math.round(doing.p * 100)}%` }} /></div>
+          </div>
+          <button className="btn small" onClick={() => world?.stopActivity()}>Stop</button>
+        </div>
+      )}
       {ride && (
         <div className="ride-banner">
           <span className="ride-icon">{ride.icon}</span>

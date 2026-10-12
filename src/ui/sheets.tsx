@@ -307,7 +307,23 @@ export function EventModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+/** Where in the home each thing is done, and how it looks in the progress bar. */
+const ACT_SPOT: Record<string, "bath" | "tv" | "kitchen" | "coalpot" | "neighbours" | "terrace" | "pool" | "bed" | null> = {
+  shower: "bath", shared_bath: "bath", bucket_bath: "bath", laundry: "bath", toilet_public: null, pool_swim: "pool", terrace: "terrace",
+  watch_tv: "tv", watch_football: "tv", neighbours: "neighbours", cook_coalpot: "coalpot", cook_kitchen: "kitchen", devotion: null, music: "tv", work_from_home: "tv",
+};
+const ACT_ICON: Record<string, string> = {
+  shower: "🚿", shared_bath: "🪣", bucket_bath: "🪣", laundry: "🧺", toilet_public: "🚻", pool_swim: "🏊", terrace: "🍹", watch_tv: "📺", watch_football: "⚽",
+  neighbours: "🗣️", cook_coalpot: "🔥", cook_kitchen: "🍳", devotion: "🙏", music: "🎶", work_from_home: "💻",
+};
+const ACT_DOING: Record<string, string> = {
+  shower: "Showering", shared_bath: "Bathing in the compound bathroom", bucket_bath: "Bucket bath", laundry: "Washing clothes", toilet_public: "At the public toilet", pool_swim: "Swimming",
+  terrace: "Relaxing outside", watch_tv: "Watching TV", watch_football: "Watching the match", neighbours: "Chatting with the neighbours", cook_coalpot: "Cooking on the coal pot",
+  cook_kitchen: "Cooking", devotion: "Praying", music: "Playing music", work_from_home: "Working from home",
+};
+
 const FOCUS: Record<string, string[]> = {
+  bed: ["devotion"],
   bath: ["shower", "shared_bath", "bucket_bath", "toilet_public"],
   tv: ["watch_tv", "watch_football"],
   kitchen: ["cook_kitchen", "cook_coalpot"],
@@ -328,6 +344,12 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
   const items = state.items.map((i) => i.itemId);
   const list = HOME_ACTIVITIES.filter((a) => (focus && FOCUS[focus] ? FOCUS[focus].includes(a.id) : true));
   const showSleep = !focus || focus === "bed";
+  // Close the sheet and let your character walk over and do it.
+  const doIt = (activity: string, label: string, icon: string, minutes: number, run: () => Promise<{ ok: boolean }>, spot: (typeof ACT_SPOT)[string]) => {
+    onClose();
+    if (world) void world.doActivity(spot, activity, label, icon, minutes, run);
+    else void run();
+  };
   return (
     <Sheet title={`🏠 ${spec.label}`} sub={`${spec.blurb} Comfort ${comfort}.`} onClose={onClose}>
       <div className="row" style={{ flexWrap: "wrap", gap: 6, marginTop: 10 }}>
@@ -338,8 +360,8 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
       </div>
       {showSleep && (
         <div className="col" style={{ marginTop: 12 }}>
-          <button className="btn primary block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 8 }); if (r.ok) onClose(); }}>Sleep 8 hours · ⚡ +{52 + comfort * 6}</button>
-          <button className="btn block" disabled={busy} onClick={async () => { const r = await act({ type: "sleep", hours: 2 }); if (r.ok) onClose(); }}>Nap 2 hours · ⚡ +{14 + comfort * 2}</button>
+          <button className="btn primary block" disabled={busy} onClick={() => doIt("sleep", "Sleeping", "😴", 480, () => act({ type: "sleep", hours: 8 }), "bed")}>Sleep 8 hours · ⚡ +{52 + comfort * 6}</button>
+          <button className="btn block" disabled={busy} onClick={() => doIt("nap", "Napping", "😴", 120, () => act({ type: "sleep", hours: 2 }), "bed")}>Nap 2 hours · ⚡ +{14 + comfort * 2}</button>
         </div>
       )}
       <h3>{focus && focus !== "bed" ? "Here" : "At home"}</h3>
@@ -353,7 +375,7 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
               <div className="tiny muted">{ok ? a.note(spec) : "Not in this home"} · {a.minutes >= 60 ? `${Math.round(a.minutes / 6) / 10}h` : `${a.minutes}m`}{a.cost ? ` · ${money(a.cost * 100)}` : ""}</div>
               <EffectsPreview effects={a.effects} />
             </div>
-            <button className="btn primary sm" disabled={busy || !ok} onClick={() => act({ type: "home_activity", activity: a.id })}>{a.verb}</button>
+            <button className="btn primary sm" disabled={busy || !ok} onClick={() => doIt(a.id, ACT_DOING[a.id] ?? a.label, ACT_ICON[a.id] ?? "🏠", a.minutes, () => act({ type: "home_activity", activity: a.id }), a.id === "cook_kitchen" && spec.kitchen === "coalpot" ? "coalpot" : a.id === "cook_coalpot" && spec.kitchen !== "coalpot" ? "kitchen" : ACT_SPOT[a.id] ?? null)}>{a.verb}</button>
           </div>
         );
       })}

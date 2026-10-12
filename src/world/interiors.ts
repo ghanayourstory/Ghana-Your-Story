@@ -7,16 +7,35 @@ import { Batcher, G } from "./batch.ts";
 import * as T from "./textures.ts";
 import type { HomeSpec } from "../../shared/homes.ts";
 
+export type Pose = "lie" | "sit" | "squat" | "stand" | "bath" | "swim" | "hidden";
+export interface SpotUse {
+  /** Where the body goes (feet, or hips when sitting / lying). */
+  x: number; y: number; z: number;
+  /** What the person faces (or, lying down, where the head points). */
+  look: [number, number];
+  pose: Pose;
+}
 export interface InteriorSpot {
   id: "bed" | "bath" | "tv" | "kitchen" | "coalpot" | "neighbours" | "terrace" | "pool" | "exit";
   pos: THREE.Vector3;
   label: string;
+  use?: SpotUse;
+}
+/** A wall the camera can cut down when it stands between you and the camera. */
+export interface CutWall {
+  mesh: THREE.Mesh;
+  axis: "x" | "z";
+  c: number;
+  h: number;
+  /** Bottom of the piece (0 for walls, above the door for lintels). */
+  base: number;
 }
 export interface Interior {
   group: THREE.Group;
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   colliders: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   spots: InteriorSpot[];
+  walls: CutWall[];
   door: THREE.Vector3;
   bed: THREE.Vector3;
   size: [number, number];
@@ -140,6 +159,23 @@ class Room {
   extra = new THREE.Group();
   colliders: Interior["colliders"] = [];
   spots: InteriorSpot[] = [];
+  walls: CutWall[] = [];
+  uses = new Map<InteriorSpot["id"], SpotUse>();
+  /** Full wall height for this home; low "cut" walls are raised to it and cut by the camera instead. */
+  wallH = 2.9;
+  /** A solid, separately drawn wall piece (so it can be cut away). */
+  cutBox(m: M, x: number, y: number, z: number, w: number, h: number, d: number, solid = true) {
+    const mesh = new THREE.Mesh(G.box, m);
+    mesh.position.set(x, y, z);
+    mesh.scale.set(w, h, d);
+    this.extra.add(mesh);
+    const axis = w >= d ? "x" : "z";
+    this.walls.push({ mesh, axis, c: axis === "x" ? z : x, h, base: y - h / 2 });
+    if (solid) this.colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+  }
+  use(id: InteriorSpot["id"], x: number, y: number, z: number, look: [number, number], pose: Pose) {
+    this.uses.set(id, { x, y, z, look, pose });
+  }
   box(m: M, x: number, y: number, z: number, w: number, h: number, d: number, solid = false, ry = 0) {
     this.b.add(G.box, m, [x, y, z], [0, ry, 0], [w, h, d]);
     if (solid) this.colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
@@ -152,20 +188,21 @@ class Room {
   }
   /** A wall from (x0,z0) to (x1,z1), axis-aligned, with optional door gap [from,to] along it. */
   wall(m: M, x0: number, z0: number, x1: number, z1: number, h: number, gap?: [number, number], t = 0.14) {
+    if (h <= 1.2) h = this.wallH;
     const along = x0 === x1 ? "z" : "x";
     const a0 = along === "x" ? Math.min(x0, x1) : Math.min(z0, z1), a1 = along === "x" ? Math.max(x0, x1) : Math.max(z0, z1);
     const segs: [number, number][] = gap ? [[a0, gap[0]], [gap[1], a1]] : [[a0, a1]];
     for (const [s, e] of segs) {
       if (e - s < 0.05) continue;
       const mid = (s + e) / 2, len = e - s;
-      if (along === "x") this.box(m, mid, h / 2, z0, len, h, t, true);
-      else this.box(m, x0, h / 2, mid, t, h, len, true);
+      if (along === "x") this.cutBox(m, mid, h / 2, z0, len, h, t);
+      else this.cutBox(m, x0, h / 2, mid, t, h, len);
     }
     if (gap && h > 2.3) {
       // Lintel over the doorway.
       const mid = (gap[0] + gap[1]) / 2, len = gap[1] - gap[0];
-      if (along === "x") this.box(m, mid, (h + 2.1) / 2, z0, len, h - 2.1, t);
-      else this.box(m, x0, (h + 2.1) / 2, mid, t, h - 2.1, len);
+      if (along === "x") this.cutBox(m, mid, (h + 2.1) / 2, z0, len, h - 2.1, t, false);
+      else this.cutBox(m, x0, (h + 2.1) / 2, mid, t, h - 2.1, len, false);
     }
   }
   door(x: number, z: number, along: "x" | "z", open = 1.1) {
@@ -415,6 +452,9 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         r.wall(wallM, -0.4, z0, -0.4, z1, 1.1, [z0 + 2.2, z0 + 3.1]);
         bed(r, -2.3, z0 + 1.25, "double", "wood", "#1F5AA6");
         bedPos = new THREE.Vector3(-1.2, 0, z0 + 2.2);
+        r.use("bed", -2.3, 0.72, z0 + 1.35, [-2.3, z0], "lie");
+        r.use("tv", 1.6, 0.5, z0 + 2.55, [0.6, z0 + 0.35], "sit");
+        r.spot("tv", 1.6, z0 + 1.9, "Sit in the hall");
         wardrobe(r, -3.05, z0 + 3.1, 0.9, 1);
         sofaSet(r, 1.6, z0 + 2.55, "wooden", 1);
         coffeeTable(r, 1.6, z0 + 1.55, false);
@@ -422,8 +462,8 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         frame(r, 1.2, 2.0, z0 + 0.09);
         if (!has("tv32") && !has("smart_tv65")) { r.box(MAT.darkWood(), 0.6, 0.3, z0 + 0.35, 1.1, 0.6, 0.45, true); r.box(MAT.black(), 0.6, 0.85, z0 + 0.3, 0.6, 0.45, 0.25); }
       } else {
-        if (has("king_bed") || has("bed_frame")) bed(r, -0.8, z0 + 1.25, "double", "wood", "#C8452C");
-        else mattressFloor(r, -1.1, z0 + 1.15);
+        if (has("king_bed") || has("bed_frame")) { bed(r, -0.8, z0 + 1.25, "double", "wood", "#C8452C"); r.use("bed", -0.8, 0.72, z0 + 1.35, [-0.8, z0], "lie"); }
+        else { mattressFloor(r, -1.1, z0 + 1.15); r.use("bed", -1.1, 0.22, z0 + 1.2, [-1.1, z0], "lie"); }
         bedPos = new THREE.Vector3(0.2, 0, z0 + 1.5);
         r.box(MAT.color("#4a6b8a", 0.6), 1.35, 0.35, z0 + 0.4, 0.9, 0.7, 0.5, true); // chest of drawers
         r.box(MAT.color("#ddd"), -1.85, 1.9, z0 + 2.2, 0.01, 0.01, 2.2); // rope wardrobe
@@ -435,6 +475,8 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       if (hall) gasCylinderCooker(r, 1.6, z1 + 0.6); else coalPot(r, 1.3, z1 + 0.7);
       plasticChairs(r, -2.2, z1 + 1.2, 2);
       r.spot(hall ? "kitchen" : "coalpot", hall ? 2.1 : 1.3, z1 + 1.4, hall ? "Cook on the gas" : "Coal pot");
+      if (hall) r.use("kitchen", 1.6, 0, z1 + 1.25, [1.6, z1 + 0.6], "stand");
+      else r.use("coalpot", 1.3, 0, z1 + 1.3, [1.3, z1 + 0.7], "squat");
       // Neighbours' rooms along the sides with curtains in their doorways.
       for (const sx of [-1, 1]) for (let k = 0; k < 2; k++) {
         const x = sx * (roomW / 2 + 1.6 + k * 2.6);
@@ -450,13 +492,16 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.box(MAT.color("#C8452C"), 5.16, 2.15, 4.7, 0.02, 0.22, 0.6);
       r.extra.add(signSprite("BATH • TOILET", 5.1, 2.6, 4.2));
       r.spot("bath", 4.6, 4.2, "Shared bathroom");
+      r.use("bath", 5.0, 0, 3.7, [6.2, 3.7], "hidden");
       // Standpipe tap with gallons, clothes line, a bench for evening chats.
       r.cyl(MAT.steel(), -6.2, 0.5, 4.8, 0.04, 1.0);
       for (let i = 0; i < 3; i++) r.cyl(MAT.color("#F2B705", 0.5), -5.6 + i * 0.4, 0.25, 5.1, 0.15, 0.5);
       clothesLine(r, -5.8, -1.2, 2.2);
       r.box(MAT.darkWood(), -3.5, 0.4, 4.4, 2.2, 0.08, 0.4, true);
       r.spot("neighbours", -3.5, 3.9, "Neighbours");
-      r.box(MAT.plaster("#cdbf9f"), 0, 1.25, cz1 + 0.1, W, 2.5, 0.2); // front compound wall
+      r.use("neighbours", -3.5, 0.44, 4.4, [-3.5, 2.5], "sit");
+      r.cutBox(MAT.plaster("#cdbf9f"), -W / 4 - 0.4, 1.25, cz1 + 0.1, W / 2 - 0.8, 2.5, 0.2); // front compound wall
+      r.cutBox(MAT.plaster("#cdbf9f"), W / 4 + 0.4, 1.25, cz1 + 0.1, W / 2 - 0.8, 2.5, 0.2);
       door = new THREE.Vector3(0, 0, cz1 - 0.6);
       lamp(0, 2.6, z0 + 1.9, 5, 7);
       lamp(0, 3, 3, 3, 12);
@@ -477,6 +522,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.b.add(G.cone, MAT.thatch(), [cx, 3.3, cz - 0.6], [0, 0, 0], [2.9, 1.6, 2.2]);
       r.box(MAT.color("#d8b878"), cx - 0.7, 0.04, cz - 0.6, 1.2, 0.06, 1.9); // sleeping mat
       bedPos = new THREE.Vector3(cx + 0.4, 0, cz - 0.3);
+      r.use("bed", cx - 0.7, 0.08, cz - 0.5, [cx - 0.7, cz - 2], "lie");
       for (let i = 0; i < 3; i++) r.cyl(MAT.color("#8a4b2a", 0.95), cx + 1.3, 0.25 + i * 0.4, cz - 1.2, 0.3 - i * 0.05, 0.38); // stacked clay pots
       r.cyl(MAT.color("#c9a227", 0.8), cx - 1.6, 0.15, cz - 0.3, 0.25, 0.25); // calabash
       // Courtyard: granary, bathing enclosure, coal pot, water pots.
@@ -487,11 +533,14 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.wall(MAT.mud(), -5.5, 2, -5.5, 4, 1.3);
       r.cyl(MAT.color("#2e6fae", 0.6), -4.8, 0.2, 3, 0.22, 0.4);
       r.spot("bath", -3.8, 3.2, "Bucket bath");
+      r.use("bath", -4.6, 0, 3.3, [-4.8, 3], "bath");
       coalPot(r, 1.8, 1.2);
       r.spot("coalpot", 1.8, 2, "Cook");
+      r.use("coalpot", 1.8, 0, 1.75, [1.8, 1.2], "squat");
       for (let i = 0; i < 3; i++) r.cyl(MAT.color("#7a3f22", 0.95), -1.5 + i * 0.6, 0.35, 0.8, 0.3, 0.7);
       r.box(MAT.darkWood(), 3.5, 0.3, 3, 2, 0.08, 0.5, true);
       r.spot("neighbours", 3.5, 3.6, "Sit with the family");
+      r.use("neighbours", 3.5, 0.34, 3, [3.5, 5], "sit");
       r.wall(MAT.mud(), -7, 6, 7, 6, 1.4, [-0.8, 0.8]);
       door = new THREE.Vector3(0, 0, 5.4);
       lamp(0, 2, -3, 4, 7);
@@ -519,9 +568,11 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       sink(r, bx0 + 0.8, -D / 2 + 0.3);
       shower(r, W / 2 - 0.55, -D / 2 + 0.55, flat);
       r.spot("bath", bx0 + 0.6, bz1 - 0.6, "Bathroom");
+      r.use("bath", W / 2 - 0.55, 0, -D / 2 + 0.6, [W / 2 - 0.55, -D / 2], "bath");
       // Kitchenette along the left wall.
       kitchenette(r, -W / 2 + 0.4, flat ? 1.2 : 0.8, "z");
       r.spot("kitchen", -W / 2 + 1.3, flat ? 1.2 : 0.8, "Kitchenette");
+      r.use("kitchen", -W / 2 + 1.0, 0, flat ? 1.2 : 0.8, [-W / 2, flat ? 1.2 : 0.8], "stand");
       if (flat) {
         // Bedroom back-left behind a partition; living room in front.
         r.wall(wallM, -W / 2, -0.4, 0.4, -0.4, 1.1, [-0.9, 0.0]);
@@ -529,19 +580,23 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         bed(r, -2.4, -D / 2 + 1.3, "double", has("king_bed") ? "upholstered" : "wood", "#2E86AB");
         wardrobe(r, -0.4, -D / 2 + 0.6, 1.2);
         bedPos = new THREE.Vector3(-1.2, 0, -1.2);
+        r.use("bed", -2.4, 0.72, -D / 2 + 1.4, [-2.4, -D / 2], "lie");
+        r.use("tv", 1.6, 0.5, 2.4, [1.6, -0.2], "sit");
         sofaSet(r, 1.6, 2.4, has("leather_sofa") ? "leather" : "fabric", 1);
         coffeeTable(r, 1.6, 1.3);
         rug(r, 1.6, 1.4, 2.6, 1.8);
       } else {
         bed(r, -1.6, -D / 2 + 1.3, "double", "wood", "#C8452C");
         bedPos = new THREE.Vector3(-0.3, 0, -D / 2 + 1.8);
+        r.use("bed", -1.6, 0.72, -D / 2 + 1.4, [-1.6, -D / 2], "lie");
+        r.use("tv", 0.4, 0.45, 1.6, [0.2, -D / 2], "sit");
         plasticChairs(r, 0.4, 1.6, 2);
         fan(r, 1.6, 0.6);
       }
       r.window(-W / 4, -D / 2, 1.2);
       ownedExtras(r, items, { tv: [flat ? 1.6 : 0.2, flat ? -0.2 : -D / 2 + 0.35], fridge: [-W / 2 + 0.45, flat ? 2.8 : 2.2], gen: [W / 2 - 0.5, D / 2 - 0.5] });
       if (has("tv32") || has("smart_tv65")) r.spot("tv", flat ? 1.6 : 0.2, flat ? 1.2 : -1, "TV");
-      if (flat) { r.box(MAT.bars(), 0, 1.0, D / 2 + 0.9, W, 1.0, 0.04); r.floor(MAT.floorTiles(), -W / 2, D / 2, W / 2, D / 2 + 1); r.spot("terrace", 2.5, D / 2 + 0.5, "Balcony"); }
+      if (flat) { r.box(MAT.bars(), 0, 1.0, D / 2 + 0.9, W, 1.0, 0.04); r.floor(MAT.floorTiles(), -W / 2, D / 2, W / 2, D / 2 + 1); r.spot("terrace", 2.5, D / 2 + 0.5, "Balcony"); r.use("terrace", 2.5, 0, D / 2 + 0.7, [2.5, D / 2 + 4], "stand"); }
       door = new THREE.Vector3(0, 0, D / 2 + 0.6);
       lamp(0, 2.7, 0, 6, 10);
       break;
@@ -566,37 +621,44 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       bed(r, -W / 2 + 2.0, -D / 2 + 1.3, big ? "king" : "double", big ? "upholstered" : "wood", "#B03A62");
       wardrobe(r, -1.7, -D / 2 + 2.8, 1.2, 1);
       bedPos = new THREE.Vector3(-W / 2 + 2.6, 0, back - 0.8);
+      r.use("bed", -W / 2 + 2.0, 0.72, -D / 2 + 1.4, [-W / 2 + 2.0, -D / 2], "lie");
       r.floor(MAT.bathTiles(), -1.0, -D / 2, 1.6, back, 0.01);
       toilet(r, 1.15, -D / 2 + 0.6);
       sink(r, -0.3, -D / 2 + 0.3);
       if (big) bathtub(r, 0.3, -D / 2 + 2.3); else shower(r, -0.5, -D / 2 + 1.6, true);
       r.spot("bath", 0.3, back + 0.6, "Bathroom");
+      if (big) r.use("bath", 0.3, 0.35, -D / 2 + 2.3, [-0.6, -D / 2 + 2.3], "lie");
+      else r.use("bath", -0.5, 0, -D / 2 + 1.6, [-0.5, -D / 2], "bath");
       bed(r, W / 2 - 2.0, -D / 2 + 1.3, "double", "wood", "#2E7D4F");
       r.window(-W / 2 + 2.0, -D / 2, 1.2);
       r.window(W / 2 - 2.0, -D / 2, 1.2);
       // Fitted kitchen front-left, living & dining front-right.
       fittedKitchen(r, -W / 2 + 0.15, back + 0.2, 3.4, 2.2, false);
       r.spot("kitchen", -W / 2 + 2.0, back + 2.0, "Kitchen");
+      r.use("kitchen", -W / 2 + 1.0, 0, back + 1.4, [-W / 2, back + 1.4], "stand");
       diningSet(r, -W / 2 + 2.4, D / 2 - 1.3, 6);
       sofaSet(r, W / 2 - 3.0, D / 2 - 1.0, has("leather_sofa") || big ? "l_shape" : "fabric", 1);
       coffeeTable(r, W / 2 - 3.0, D / 2 - 2.2);
       rug(r, W / 2 - 3.0, D / 2 - 2.1, 3.0, 2.2, "#1F7A4D");
       tvWall(r, W / 2 - 3.0, back + 0.35, has("smart_tv65") || big);
       r.spot("tv", W / 2 - 3.0, D / 2 - 2.6, "TV");
+      r.use("tv", W / 2 - 3.0, 0.5, D / 2 - 1.0, [W / 2 - 3.0, back], "sit");
       plant(r, W / 2 - 0.5, D / 2 - 0.5, true);
       frame(r, 0.4, 2.0, back + 0.1, 1.0, 0.7);
       if (has("split_ac") || big) r.box(MAT.white(), W / 2 - 1.2, 2.5, back + 0.12, 1.0, 0.3, 0.22);
       if (big) {
         // Garden in front of the house, inside the compound wall.
         r.floor(MAT.grass(), -W / 2, D / 2, W / 2, D / 2 + 4);
-        r.box(MAT.plaster("#e9dcc6"), 0, 1.2, D / 2 + 4, W, 2.4, 0.25, true);
+        r.cutBox(MAT.plaster("#e9dcc6"), 0, 1.2, D / 2 + 4, W, 2.4, 0.25);
         for (const x of [-W / 2 + 1.5, W / 2 - 1.5]) plant(r, x, D / 2 + 2.5, true);
         r.spot("terrace", 3, D / 2 + 1.5, "Garden");
+        r.use("terrace", 3, 0, D / 2 + 1.8, [3, D / 2 + 4], "stand");
         door = new THREE.Vector3(0, 0, D / 2 + 3.2);
       } else {
         r.floor(MAT.floorTiles(), -W / 2, D / 2, W / 2, D / 2 + 1.2);
         r.box(MAT.bars(), 0, 1.0, D / 2 + 1.15, W, 1.0, 0.04);
         r.spot("terrace", 3, D / 2 + 0.7, "Balcony");
+        r.use("terrace", 3, 0, D / 2 + 0.85, [3, D / 2 + 4], "stand");
         door = new THREE.Vector3(0, 0, D / 2 + 0.7);
       }
       lamp(-2, 2.7, 1, 6, 12);
@@ -610,6 +672,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       const W = mansion ? 22 : pent ? 17 : 16, D = mansion ? 14 : pent ? 11 : 11;
       const H = mansion ? 6 : 3.4;
       const outside = pent ? 0 : 7;
+      r.wallH = H;
       bounds = { minX: -W / 2, maxX: W / 2, minZ: -D / 2, maxZ: D / 2 + outside + (pent ? 0 : 0) };
       r.floor(mansion ? MAT.marble() : pent ? MAT.wood() : MAT.marble(), -W / 2, -D / 2, W / 2, D / 2);
       const wallM = MAT.plaster(mansion ? "#f7f1e6" : "#f3efe8");
@@ -634,6 +697,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         r.box(MAT.color("#efe9df", 0.9), W / 2 + 2.5, 0.25, 0, 2.2, 0.5, 0.9, true); // lounger
         bounds.maxX = W / 2 + 4.8;
         r.spot("terrace", W / 2 + 2.5, 1.4, "Terrace");
+        r.use("terrace", W / 2 + 2.5, 0.5, 0.2, [W / 2 + 2.5, -1.2], "lie");
       } else r.wall(wallM, W / 2, -D / 2, W / 2, D / 2, H);
       r.wall(wallM, -W / 2, D / 2, W / 2, D / 2, 1.0, mansion ? [-1.4, 1.4] : [-0.8, 0.8]);
       if (mansion) {
@@ -664,9 +728,11 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       rug(r, lx - 0.4, 1.3, 4, 3, "#1F3A5F");
       tvWall(r, lx, -1.8, true);
       r.spot("tv", lx, 0.6, "TV");
+      r.use("tv", lx, 0.5, 2.6, [lx, -1.8], "sit");
       // Chef's kitchen.
       fittedKitchen(r, -W / 2 + 0.15, -D / 2 + (mansion ? 5 : 3.6), mansion ? 5 : 4.2, 2.2, true);
       r.spot("kitchen", -W / 2 + 2.4, -D / 2 + (mansion ? 8.3 : 6.9), "Kitchen");
+      r.use("kitchen", -W / 2 + 1.0, 0, -D / 2 + (mansion ? 6.5 : 5.2), [-W / 2, -D / 2 + (mansion ? 6.5 : 5.2)], "stand");
       if (!mansion) diningSet(r, -W / 2 + 2.6, D / 2 - 1.4, 8, MAT.darkMarble());
       // Master suite back-left with an ensuite and a freestanding tub.
       const sx0 = -W / 2, sx1 = -W / 2 + (mansion ? 7 : 6.5), sz1 = -D / 2 + 3.4;
@@ -674,11 +740,13 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.wall(wallM, sx1, -D / 2, sx1, sz1, pent ? 3.4 : H);
       bed(r, sx0 + 2.2, -D / 2 + 1.35, "king", "upholstered", "#2b2f36");
       bedPos = new THREE.Vector3(sx0 + 3.5, 0, sz1 - 0.8);
+      r.use("bed", sx0 + 2.2, 0.72, -D / 2 + 1.45, [sx0 + 2.2, -D / 2], "lie");
       r.wall(wallM, sx1 - 2.6, -D / 2, sx1 - 2.6, sz1, 2.6, [sz1 - 1.2, sz1 - 0.3]);
       r.floor(MAT.marble(), sx1 - 2.6, -D / 2, sx1, sz1, 0.01);
       bathtub(r, sx1 - 1.3, -D / 2 + 0.8);
       sink(r, sx1 - 0.5, -D / 2 + 2.2);
       r.spot("bath", sx1 - 1.3, sz1 - 0.6, "Ensuite");
+      r.use("bath", sx1 - 1.3, 0.35, -D / 2 + 0.8, [sx1 - 2.2, -D / 2 + 0.8], "lie");
       plant(r, -W / 2 + 0.6, D / 2 - 0.6, true);
       plant(r, W / 2 - 0.6, D / 2 - 0.6, true);
       if (!pent) {
@@ -690,9 +758,11 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         r.box(MAT.water(), 0, 0.02, D / 2 + 3.5, 9, 0.02, 3);
         r.colliders.push({ minX: -4, maxX: 4, minZ: D / 2 + 2, maxZ: D / 2 + 5 });
         r.spot("pool", 4.8, D / 2 + 3.5, "Pool");
+        r.use("pool", 1, -0.25, D / 2 + 3.5, [-3, D / 2 + 3.5], "swim");
         for (let i = 0; i < 3; i++) r.box(MAT.white(), -7 + i * 1.2, 0.2, D / 2 + 3.5, 0.7, 0.3, 1.8, true);
-        r.box(MAT.plaster("#e9dcc6"), 0, 1.4, D / 2 + outside, W, 2.8, 0.3, true);
-        r.box(MAT.color("#2b2b2b", 0.4, 0.7), 0, 1.3, D / 2 + outside - 0.1, 3, 2.4, 0.08); // gate
+        r.cutBox(MAT.plaster("#e9dcc6"), -W / 4 - 0.75, 1.4, D / 2 + outside, W / 2 - 1.5, 2.8, 0.3);
+        r.cutBox(MAT.plaster("#e9dcc6"), W / 4 + 0.75, 1.4, D / 2 + outside, W / 2 - 1.5, 2.8, 0.3);
+        r.cutBox(MAT.color("#2b2b2b", 0.4, 0.7), 0, 1.3, D / 2 + outside - 0.1, 3, 2.4, 0.08); // gate
         r.extra.add(signSprite(mansion ? "GATEHOUSE" : "GATE", -W / 2 + 2, 2.8, D / 2 + outside - 0.4));
         r.box(MAT.plaster("#e9dcc6"), -W / 2 + 2, 1.3, D / 2 + outside - 1.5, 2.4, 2.6, 2.2, true); // gatehouse
         door = new THREE.Vector3(0, 0, D / 2 + outside - 0.8);
@@ -710,11 +780,12 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
 
   r.spot("bed", bedPos.x, bedPos.z, "Bed");
   r.spot("exit", door.x, door.z, "Go outside");
+  for (const sp of r.spots) sp.use = r.uses.get(sp.id);
   const group = r.b.build();
   group.add(r.extra);
   group.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return {
-    group, bounds, colliders: r.colliders, spots: r.spots, door, bed: bedPos,
+    group, bounds, colliders: r.colliders, spots: r.spots, walls: r.walls, door, bed: bedPos,
     size: [bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ],
   };
 }

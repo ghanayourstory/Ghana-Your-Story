@@ -6,7 +6,8 @@ import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, type
 import { CityLife } from "./life.ts";
 import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildSite } from "./construction.ts";
-import { buildHomeInterior, type Interior } from "./interiors.ts";
+import { buildHomeInterior, type Interior, type InteriorSpot, type SpotUse } from "./interiors.ts";
+import { activityFx, applyPose, clearPose, findPath, fxFor, type Fx } from "./homelife.ts";
 import type { HomeSpec } from "../../shared/homes.ts";
 import { buildAircraft, buildVehicle, spinWheels, vehicleKindForModel, type AircraftKind, type VehicleKind, type VehicleRig } from "./vehicles.ts";
 import { VEHICLES } from "../../shared/life.ts";
@@ -32,6 +33,22 @@ export interface WorldCallbacks {
   onTaxiArrived: () => void;
   /** A ride started (show its banner) or ended (null). */
   onRide?: (r: { label: string; icon: string } | null) => void;
+  /** You tapped something at home and walked up to it. */
+  onSpot?: (id: InteriorSpot["id"]) => void;
+  /** Doing something at home: progress 0..1, or null when done. */
+  onActivity?: (a: { label: string; icon: string; p: number } | null) => void;
+}
+
+interface Doing {
+  use: SpotUse;
+  stand: THREE.Vector3;
+  label: string;
+  icon: string;
+  t: number;
+  dur: number;
+  fx: Fx | null;
+  lastReport: number;
+  resolve: (ok: boolean) => void;
 }
 
 /** You, in a vehicle, actually travelling: pick-up, the drive out, the drive in, drop-off. */
@@ -109,6 +126,11 @@ export class World {
   frozen = false; // while a dialogue is open
   talkingTo: string | null = null;
   private ride: Ride | null = null;
+  private path: THREE.Vector3[] = [];
+  private arriveCb: (() => void) | null = null;
+  private doing: Doing | null = null;
+  private raycaster = new THREE.Raycaster();
+  private outsideCam: { yaw: number; pitch: number; dist: number } | null = null;
   private rideApplying = false;
   private leaving: { rig: VehicleRig; dir: number; speed: number }[] = [];
   private fadeEl: HTMLDivElement;
@@ -126,11 +148,14 @@ export class World {
     setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
     this.atmo = new Atmosphere(this.scene, this.renderer, quality === "high" ? 2048 : 1024);
     this.ringMat = new THREE.MeshBasicMaterial({ color: "#F2B705", transparent: true, opacity: 0.8, depthWrite: false });
-    this.interiorScene.background = new THREE.Color("#1a1410");
-    this.interiorScene.add(new THREE.HemisphereLight("#fff1dc", "#3a2a1a", 1.2));
-    const idir = new THREE.DirectionalLight("#fff4e0", 1.2);
-    idir.position.set(4, 10, 6);
+    this.interiorScene.background = new THREE.Color("#20262f");
+    this.interiorScene.add(new THREE.HemisphereLight("#fff4e4", "#5a4632", 1.9));
+    const idir = new THREE.DirectionalLight("#fff1d6", 2.2);
+    idir.position.set(6, 14, 9);
     idir.castShadow = true;
+    idir.shadow.mapSize.set(2048, 2048);
+    idir.shadow.bias = -0.0004;
+    Object.assign(idir.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 50 });
     this.interiorScene.add(idir);
     for (let i = 0; i < 6; i++) {
       const l = new THREE.PointLight("#ffc27a", 0, 22, 1.4);
@@ -309,6 +334,8 @@ export class World {
 
   enterHome(spec: HomeSpec, items: string[] = []) {
     if (this.inside || !this.player) return;
+    this.path = [];
+    this.arriveCb = null;
     this.interior = buildHomeInterior(spec, items);
     this.interiorScene.add(this.interior.group);
     this.scene.remove(this.player.root);
@@ -316,6 +343,12 @@ export class World {
     this.pos.copy(this.interior.door).add(new THREE.Vector3(0, 0, -1.6));
     this.camTarget.copy(this.pos);
     this.inside = true;
+    // A high, dollhouse view looking into the home from the front.
+    this.outsideCam = { yaw: this.camYaw, pitch: this.camPitch, dist: this.camDist };
+    this.camYaw = 0.35;
+    this.camPitch = 0.95;
+    this.camDist = THREE.MathUtils.clamp(Math.max(...this.interior.size) * 0.85, 9, 22);
+    this.boom = this.camDist;
   }
 
   /** Walk up to your front door (when your home is in this district) and go in. */
@@ -330,6 +363,9 @@ export class World {
 
   exitHome() {
     if (!this.inside || !this.interior || !this.player || !this.district) return;
+    if (this.doing) { const d = this.doing; this.doing = null; clearPose(this.player); if (d.fx) { this.interiorScene.remove(d.fx.group); d.fx.dispose(); } this.cb.onActivity?.(null); d.resolve(true); }
+    this.path = [];
+    this.arriveCb = null;
     this.interiorScene.remove(this.interior.group);
     this.interiorScene.remove(this.player.root);
     this.scene.add(this.player.root);
@@ -337,6 +373,114 @@ export class World {
     this.camTarget.copy(this.pos);
     this.inside = false;
     this.interior = null;
+    if (this.outsideCam) { this.camYaw = this.outsideCam.yaw; this.camPitch = this.outsideCam.pitch; this.camDist = this.outsideCam.dist; this.outsideCam = null; }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Home life: tap to walk, tap things to use them, walls cut away.
+
+  private tap(cx: number, cy: number) {
+    if (!this.inside || !this.interior || this.ride || this.doing || this.frozen) return;
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hits = this.raycaster.intersectObject(this.interior.group, true).filter((h) => h.object.visible && (h.object as THREE.Mesh).isMesh);
+    if (!hits.length) return;
+    const p = hits[0].point;
+    // Did you tap a thing you can use?
+    let best: InteriorSpot | null = null, bd = 1.5;
+    for (const sp of this.interior.spots) {
+      const ax = sp.use?.x ?? sp.pos.x, az = sp.use?.z ?? sp.pos.z;
+      const d = Math.min(Math.hypot(p.x - ax, p.z - az), Math.hypot(p.x - sp.pos.x, p.z - sp.pos.z));
+      if (d < bd) { bd = d; best = sp; }
+    }
+    if (best) {
+      const sp = best;
+      this.walkTo(sp.pos, () => this.cb.onSpot?.(sp.id));
+    } else {
+      const b = this.interior.bounds;
+      this.walkTo(new THREE.Vector3(THREE.MathUtils.clamp(p.x, b.minX + 0.3, b.maxX - 0.3), 0, THREE.MathUtils.clamp(p.z, b.minZ + 0.3, b.maxZ - 0.3)), null);
+    }
+  }
+
+  walkTo(target: THREE.Vector3, then: (() => void) | null) {
+    if (!this.interior) return;
+    this.path = findPath(this.interior, this.pos, target);
+    this.arriveCb = then;
+  }
+
+  /**
+   * Walk to the thing, ask the server to do it, then act it out (lying in bed,
+   * sitting watching TV, squatting at the coal pot...) with a progress bar.
+   */
+  doActivity(spotId: InteriorSpot["id"] | null, activity: string, label: string, icon: string, minutes: number, run: () => Promise<{ ok: boolean }>): Promise<boolean> {
+    return new Promise((resolve) => {
+      if (!this.inside || !this.interior || this.doing) { run().then((r) => resolve(r.ok)); return; }
+      const spot = spotId ? this.interior.spots.find((s) => s.id === spotId) : undefined;
+      const start = async () => {
+        const r = await run();
+        if (!r.ok) return resolve(false);
+        const use: SpotUse = spot?.use ?? { x: this.pos.x, y: 0, z: this.pos.z, look: [this.pos.x + Math.sin(this.yaw), this.pos.z + Math.cos(this.yaw)], pose: "stand" };
+        const kind = fxFor(activity, use.pose);
+        let fx: Fx | null = null;
+        if (kind) {
+          const at = kind === "steam" && use.pose !== "hidden" ? new THREE.Vector3(use.look[0], 0.9, use.look[1])
+            : kind === "smoke" ? new THREE.Vector3(use.look[0], 0.45, use.look[1])
+            : kind === "sleep" ? new THREE.Vector3(use.look[0] * 0.15 + use.x * 0.85, use.y + 0.3, use.look[1] * 0.15 + use.z * 0.85)
+            : new THREE.Vector3(use.x, use.pose === "hidden" ? 2.2 : use.y, use.z);
+          fx = activityFx(kind, at, use.look);
+          this.interiorScene.add(fx.group);
+        }
+        const dur = THREE.MathUtils.clamp(minutes / 16, 3, 10);
+        this.doing = { use, stand: (spot?.pos ?? this.pos).clone(), label, icon, t: 0, dur, fx, lastReport: -1, resolve };
+        this.cb.onActivity?.({ label, icon, p: 0 });
+      };
+      if (spot) this.walkTo(spot.pos, () => void start());
+      else void start();
+    });
+  }
+
+  /** Stop what you're doing (tap the bar). */
+  stopActivity() {
+    if (this.doing) this.doing.t = this.doing.dur;
+  }
+
+  private updateDoing(dt: number, t: number) {
+    const d = this.doing!;
+    d.t += dt;
+    applyPose(this.player!, d.use, t);
+    d.fx?.update(dt, t);
+    const p = Math.min(1, d.t / d.dur);
+    if (p - d.lastReport > 0.02 || p === 1) {
+      d.lastReport = p;
+      this.cb.onActivity?.({ label: d.label, icon: d.icon, p });
+    }
+    if (p >= 1) {
+      this.doing = null;
+      clearPose(this.player!);
+      if (d.fx) { this.interiorScene.remove(d.fx.group); d.fx.dispose(); }
+      this.pos.copy(d.stand);
+      this.vel.set(0, 0, 0);
+      this.cb.onActivity?.(null);
+      d.resolve(true);
+    }
+  }
+
+  /** Walls between the camera and you drop to a stub, like a dollhouse. */
+  private cutWalls(dt: number) {
+    // "Walls down": only the walls along the far edges of the home stay up.
+    const cam = this.camera.position, b = this.interior!.bounds;
+    const farZ = cam.z > (b.minZ + b.maxZ) / 2 ? b.minZ : b.maxZ;
+    const farX = cam.x > (b.minX + b.maxX) / 2 ? b.minX : b.maxX;
+    for (const w of this.interior!.walls) {
+      const far = w.axis === "x" ? farZ : farX;
+      const cut = Math.abs(w.c - far) > 0.6;
+      const m = w.mesh;
+      if (w.base > 0.5) { m.visible = !cut; continue; } // lintels over doors
+      const target = cut ? Math.min(0.35, w.h) : w.h;
+      m.scale.y += (target - m.scale.y) * Math.min(1, dt * 8);
+      m.position.y = w.base + m.scale.y / 2;
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -586,7 +730,9 @@ export class World {
     let lx = 0, ly = 0;
     const pointers = new Map<number, { x: number; y: number }>();
     let pinch = 0;
+    let downAt = { x: 0, y: 0, t: 0 };
     this.canvas.addEventListener("pointerdown", (e) => {
+      downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
       this.audio.start();
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       dragging = true;
@@ -611,6 +757,7 @@ export class World {
       ly = e.clientY;
     });
     const end = (e: PointerEvent) => {
+      if (e.type === "pointerup" && pointers.size === 1 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8 && performance.now() - downAt.t < 450) this.tap(e.clientX, e.clientY);
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = 0;
       if (pointers.size === 0) dragging = false;
@@ -731,7 +878,24 @@ export class World {
       ix += this.joy.x;
       iz += this.joy.y;
     }
-    const mag = Math.min(1, Math.hypot(ix, iz));
+    // Tap-to-walk: follow the path unless you take over with the keys or stick.
+    let autoDir: THREE.Vector3 | null = null;
+    if (this.path.length && (ix || iz)) { this.path = []; this.arriveCb = null; }
+    if (this.doing) { ix = 0; iz = 0; }
+    else if (this.path.length) {
+      const next = this.path[0];
+      const to = new THREE.Vector3(next.x - this.pos.x, 0, next.z - this.pos.z);
+      if (to.length() < 0.14) {
+        this.path.shift();
+        if (!this.path.length) {
+          const cb = this.arriveCb;
+          this.arriveCb = null;
+          this.vel.set(0, 0, 0);
+          cb?.();
+        }
+      } else autoDir = to.normalize();
+    }
+    const mag = autoDir ? 1 : Math.min(1, Math.hypot(ix, iz));
     const running = this.run || this.keys.has("shift") || mag > 0.95 && (this.joy.x !== 0 || this.joy.y !== 0) && Math.hypot(this.joy.x, this.joy.y) > 0.98;
     const energy = this.state?.player.stats.energy ?? 50;
     // Real people walk about 1.35 m/s and jog about 3.4 m/s.
@@ -739,7 +903,7 @@ export class World {
     if (mag > 0.05) {
       const fwd = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw));
       const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-      const dir = fwd.multiplyScalar(iz).add(right.multiplyScalar(ix)).normalize();
+      const dir = autoDir ?? fwd.multiplyScalar(iz).add(right.multiplyScalar(ix)).normalize();
       this.vel.lerp(dir.multiplyScalar(maxSpeed * mag), Math.min(1, dt * (running ? 4 : 6)));
       const targetYaw = Math.atan2(this.vel.x, this.vel.z);
       let dy = targetYaw - this.yaw;
@@ -759,7 +923,8 @@ export class World {
       this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y - this.jumpYPrev, gy, Math.min(1, dt * 14)) + this.jumpY, this.pos.z);
       this.jumpYPrev = this.jumpY;
       this.player.root.rotation.y = this.yaw;
-      animatePerson(this.player, dt, this.jumpY > 0 ? 0 : this.vel.length());
+      animatePerson(this.player, dt, this.jumpY > 0 || this.doing ? 0 : this.vel.length());
+      if (this.doing) this.updateDoing(dt, t);
       // Tuck the legs while airborne.
       if (this.jumpY > 0.02 && "real" in this.player) {
         const b = this.player.bones;
@@ -771,9 +936,13 @@ export class World {
     }
 
     // Camera.
-    this.camTarget.lerp(this.pos, Math.min(1, dt * 6));
-    const cd = this.inside ? Math.min(this.camDist, 9) : this.camDist;
-    const cp = this.inside ? Math.max(this.camPitch, 0.9) : this.camPitch;
+    if (this.inside && this.interior) {
+      const b = this.interior.bounds;
+      const focus = this.pos.clone().lerp(new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2), 0.4);
+      this.camTarget.lerp(focus, Math.min(1, dt * 3));
+    } else this.camTarget.lerp(this.pos, Math.min(1, dt * 6));
+    const cd = this.camDist;
+    const cp = this.inside ? Math.max(this.camPitch, 0.7) : this.camPitch;
     const off = new THREE.Vector3(Math.sin(this.camYaw) * Math.cos(cp), Math.sin(cp), Math.cos(this.camYaw) * Math.cos(cp)).multiplyScalar(cd);
     const head = this.camTarget.clone().add(new THREE.Vector3(0, 1.2, 0));
     // Pull the camera in only for things genuinely taller than it, and ease the
@@ -795,6 +964,7 @@ export class World {
     this.camera.position.copy(head).add(off);
     this.camera.lookAt(this.camTarget.x, this.camTarget.y + 1.3, this.camTarget.z);
     if (this.ride) this.updateRide(dt);
+    if (this.inside && this.interior) this.cutWalls(dt);
     else this.camPos.copy(this.camera.position);
     this.updateLeaving(dt);
 
