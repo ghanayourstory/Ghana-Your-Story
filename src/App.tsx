@@ -97,6 +97,7 @@ function Game() {
   const [nearby, setNearby] = useState<Nearby | null>(null);
   const [panel, setPanel] = useState<Panel>(null);
   const [ride, setRide] = useState<{ label: string; icon: string } | null>(null);
+  const [driving, setDriving] = useState<{ name: string; kmh: number } | null>(null);
   const [doing, setDoing] = useState<{ label: string; icon: string; p: number } | null>(null);
   const [road, setRoad] = useState("");
   const [district, setDistrict] = useState<DistrictId>(state!.player.district);
@@ -121,6 +122,11 @@ function Game() {
       onRide: setRide,
       onSpot: (id) => (id === "exit" ? w.exitHome() : setPanel({ kind: "bed", focus: id })),
       onActivity: setDoing,
+      onDrive: setDriving,
+      onDriveEdge: () => {
+        toast({ text: "🗺️ End of the road here. Pick where to drive.", changes: [], tone: "info" });
+        setPanel({ kind: "travel", ctx: "phone" });
+      },
     }, quality);
     (window as unknown as { __world?: World }).__world = w; // handy for automated play-tests
     w.audio.muted = muted;
@@ -214,6 +220,8 @@ function Game() {
         if (world.hailTaxi()) toast({ text: "✋ You wave down a taxi. It's pulling over…", changes: [], tone: "info" });
         return;
       case "bed": return setPanel({ kind: "bed" });
+      case "car": return void world.enterCar(nearby.id);
+      case "car_exit": return world.exitCar();
       case "exit": return world.exitHome();
     }
   }, [nearby, world, state, toast]);
@@ -277,6 +285,12 @@ function Game() {
           <button className="btn small" onClick={() => world?.stopActivity()}>Stop</button>
         </div>
       )}
+      {driving && !ride && (
+        <div className="speedo">
+          <b className="num">{driving.kmh}</b><small>km/h</small>
+          <div className="tiny muted">{driving.name} · W/S drive, A/D steer, Shift to speed up</div>
+        </div>
+      )}
       {ride && (
         <div className="ride-banner">
           <span className="ride-icon">{ride.icon}</span>
@@ -295,12 +309,14 @@ function Game() {
         <div className="modal-wrap" onClick={closeNews}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="pill gold">🆕 Update · {BUILD_VERSION}</div>
-            <h2 style={{ margin: "10px 0 4px" }}>Live it, don't just click it 🏠</h2>
+            <h2 style={{ margin: "10px 0 4px" }}>Live it, don't just click it 🏠🚗</h2>
             <p className="muted small" style={{ marginTop: 0 }}>Your home is now a place you live in, and rides actually drive you there.</p>
             <div className="col small">
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
+              <div>🚗 <b>Drive your own car:</b> walk up to it and press Drive. W/S or the stick to drive, A/D to steer, Shift to speed up. Park anywhere. Drive to the end of the road to pick where to go next.</div>
+              <div>🏡 <b>Homes feel lived in:</b> tube lights, wall clocks, radios, fufu mortars, basins, chickens in the compound; pendant lamps, art and a piano in bigger homes. Softer shadows on High quality.</div>
               <div>🚻 Pay toilets at lorry stations, markets and malls. The green 🏠 button takes you home from anywhere.</div>
             </div>
             <div className="row" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>

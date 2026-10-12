@@ -7,7 +7,7 @@ import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import { Atmosphere } from "./atmosphere.ts";
-import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, type DistrictScene, type Interactable } from "./district.ts";
+import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, EXTENT_Z, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
 import { animatePerson, buildPerson, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildSite } from "./construction.ts";
@@ -26,7 +26,7 @@ import type { GameState } from "../../server/engine.ts";
 export type Quality = "low" | "medium" | "high";
 
 export interface Nearby {
-  kind: "npc" | "place" | "home" | "stop" | "plot" | "taxi" | "bed" | "exit" | "homespot";
+  kind: "npc" | "place" | "home" | "stop" | "plot" | "taxi" | "bed" | "exit" | "homespot" | "car" | "car_exit";
   id: string;
   label: string;
 }
@@ -42,6 +42,22 @@ export interface WorldCallbacks {
   onSpot?: (id: InteriorSpot["id"]) => void;
   /** Doing something at home: progress 0..1, or null when done. */
   onActivity?: (a: { label: string; icon: string; p: number } | null) => void;
+  /** You drove to the edge of the area: time to pick where to go. */
+  onDriveEdge?: () => void;
+  /** Driving state changed (speed in km/h, or null when you get out). */
+  onDrive?: (d: { name: string; kmh: number } | null) => void;
+}
+
+/** You, at the wheel of your own car. */
+interface Driving {
+  rig: VehicleRig;
+  type: string;
+  name: string;
+  speed: number;
+  heading: number;
+  steer: number;
+  edgeCooldown: number;
+  lastReport: number;
 }
 
 interface Doing {
@@ -72,6 +88,10 @@ interface Ride {
   pending: GameState | null;
   result: boolean | null;
   skip: boolean;
+  /** You were already driving this car: a failed trip hands it back to you. */
+  fromDrive?: { type: string; name: string; heading: number };
+  /** Your own car: it stays parked where it drops you. */
+  ownType?: string;
   resolve: (ok: boolean) => void;
 }
 
@@ -115,6 +135,8 @@ export class World {
   private siteKey = "";
   private parked: THREE.Group | null = null;
   private parkedKey = "";
+  private parkedCars: { rig: VehicleRig; type: string }[] = [];
+  private drive: Driving | null = null;
   private discovered = new Set<string>();
   private reported = new Set<string>();
   private nearby: Nearby | null = null;
@@ -349,9 +371,13 @@ export class World {
         this.parked!.add(a);
       });
     }
-    key.split(",").filter((t) => t && VEHICLES[t]?.category !== "aircraft").forEach((type, i) => {
+    this.parkedCars = [];
+    const mine = s.player.home.district === d.id ? (s.vehicles as { type: string; status: string }[]).filter((v) => v.status === "personal" && VEHICLES[v.type] && VEHICLES[v.type].category !== "aircraft").map((v) => v.type) : [];
+    mine.forEach((type, i) => {
+      if (this.drive?.type === type) return; // the one you're driving
       const def = VEHICLES[type];
       const v = buildVehicle(vehicleKindForModel(def?.model ?? "sedan"), 77 + i);
+      this.parkedCars.push({ rig: v, type });
       x += v.width / 2 + 0.5;
       v.group.position.set(x, 0.16, d.homeDoor.z + Math.sign(d.homeDoor.z) * 0.2);
       x += v.width / 2 + 0.5;
@@ -527,13 +553,27 @@ export class World {
   rideTo(mode: string, label: string, travel: () => Promise<{ ok: boolean }>): Promise<boolean> {
     if (this.ride) return Promise.resolve(false);
     if (this.inside) this.exitHome();
+    if (this.drive && mode !== "car") this.exitCar(); // park it and take the ride
     const road = ["taxi", "ride", "trotro", "car", "bus", "vip"].includes(mode) && !!this.district && !!this.life;
     return new Promise<boolean>((resolve) => {
-      const dir = Math.sign(this.pos.z) || 1;
+      let dir = Math.sign(this.pos.z) || 1;
+      let laneZ: number | null = null;
+      let fromDrive: Ride["fromDrive"];
       let rig: VehicleRig | null = null;
       let phase: Ride["phase"] = "fadeout";
       let x = this.pos.x;
-      if (road) {
+      if (road && this.drive && mode === "car") {
+        // Already at the wheel: just keep driving.
+        const dv = this.drive;
+        this.drive = null;
+        rig = dv.rig;
+        this.cb.onDrive?.(null);
+        x = rig.group.position.x;
+        fromDrive = { type: dv.type, name: dv.name, heading: dv.heading };
+        dir = Math.sign(Math.sin(dv.heading)) || 1;
+        laneZ = rig.group.position.z;
+        phase = "out";
+      } else if (road) {
         const waiting = mode === "taxi" ? this.life!.waitingTaxi(this.pos) : null;
         if (waiting) {
           rig = this.life!.takeCar(waiting);
@@ -546,8 +586,8 @@ export class World {
         }
         this.scene.add(rig.group);
       }
-      const lane = dir * 2.8;
-      this.ride = { icon: RIDE_ICON[mode] ?? "🚗", label, rig, dir, phase, x, lane, speed: phase === "pickup" ? 11 : 0, max: mode === "trotro" || mode === "bus" ? 13 : 16, stopX: this.pos.x + dir * 1.2, t: 0, pending: null, result: null, skip: false, resolve };
+      const lane = laneZ ?? dir * 2.8;
+      this.ride = { icon: RIDE_ICON[mode] ?? "🚗", label, rig, dir, phase, x, lane, speed: phase === "pickup" ? 11 : 0, max: mode === "trotro" || mode === "bus" ? 13 : 16, stopX: this.pos.x + dir * 1.2, t: 0, pending: null, result: null, skip: false, fromDrive, ownType: mode === "car" ? fromDrive?.type ?? this.ownCarType() : undefined, resolve };
       if (rig) this.placeRideCar();
       this.cb.onRide?.({ label, icon: this.ride.icon });
       travel().then((r) => { if (this.ride) this.ride.result = r.ok; }, () => { if (this.ride) this.ride.result = false; });
@@ -557,6 +597,10 @@ export class World {
   /** Jump to the next part of the ride. */
   skipRide() {
     if (this.ride) this.ride.skip = true;
+  }
+
+  private ownCarType(): string | undefined {
+    return (this.state?.vehicles as { type: string; status: string }[] | undefined)?.find((x) => x.status === "personal" && VEHICLES[x.type] && VEHICLES[x.type].category !== "aircraft")?.type;
   }
 
   private rideKind(mode: string): VehicleKind {
@@ -609,6 +653,7 @@ export class World {
         break;
       }
       case "out":
+        if (r.result === false) return this.endRide(false);
         r.speed = Math.min(r.max, r.speed + 3.5 * dt);
         r.x += r.speed * r.dir * dt;
         if (r.x * r.dir > edge - 12 || r.skip || r.t > 14) this.setFade((r.t > 14 || r.skip ? 1 : (r.x * r.dir - (edge - 12)) / 10));
@@ -634,7 +679,15 @@ export class World {
           this.yaw = r.dir > 0 ? 0 : Math.PI;
         }
         if (r.t > 0.6) {
-          if (r.rig) this.leaving.push({ rig: r.rig, dir: r.dir, speed: 0 });
+          if (r.rig && r.ownType && this.parkedCars.some((c) => c.type === r.ownType)) {
+            r.rig.group.removeFromParent(); // already parked at home
+          } else if (r.rig && r.ownType) {
+            // Your car stays where you parked it.
+            r.rig.group.removeFromParent();
+            if (!this.parked) { this.parked = new THREE.Group(); this.scene.add(this.parked); }
+            this.parked.add(r.rig.group);
+            this.parkedCars.push({ rig: r.rig, type: r.ownType });
+          } else if (r.rig) this.leaving.push({ rig: r.rig, dir: r.dir, speed: 0 });
           return this.endRide(true);
         }
         break;
@@ -691,7 +744,13 @@ export class World {
     this.ride = null;
     if (this.player) this.player.root.visible = true;
     this.setFade(0);
-    if (!ok && r.rig) this.leaving.push({ rig: r.rig, dir: r.dir, speed: r.speed });
+    if (!ok && r.rig && r.fromDrive && this.player) {
+      // Back behind the wheel where you were.
+      this.player.root.visible = false;
+      this.drive = { rig: r.rig, type: r.fromDrive.type, name: r.fromDrive.name, speed: 0, heading: r.fromDrive.heading, steer: 0, edgeCooldown: 3, lastReport: -1 };
+      r.rig.group.rotation.y = r.fromDrive.heading;
+      this.cb.onDrive?.({ name: r.fromDrive.name, kmh: 0 });
+    } else if (!ok && r.rig) this.leaving.push({ rig: r.rig, dir: r.dir, speed: r.speed });
     this.cb.onRide?.(null);
     r.resolve(ok);
   }
@@ -707,6 +766,124 @@ export class World {
       l.rig.group.removeFromParent();
       return false;
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Driving your own car.
+
+  get driving() {
+    return !!this.drive;
+  }
+
+  enterCar(type: string) {
+    const i = this.parkedCars.findIndex((c) => c.type === type);
+    if (i < 0 || !this.player || this.drive || this.ride) return false;
+    const { rig } = this.parkedCars.splice(i, 1)[0];
+    rig.group.removeFromParent();
+    this.scene.add(rig.group);
+    this.player.root.visible = false;
+    this.drive = { rig, type, name: VEHICLES[type]?.name ?? "Your car", speed: 0, heading: rig.group.rotation.y, steer: 0, edgeCooldown: 0, lastReport: -1 };
+    this.camPos.copy(this.camera.position);
+    this.cb.onDrive?.({ name: this.drive.name, kmh: 0 });
+    return true;
+  }
+
+  /** Park where you are and step out onto the kerb side. */
+  exitCar() {
+    const d = this.drive;
+    if (!d || !this.player) return;
+    this.drive = null;
+    const g = d.rig.group;
+    g.removeFromParent();
+    this.parked?.add(g);
+    this.parkedCars.push({ rig: d.rig, type: d.type });
+    // Driver's door is on the left; step out that side (or the other if it's blocked).
+    const left = new THREE.Vector3(Math.cos(d.heading), 0, -Math.sin(d.heading));
+    for (const side of [1, -1]) {
+      const p = g.position.clone().addScaledVector(left, side * (d.rig.width / 2 + 0.6)).setY(0);
+      if (!this.collides(p, 0.3)) { this.pos.copy(p); break; }
+      this.pos.copy(p);
+    }
+    this.vel.set(0, 0, 0);
+    this.player.root.visible = true;
+    this.cb.onDrive?.(null);
+  }
+
+  private updateDrive(dt: number) {
+    const d = this.drive!;
+    let throttle = 0, steer = 0;
+    if (!this.frozen) {
+      if (this.keys.has("w") || this.keys.has("arrowup")) throttle += 1;
+      if (this.keys.has("s") || this.keys.has("arrowdown")) throttle -= 1;
+      if (this.keys.has("a") || this.keys.has("arrowleft")) steer += 1;
+      if (this.keys.has("d") || this.keys.has("arrowright")) steer -= 1;
+      throttle += this.joy.y;
+      steer -= this.joy.x;
+    }
+    throttle = THREE.MathUtils.clamp(throttle, -1, 1);
+    steer = THREE.MathUtils.clamp(steer, -1, 1);
+    const max = this.keys.has("shift") ? 22 : 15; // ~55 km/h in town, 80 with your foot down
+    // Accelerate, brake (S while moving forward), reverse slowly, roll to a stop.
+    if (throttle > 0) d.speed += (d.speed < 0 ? 9 : 4.2) * throttle * dt;
+    else if (throttle < 0) d.speed += (d.speed > 0.5 ? 9 : 2.5) * throttle * dt;
+    else d.speed -= Math.sign(d.speed) * Math.min(Math.abs(d.speed), 2.2 * dt);
+    d.speed = THREE.MathUtils.clamp(d.speed, -5, max);
+    d.steer += (steer - d.steer) * Math.min(1, dt * 6);
+    // Turning radius tightens at low speed, like a real car.
+    const turn = d.steer * Math.min(1, Math.abs(d.speed) / 3) * (1.35 - Math.min(0.75, Math.abs(d.speed) / 30));
+    d.heading += turn * dt * Math.sign(d.speed || 1);
+    const g = d.rig.group;
+    const fwd = new THREE.Vector3(Math.sin(d.heading), 0, Math.cos(d.heading));
+    const before = g.position.clone();
+    g.position.addScaledVector(fwd, d.speed * dt);
+    g.rotation.y = d.heading;
+    // Bump into buildings, walls and other cars: two circles along the car's length.
+    const half = d.rig.length / 2 - d.rig.width / 2;
+    const r = d.rig.width / 2;
+    let hit = false;
+    for (const off of [half, -half]) {
+      const c = g.position.clone().addScaledVector(fwd, off);
+      const was = c.clone();
+      for (const col of this.district?.colliders ?? []) {
+        if (col.kind === "gutter") continue;
+        this.pushOutBox(c, r, col.minX, col.maxX, col.minZ, col.maxZ);
+      }
+      for (const v of [...(this.life?.solidVehicles() ?? []), ...this.parkedCars.map((p) => p.rig)]) {
+        const dd = c.distanceTo(v.group.position.clone().setY(c.y));
+        const min = r + v.width / 2;
+        if (dd < min && dd > 0.001) c.addScaledVector(c.clone().sub(v.group.position).setY(0).normalize(), min - dd);
+      }
+      if (c.distanceToSquared(was) > 1e-6) { hit = true; g.position.add(c.sub(was)); }
+    }
+    if (hit) {
+      if (Math.abs(d.speed) > 6) this.audio.horn(0);
+      d.speed *= -0.25;
+    }
+    spinWheels(d.rig, g.position.distanceTo(before) * Math.sign(d.speed));
+    this.pos.set(g.position.x, 0, g.position.z);
+    // The edge of the area: choose where to drive next.
+    d.edgeCooldown = Math.max(0, d.edgeCooldown - dt);
+    const gp = g.position;
+    const outX = Math.abs(gp.x) > EXTENT_X - 7 && fwd.x * Math.sign(gp.x) > 0.3;
+    const outZ = Math.abs(gp.z) > EXTENT_Z - 7 && fwd.z * Math.sign(gp.z) > 0.3;
+    if ((outX || outZ) && throttle > 0.2) {
+      d.speed = Math.min(d.speed, 1);
+      if (!d.edgeCooldown) { d.edgeCooldown = 4; this.cb.onDriveEdge?.(); }
+    }
+    const kmh = Math.round(Math.abs(d.speed) * 3.6);
+    if (kmh !== d.lastReport) { d.lastReport = kmh; this.cb.onDrive?.({ name: d.name, kmh }); }
+  }
+
+  private driveCamera(dt: number) {
+    const d = this.drive!;
+    const car = d.rig.group.position;
+    const back = new THREE.Vector3(-Math.sin(d.heading), 0, -Math.cos(d.heading));
+    const want = car.clone().addScaledVector(back, 8 + Math.abs(d.speed) * 0.15).setY(3.4 + Math.abs(d.speed) * 0.04);
+    this.camPos.lerp(want, Math.min(1, dt * 3.5));
+    this.camera.position.copy(this.camPos);
+    this.camera.lookAt(car.x - back.x * 4, 1.2, car.z - back.z * 4);
+    // Keep the walking camera behind the car for when you get out.
+    this.camYaw = Math.atan2(back.x, back.z);
   }
 
   hailTaxi() {
@@ -852,7 +1029,7 @@ export class World {
       this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
     }
     // Vehicles (moving and parked): oriented boxes.
-    for (const v of this.life?.solidVehicles() ?? []) {
+    for (const v of [...(this.life?.solidVehicles() ?? []), ...this.parkedCars.map((c) => c.rig)]) {
       const g = v.group;
       const yaw = g.rotation.y;
       const cos = Math.cos(yaw), sin = Math.sin(yaw);
@@ -903,7 +1080,8 @@ export class World {
 
     // Player movement relative to the camera.
     let ix = 0, iz = 0;
-    if (!this.frozen && !this.ride) {
+    if (this.drive) this.updateDrive(dt);
+    if (!this.frozen && !this.ride && !this.drive) {
       if (this.keys.has("w") || this.keys.has("arrowup")) iz += 1;
       if (this.keys.has("s") || this.keys.has("arrowdown")) iz -= 1;
       if (this.keys.has("a") || this.keys.has("arrowleft")) ix -= 1;
@@ -997,6 +1175,7 @@ export class World {
     this.camera.position.copy(head).add(off);
     this.camera.lookAt(this.camTarget.x, this.camTarget.y + 1.3, this.camTarget.z);
     if (this.ride) this.updateRide(dt);
+    else if (this.drive) this.driveCamera(dt);
     if (this.inside && this.interior) this.cutWalls(dt);
     else this.camPos.copy(this.camera.position);
     this.updateLeaving(dt);
@@ -1068,7 +1247,9 @@ export class World {
 
   private updateNearby() {
     let best: Nearby | null = null;
-    if (this.ride) {
+    if (this.drive) {
+      best = { kind: "car_exit", id: "car", label: "Get out" };
+    } else if (this.ride) {
       // Nothing to press while you're in a car.
     } else if (this.inside && this.interior) {
       let bd = 1.7;
@@ -1098,6 +1279,10 @@ export class World {
         }
       }
       if (!best && this.life.taxiNear(this.pos)) best = { kind: "taxi", id: "taxi", label: "Stop this taxi" };
+      // Your own car: get in and drive.
+      for (const c of this.parkedCars) {
+        if (c.rig.group.position.distanceTo(this.pos) < Math.max(2.6, c.rig.length / 2 + 1)) best = { kind: "car", id: c.type, label: VEHICLES[c.type]?.name ?? "car" };
+      }
     }
     const key = best ? `${best.kind}:${best.id}` : "";
     const prev = this.nearby ? `${this.nearby.kind}:${this.nearby.id}` : "";
