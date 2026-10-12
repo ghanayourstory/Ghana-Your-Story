@@ -413,14 +413,15 @@ export class World {
    * Walk to the thing, ask the server to do it, then act it out (lying in bed,
    * sitting watching TV, squatting at the coal pot...) with a progress bar.
    */
-  doActivity(spotId: InteriorSpot["id"] | null, activity: string, label: string, icon: string, minutes: number, run: () => Promise<{ ok: boolean }>): Promise<boolean> {
+  doActivity(spotId: InteriorSpot["id"] | null, activity: string, label: string, icon: string, minutes: number, run: () => Promise<{ ok: boolean }>, pose?: SpotUse["pose"]): Promise<boolean> {
     return new Promise((resolve) => {
       if (!this.inside || !this.interior || this.doing) { run().then((r) => resolve(r.ok)); return; }
       const spot = spotId ? this.interior.spots.find((s) => s.id === spotId) : undefined;
       const start = async () => {
         const r = await run();
         if (!r.ok) return resolve(false);
-        const use: SpotUse = spot?.use ?? { x: this.pos.x, y: 0, z: this.pos.z, look: [this.pos.x + Math.sin(this.yaw), this.pos.z + Math.cos(this.yaw)], pose: "stand" };
+        const base: SpotUse = spot?.use ?? { x: this.pos.x, y: 0, z: this.pos.z, look: [this.pos.x + Math.sin(this.yaw), this.pos.z + Math.cos(this.yaw)], pose: "stand" };
+        const use: SpotUse = pose ? { ...base, pose } : base;
         const kind = fxFor(activity, use.pose);
         let fx: Fx | null = null;
         if (kind) {

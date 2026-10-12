@@ -309,22 +309,22 @@ export function EventModal({ onClose }: { onClose: () => void }) {
 
 /** Where in the home each thing is done, and how it looks in the progress bar. */
 const ACT_SPOT: Record<string, "bath" | "tv" | "kitchen" | "coalpot" | "neighbours" | "terrace" | "pool" | "bed" | null> = {
-  shower: "bath", shared_bath: "bath", bucket_bath: "bath", laundry: "bath", toilet_public: null, pool_swim: "pool", terrace: "terrace",
+  shower: "bath", toilet: "bath", shared_bath: "bath", bucket_bath: "bath", laundry: "bath", toilet_public: null, pool_swim: "pool", terrace: "terrace",
   watch_tv: "tv", watch_football: "tv", neighbours: "neighbours", cook_coalpot: "coalpot", cook_kitchen: "kitchen", devotion: null, music: "tv", work_from_home: "tv",
 };
 const ACT_ICON: Record<string, string> = {
-  shower: "🚿", shared_bath: "🪣", bucket_bath: "🪣", laundry: "🧺", toilet_public: "🚻", pool_swim: "🏊", terrace: "🍹", watch_tv: "📺", watch_football: "⚽",
+  shower: "🚿", toilet: "🚽", shared_bath: "🪣", bucket_bath: "🪣", laundry: "🧺", toilet_public: "🚻", pool_swim: "🏊", terrace: "🍹", watch_tv: "📺", watch_football: "⚽",
   neighbours: "🗣️", cook_coalpot: "🔥", cook_kitchen: "🍳", devotion: "🙏", music: "🎶", work_from_home: "💻",
 };
 const ACT_DOING: Record<string, string> = {
-  shower: "Showering", shared_bath: "Bathing in the compound bathroom", bucket_bath: "Bucket bath", laundry: "Washing clothes", toilet_public: "At the public toilet", pool_swim: "Swimming",
+  shower: "Showering", toilet: "Using the toilet", shared_bath: "Bathing in the compound bathroom", bucket_bath: "Bucket bath", laundry: "Washing clothes", toilet_public: "At the public toilet", pool_swim: "Swimming",
   terrace: "Relaxing outside", watch_tv: "Watching TV", watch_football: "Watching the match", neighbours: "Chatting with the neighbours", cook_coalpot: "Cooking on the coal pot",
   cook_kitchen: "Cooking", devotion: "Praying", music: "Playing music", work_from_home: "Working from home",
 };
 
 const FOCUS: Record<string, string[]> = {
   bed: ["devotion"],
-  bath: ["shower", "shared_bath", "bucket_bath", "toilet_public"],
+  bath: ["toilet", "shower", "shared_bath", "bucket_bath", "toilet_public", "laundry"],
   tv: ["watch_tv", "watch_football"],
   kitchen: ["cook_kitchen", "cook_coalpot"],
   coalpot: ["cook_coalpot", "cook_kitchen"],
@@ -345,9 +345,9 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
   const list = HOME_ACTIVITIES.filter((a) => (focus && FOCUS[focus] ? FOCUS[focus].includes(a.id) : true));
   const showSleep = !focus || focus === "bed";
   // Close the sheet and let your character walk over and do it.
-  const doIt = (activity: string, label: string, icon: string, minutes: number, run: () => Promise<{ ok: boolean }>, spot: (typeof ACT_SPOT)[string]) => {
+  const doIt = (activity: string, label: string, icon: string, minutes: number, run: () => Promise<{ ok: boolean }>, spot: (typeof ACT_SPOT)[string], pose?: "hidden" | "stand") => {
     onClose();
-    if (world) void world.doActivity(spot, activity, label, icon, minutes, run);
+    if (world) void world.doActivity(spot, activity, label, icon, minutes, run, pose);
     else void run();
   };
   return (
@@ -375,7 +375,7 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
               <div className="tiny muted">{ok ? a.note(spec) : "Not in this home"} · {a.minutes >= 60 ? `${Math.round(a.minutes / 6) / 10}h` : `${a.minutes}m`}{a.cost ? ` · ${money(a.cost * 100)}` : ""}</div>
               <EffectsPreview effects={a.effects} />
             </div>
-            <button className="btn primary sm" disabled={busy || !ok} onClick={() => doIt(a.id, ACT_DOING[a.id] ?? a.label, ACT_ICON[a.id] ?? "🏠", a.minutes, () => act({ type: "home_activity", activity: a.id }), a.id === "cook_kitchen" && spec.kitchen === "coalpot" ? "coalpot" : a.id === "cook_coalpot" && spec.kitchen !== "coalpot" ? "kitchen" : ACT_SPOT[a.id] ?? null)}>{a.verb}</button>
+            <button className="btn primary sm" disabled={busy || !ok} onClick={() => doIt(a.id, ACT_DOING[a.id] ?? a.label, ACT_ICON[a.id] ?? "🏠", a.minutes, () => act({ type: "home_activity", activity: a.id }), a.id === "cook_kitchen" && spec.kitchen === "coalpot" ? "coalpot" : a.id === "cook_coalpot" && spec.kitchen !== "coalpot" ? "kitchen" : ACT_SPOT[a.id] ?? null, a.id === "toilet" ? "hidden" : a.id === "laundry" ? "stand" : undefined)}>{a.verb}</button>
           </div>
         );
       })}

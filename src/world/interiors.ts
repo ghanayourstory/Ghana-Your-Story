@@ -456,7 +456,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         r.use("tv", 1.6, 0.5, z0 + 2.55, [0.6, z0 + 0.35], "sit");
         r.spot("tv", 1.6, z0 + 1.9, "Sit in the hall");
         wardrobe(r, -3.05, z0 + 3.1, 0.9, 1);
-        sofaSet(r, 1.6, z0 + 2.55, "wooden", 1);
+        sofaSet(r, 1.6, z0 + 2.55, "wooden", -1);
         coffeeTable(r, 1.6, z0 + 1.55, false);
         displayCabinet(r, 2.9, z0 + 0.35);
         frame(r, 1.2, 2.0, z0 + 0.09);
@@ -582,7 +582,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         bedPos = new THREE.Vector3(-1.2, 0, -1.2);
         r.use("bed", -2.4, 0.72, -D / 2 + 1.4, [-2.4, -D / 2], "lie");
         r.use("tv", 1.6, 0.5, 2.4, [1.6, -0.2], "sit");
-        sofaSet(r, 1.6, 2.4, has("leather_sofa") ? "leather" : "fabric", 1);
+        sofaSet(r, 1.6, 2.4, has("leather_sofa") ? "leather" : "fabric", -1);
         coffeeTable(r, 1.6, 1.3);
         rug(r, 1.6, 1.4, 2.6, 1.8);
       } else {
@@ -637,7 +637,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.spot("kitchen", -W / 2 + 2.0, back + 2.0, "Kitchen");
       r.use("kitchen", -W / 2 + 1.0, 0, back + 1.4, [-W / 2, back + 1.4], "stand");
       diningSet(r, -W / 2 + 2.4, D / 2 - 1.3, 6);
-      sofaSet(r, W / 2 - 3.0, D / 2 - 1.0, has("leather_sofa") || big ? "l_shape" : "fabric", 1);
+      sofaSet(r, W / 2 - 3.0, D / 2 - 1.0, has("leather_sofa") || big ? "l_shape" : "fabric", -1);
       coffeeTable(r, W / 2 - 3.0, D / 2 - 2.2);
       rug(r, W / 2 - 3.0, D / 2 - 2.1, 3.0, 2.2, "#1F7A4D");
       tvWall(r, W / 2 - 3.0, back + 0.35, has("smart_tv65") || big);
@@ -723,7 +723,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       }
       // Living: big sofa, rug, TV wall.
       const lx = mansion ? 1.5 : pent ? 2.5 : 3;
-      sofaSet(r, lx, 2.6, "l_shape", 1);
+      sofaSet(r, lx, 2.6, "l_shape", -1);
       coffeeTable(r, lx, 1.2);
       rug(r, lx - 0.4, 1.3, 4, 3, "#1F3A5F");
       tvWall(r, lx, -1.8, true);

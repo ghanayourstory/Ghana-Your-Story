@@ -7,7 +7,7 @@ import { intercityQuote } from "../shared/cities.ts";
 import { DISTRICTS, PLACES, SERVICES } from "../shared/world.ts";
 import { SITES } from "../shared/regional.ts";
 import { MINUTES_PER_DAY, toGameDate } from "../shared/calendar.ts";
-import type { Ctx } from "../server/engine.ts";
+import { buildState, loadPlayer, type Ctx } from "../server/engine.ts";
 
 function rich() {
   const env = makeCtx({ devTools: true });
@@ -236,6 +236,29 @@ test("homes: compound rooms share a bathroom and cook on a coal pot; penthouses 
   assert.ok(act(ctx, id, { type: "home_activity", activity: "terrace" }).ok);
   assert.ok(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).ok);
   assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("needs: bladder, hygiene and fun run down; the toilet, a bath and TV fix them; mood explains why", () => {
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 7);
+  ctx.db.run("UPDATE players SET bladder = 10, hygiene = 10, fun = 10 WHERE id = ?", id);
+  const s0 = act(ctx, id, { type: "home_activity", activity: "toilet" });
+  assert.ok(s0.ok, s0.error);
+  let p = ctx.db.get<{ bladder: number; hygiene: number; fun: number }>("SELECT bladder, hygiene, fun FROM players WHERE id = ?", id)!;
+  assert.equal(p.bladder, 100);
+  const moodBefore = buildState(ctx, loadPlayer(ctx.db, id)).player.mood;
+  assert.ok(moodBefore.moodlets.some((m) => m.id === "smelly"));
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "shared_bath" }).ok);
+  p = ctx.db.get<{ bladder: number; hygiene: number; fun: number }>("SELECT bladder, hygiene, fun FROM players WHERE id = ?", id)!;
+  assert.ok(p.hygiene > 60);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "neighbours" }).ok);
+  p = ctx.db.get<{ bladder: number; hygiene: number; fun: number }>("SELECT bladder, hygiene, fun FROM players WHERE id = ?", id)!;
+  assert.ok(p.fun > 15);
+  // Holding it forever ends badly.
+  ctx.db.run("UPDATE players SET bladder = 2, hygiene = 90 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "sleep", hours: 2 }).ok);
+  p = ctx.db.get<{ bladder: number; hygiene: number; fun: number }>("SELECT bladder, hygiene, fun FROM players WHERE id = ?", id)!;
+  assert.ok(p.hygiene < 60);
 });
 
 test("aviation: buy a hangar, then a plane, then fly yourself between airports", () => {

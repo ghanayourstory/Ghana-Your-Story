@@ -313,6 +313,9 @@ CREATE TABLE IF NOT EXISTS provider_state (
 const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
   ["vehicles", "status", "TEXT NOT NULL DEFAULT 'personal'"],
   ["vehicles", "condition", "REAL NOT NULL DEFAULT 100"],
+  ["players", "fun", "REAL NOT NULL DEFAULT 70"],
+  ["players", "hygiene", "REAL NOT NULL DEFAULT 80"],
+  ["players", "bladder", "REAL NOT NULL DEFAULT 80"],
 ];
 
 export function migrate(db: Db) {

@@ -7,7 +7,7 @@ import { REGIONAL_DISTRICTS, REGIONAL_JOBS, REGIONAL_PLACES, REGIONAL_SERVICES, 
 
 /** Accra districts are listed here; regional towns are added from regional.ts. */
 export type DistrictId = string;
-export type StatKey = "energy" | "hunger" | "health" | "social";
+export type StatKey = "energy" | "hunger" | "health" | "social" | "fun" | "hygiene" | "bladder";
 export type SkillKey = "work" | "fitness" | "charisma" | "business";
 export type EffectKey = StatKey | SkillKey | "reputation";
 export type Effects = Partial<Record<EffectKey, number>>;
@@ -180,6 +180,7 @@ export interface Service {
 }
 
 export const SERVICES: Record<string, Service> = {
+  public_toilet: { id: "public_toilet", name: "Public toilet", verb: "Use the toilet", cost: 1, minutes: 10, effects: { bladder: 100, hygiene: -2 } },
   waakye: { id: "waakye", name: "Waakye with shito & egg", verb: "Eat waakye", cost: 25, minutes: 25, effects: { hunger: 45, energy: 6, social: 3 }, hours: [5, 13] },
   kelewele: { id: "kelewele", name: "Kelewele & groundnuts", verb: "Buy kelewele", cost: 15, minutes: 15, effects: { hunger: 18, social: 4 }, hours: [17, 24] },
   jollof: { id: "jollof", name: "Jollof with grilled chicken", verb: "Have jollof", cost: 70, minutes: 45, effects: { hunger: 55, energy: 8, social: 6 }, hours: [11, 23] },
@@ -342,6 +343,8 @@ for (const p of PLACES) {
 PLACES.push(...REGIONAL_PLACES);
 Object.assign(JOBS, REGIONAL_JOBS);
 
+// Lorry stations, markets and malls all have a pay toilet (and the mall's is free).
+for (const p of PLACES) if ((p.kind === "transport" || p.kind === "market" || p.kind === "mall") && !p.services.includes("public_toilet")) p.services.push("public_toilet");
 export const PLACE_BY_ID: Record<string, Place> = Object.fromEntries(PLACES.map((p) => [p.id, p]));
 export const placesIn = (d: DistrictId) => PLACES.filter((p) => p.district === d);
 

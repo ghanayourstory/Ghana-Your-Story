@@ -5,6 +5,7 @@ import type { World, Nearby } from "../world/World.ts";
 import { toGameDate } from "../../shared/calendar.ts";
 import { DISTRICTS, type DistrictId } from "../../shared/world.ts";
 import { NPC_BY_ID } from "../../shared/people.ts";
+import { NEEDS } from "../../shared/mood.ts";
 
 export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: string) => void }) {
   const { state, football } = useGame();
@@ -13,7 +14,9 @@ export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: str
     const t = setInterval(() => setTick((x) => x + 1), 1000);
     return () => clearInterval(t);
   }, []);
+  const [moodOpen, setMoodOpen] = useState(false);
   if (!state) return null;
+  const mood = state.player.mood;
   const minute = world ? Math.floor(world.minuteNow) : state.time.minute;
   const gd = toGameDate(minute);
   const s = state.player.stats;
@@ -32,14 +35,37 @@ export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: str
             <span>Net worth {money(state.money.netWorth, true)}</span>
           </div>
         </div>
-        <div className="hud-bars">
-          {([["Body", s.health], ["Energy", s.energy], ["Food", s.hunger], ["Social", s.social]] as const).map(([name, v]) => (
-            <div className="hud-bar" key={name}>
-              <label><span>{name}</span><span className="num">{Math.round(v)}</span></label>
-              <Bar value={v} color={statColor(v)} />
-            </div>
-          ))}
+        <div className="hud-needs">
+          <button className="mood-face" onClick={() => setMoodOpen((o) => !o)} title={`${mood.label} — tap for why`}>
+            <span>{mood.face}</span>
+            <small>{mood.label}</small>
+          </button>
+          <div className="hud-bars six">
+            {NEEDS.map((n) => {
+              const v = (s as Record<string, number>)[n.key] ?? 0;
+              return (
+                <div className="hud-bar" key={n.key} title={`${n.label} ${Math.round(v)} — ${n.tip}`}>
+                  <label><span>{n.icon} <i>{n.label}</i></span><span className="num">{Math.round(v)}</span></label>
+                  <Bar value={v} color={statColor(v)} />
+                </div>
+              );
+            })}
+          </div>
         </div>
+        {moodOpen && (
+          <div className="mood-pop" onClick={() => setMoodOpen(false)}>
+            <b>{mood.face} {mood.label}</b>
+            {mood.moodlets.length === 0 && <div className="tiny muted">Nothing special today.</div>}
+            {mood.moodlets.map((m) => (
+              <div className="moodlet" key={m.id}>
+                <span className="ml-icon">{m.icon}</span>
+                <div className="grow"><div className="small bold">{m.label}</div><div className="tiny muted">{m.why}</div></div>
+                <span className={`ml-val ${m.value > 0 ? "up" : "down"}`}>{m.value > 0 ? "+" : ""}{m.value}</span>
+              </div>
+            ))}
+            <div className="tiny muted" style={{ marginTop: 6 }}>Low needs: {NEEDS.filter((n) => ((s as Record<string, number>)[n.key] ?? 100) < 35).map((n) => `${n.icon} ${n.tip}`).join(" ") || "none — you're doing well."}</div>
+          </div>
+        )}
       </div>
       <div className="hud-chips">
         <button className={`chip ${net >= 0 ? "green" : ""}`} onClick={() => onOpen("money")}>{net >= 0 ? "+" : "−"}{money(Math.abs(net), true)} a month ›</button>

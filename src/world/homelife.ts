@@ -304,6 +304,7 @@ export function fxFor(activity: string, pose: Pose): "shower" | "steam" | "smoke
   if (activity.startsWith("cook")) return "steam";
   if (activity === "watch_tv" || activity === "watch_football") return "tv";
   if (activity === "pool_swim") return "splash";
+  if (activity === "toilet" || activity === "laundry") return null;
   if (activity === "shower" || (pose === "bath" && activity !== "laundry")) return "shower";
   if (pose === "hidden") return "steam";
   return null;

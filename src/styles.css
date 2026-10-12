@@ -225,3 +225,23 @@ canvas.world { position: fixed; inset: 0; width: 100%; height: 100%; display: bl
 .ride-banner .grow { flex: 1; }
 .ride-banner.doing .bar { height: 6px; border-radius: 4px; background: rgba(255,255,255,0.12); margin-top: 6px; overflow: hidden; }
 .ride-banner.doing .bar i { display: block; height: 100%; background: linear-gradient(90deg, #3ddc84, #F2B705); transition: width 0.15s linear; }
+.hud-needs { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.mood-face { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 54px; min-width: 54px; height: 50px; border-radius: 14px; background: rgba(255,255,255,0.08); border: 1px solid var(--line); cursor: pointer; padding: 2px; }
+.mood-face span { font-size: 24px; line-height: 1; }
+.mood-face small { font-size: 9px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 50px; }
+.hud-bars.six { grid-template-columns: repeat(3, 1fr); gap: 4px 10px; margin-top: 0; flex: 1; }
+.hud-bars.six .hud-bar label i { font-style: normal; }
+@media (max-width: 560px) { .hud-bars.six .hud-bar label i { display: none; } }
+.mood-pop { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 30; padding: 12px; border-radius: 16px; background: var(--glass); backdrop-filter: blur(16px); border: 1px solid var(--line); box-shadow: var(--shadow); max-height: 60vh; overflow: auto; }
+.moodlet { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.moodlet .ml-icon { font-size: 20px; width: 26px; text-align: center; }
+.moodlet .grow { flex: 1; }
+.moodlet .ml-val { font-weight: 800; font-size: 13px; }
+.moodlet .ml-val.up { color: #3ddc84; }
+.moodlet .ml-val.down { color: #ff7a6b; }
+.hud-card { position: relative; }
+.hud-card { z-index: 2; }
+/* Phones: the minimap sits under the status card instead of on top of it. */
+@media (max-width: 600px) { .minimap { top: calc(max(10px, env(safe-area-inset-top)) + 172px); } }
+.hud-top { z-index: 25; }
+.mood-pop { background: rgba(18, 19, 24, 0.96); }

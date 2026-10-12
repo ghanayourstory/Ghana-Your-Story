@@ -1,5 +1,6 @@
 // The authoritative game engine. Every state change happens here, inside a
 // single SQL transaction per action, with money moving only through the ledger.
+import { moodOf } from "../shared/mood.ts";
 import { tx, type Db } from "./db.ts";
 import { balance, ensureAccount, GameError, post, recentLedger, type Leg } from "./ledger.ts";
 import {
@@ -54,6 +55,9 @@ export interface PlayerRow {
   hunger: number;
   health: number;
   social: number;
+  fun: number;
+  hygiene: number;
+  bladder: number;
   reputation: number;
   work: number;
   fitness: number;
@@ -96,7 +100,7 @@ export class Feedback {
   }
 }
 
-const STAT_KEYS = ["energy", "hunger", "health", "social"] as const;
+const STAT_KEYS = ["energy", "hunger", "health", "social", "fun", "hygiene", "bladder"] as const;
 const SKILL_KEYS = ["work", "fitness", "charisma", "business"] as const;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const round1 = (n: number) => Math.round(n * 10) / 10;
@@ -113,11 +117,11 @@ export function loadPlayer(db: Db, id: number): PlayerRow {
 
 function savePlayer(db: Db, p: PlayerRow) {
   db.run(
-    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?,
+    `UPDATE players SET game_min=?, last_sync_ms=?, district=?, pos_x=?, pos_z=?, energy=?, hunger=?, health=?, social=?, fun=?, hygiene=?, bladder=?,
        reputation=?, work=?, fitness=?, charisma=?, business=?, home_kind=?, home_ref=?, job_id=?, job_rank=?, job_shifts=?,
        shifts_total=?, payroll_accrued=?, last_day_processed=?, last_month_billed=?, rent_arrears=?, rent_credit=?, credit_score=?,
        tbills_bought=?, bets_won=?, unlocks=?, visited=?, discovered=? WHERE id=?`,
-    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social,
+    p.game_min, p.last_sync_ms, p.district, p.pos_x, p.pos_z, p.energy, p.hunger, p.health, p.social, p.fun, p.hygiene, p.bladder,
     p.reputation, p.work, p.fitness, p.charisma, p.business, p.home_kind, p.home_ref, p.job_id, p.job_rank, p.job_shifts,
     p.shifts_total, p.payroll_accrued, p.last_day_processed, p.last_month_billed, p.rent_arrears, p.rent_credit, p.credit_score,
     p.tbills_bought, p.bets_won, p.unlocks, p.visited, p.discovered, p.id,
@@ -247,6 +251,9 @@ function decay(p: PlayerRow, minutes: number, sleeping: boolean, partnered: bool
   p.hunger = clamp(p.hunger - h * (sleeping ? 2.2 : 4.2), 0, 100);
   if (!sleeping) p.energy = clamp(p.energy - h * 3, 0, 100);
   if (!sleeping) p.social = clamp(p.social - h * (partnered ? 0.45 : 0.9), 0, 100);
+  p.fun = clamp(p.fun - h * (sleeping ? 0.3 : 2.2), 0, 100);
+  p.hygiene = clamp(p.hygiene - h * (sleeping ? 0.6 : 2.4), 0, 100);
+  p.bladder = clamp(p.bladder - h * (sleeping ? 2.2 : 6), 0, 100);
   let dh = 0;
   if (p.hunger < 15) dh -= 1.5 * h;
   if (p.energy < 10) dh -= 1 * h;
@@ -316,6 +323,13 @@ export function advance(ctx: Ctx, p: PlayerRow, minutes: number, fb: Feedback, o
     const nextDay = (dayOf(p.game_min) + 1) * MINUTES_PER_DAY;
     const step = Math.min(remaining, nextDay - p.game_min);
     decay(p, step, !!opts.sleeping, partnered);
+    if (p.bladder <= 0) {
+      // Nobody makes it to the toilet forever.
+      p.bladder = 100;
+      p.hygiene = clamp(p.hygiene - 45, 0, 100);
+      p.social = clamp(p.social - 12, 0, 100);
+      fb.add("😳 Couldn't hold it any longer. You'll need a bath and a change of clothes.", [{ k: "hygiene", d: -45 }, { k: "social", d: -12 }], "bad");
+    }
     p.game_min += step;
     remaining -= step;
     processTimed(ctx, p, fb);
@@ -1024,7 +1038,8 @@ function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   if (job.weekdaysOnly && gd.isWeekend) throw new GameError("closed", `${place.name} doesn't run weekend shifts.`);
   if (!isOpenAt(job.shiftWindow, gd.hour)) throw new GameError("shift_time", `Shifts start between ${job.shiftWindow[0]}:00 and ${job.shiftWindow[1]}:00.`);
   requireAwake(p, Math.round(job.energyCost * 0.6), "work a shift");
-  const performance = clamp(0.75 + p.energy / 400 + p.health / 400 + p.hunger / 800, 0.75, 1.12);
+  // Tired, hungry, smelly or miserable people don't do their best work.
+  const performance = clamp(0.75 + p.energy / 400 + p.health / 400 + p.hunger / 800 + (p.hygiene - 50) / 1500 + moodFor(ctx.db, p).score / 100, 0.72, 1.15);
   const pay = minor(rankPay(job.pay, p.job_rank) * performance);
   advance(ctx, p, job.hours * 60, fb, { quiet: true });
   let money: Change[] = [];
@@ -1803,7 +1818,7 @@ function actDevSkip(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const hours = typeof a.hours === "number" && Number.isInteger(a.hours) && a.hours > 0 && a.hours <= 24 * 30 ? a.hours : 0;
   if (!hours) throw new GameError("bad_amount", "1–720 hours");
   advance(ctx, p, hours * 60, fb, { sleeping: true });
-  applyEffects(p, { energy: 100, hunger: 100, health: 100 }, null);
+  applyEffects(p, { energy: 100, hunger: 100, health: 100, fun: 100, hygiene: 100, bladder: 100 }, null);
   return null;
 }
 
@@ -1839,6 +1854,17 @@ export function netWorth(db: Db, p: PlayerRow) {
   land += farms;
   const total = cash + bank + usdInGhs + tbill + land + buildings + biz + vehicles + goods + p.payroll_accrued - loan - p.rent_arrears;
   return { cash, bank, usd, usdInGhs, tbill, loan, land, buildings, businesses: biz, vehicles, goods, payroll: p.payroll_accrued, arrears: p.rent_arrears, total };
+}
+
+function moodFor(db: Db, p: PlayerRow) {
+  return moodOf({
+    stats: { energy: p.energy, hunger: p.hunger, health: p.health, social: p.social, fun: p.fun, hygiene: p.hygiene, bladder: p.bladder },
+    homeTier: homeSpecFor(db, p).tier,
+    comfort: homeComfort(db, p),
+    partnered: isPartnered(db, p.id),
+    rentArrears: p.rent_arrears > 0,
+    hasCar: !!db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id),
+  });
 }
 
 function snapshot(db: Db, p: PlayerRow): ProgressSnapshot {
@@ -1929,7 +1955,8 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
     player: {
       id: p.id, name: p.name, look: JSON.parse(p.look) as LookInput, background: p.background,
       district: p.district, pos: { x: p.pos_x, z: p.pos_z },
-      stats: { energy: p.energy, hunger: p.hunger, health: p.health, social: p.social },
+      stats: { energy: p.energy, hunger: p.hunger, health: p.health, social: p.social, fun: p.fun, hygiene: p.hygiene, bladder: p.bladder },
+      mood: moodFor(db, p),
       skills: { work: round1(p.work), fitness: round1(p.fitness), charisma: round1(p.charisma), business: round1(p.business) },
       reputation: round1(p.reputation), creditScore: p.credit_score,
       job: p.job_id ? { id: p.job_id, rank: p.job_rank, rankTitle: RANK_TITLES[p.job_rank], shifts: p.job_shifts, nextRankAt: p.job_rank < MAX_RANK ? SHIFTS_PER_RANK * (p.job_rank + 1) : null, payPerShift: minor(rankPay(JOBS[p.job_id].pay, p.job_rank)) } : null,
