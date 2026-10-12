@@ -525,7 +525,7 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
   const drop = r.armDrop;
   const moving = v > 0.12;
   // Stride frequency rises with speed (cadence ~105 steps/min at 1.3 m/s).
-  const run = THREE.MathUtils.smoothstep(v, 3.2, 4.6);
+  const run = THREE.MathUtils.smoothstep(v, 2.3, 3.3);
   const freq = moving ? THREE.MathUtils.lerp(0.5 + 0.3 * v, 1.25 + 0.1 * v, run) : 0;
   const amt = THREE.MathUtils.smoothstep(v, 0.12, 1.1); // blend in from standing
   r.phase = (r.phase + dt * (freq || 0.35)) % 1000;

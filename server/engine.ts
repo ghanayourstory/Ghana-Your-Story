@@ -29,6 +29,8 @@ import { formatMoney } from "../shared/money.ts";
 
 export interface EngineConfig {
   devTools: boolean;
+  /** Single-player offline build: the only player is the tester. */
+  everyoneIsTester?: boolean;
 }
 
 export interface Ctx {
@@ -1741,13 +1743,13 @@ function actEventChoose(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
 }
 
 function requireDev(ctx: Ctx, p: PlayerRow) {
-  if (!ctx.config.devTools || !p.is_test) throw new GameError("forbidden", "Developer tools are disabled");
+  if (!ctx.config.devTools || !(p.is_test || ctx.config.everyoneIsTester)) throw new GameError("forbidden", "Developer tools are disabled");
 }
 
 function actDevGrant(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   requireDev(ctx, p);
   const amount = requireAmount(a.amount);
-  if (amount > minor(20_000_000)) throw new GameError("bad_amount", "Too much");
+  if (amount > minor(1_000_000_000)) throw new GameError("bad_amount", "Too much");
   credit(ctx, p, "bank", amount, "dev_grant", "Developer test grant (test account)");
   fb.add(`[dev] Granted ${formatMoney(amount)} to bank.`, [{ k: "bank", d: amount }], "info");
   return null;
@@ -1945,7 +1947,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
     log: db.all<{ id: number; game_min: number; kind: string; text: string; changes: string }>("SELECT * FROM log WHERE player_id = ? ORDER BY id DESC LIMIT 60", p.id)
       .map((l) => ({ id: l.id, gameMin: l.game_min, kind: l.kind, text: l.text, changes: JSON.parse(l.changes) as Change[] })),
     rentArrears: p.rent_arrears,
-    devTools: ctx.config.devTools && !!p.is_test,
+    devTools: ctx.config.devTools && (!!p.is_test || !!ctx.config.everyoneIsTester),
   };
 }
 

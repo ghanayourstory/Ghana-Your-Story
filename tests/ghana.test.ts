@@ -197,3 +197,21 @@ test("catalogues are consistent: dealers, stores, farms, courses, plots and rent
     assert.ok(Object.values(PLACE_BY_ID).some((p) => p.district === d && p.services.includes("lodge")), `no lodge in ${d}`);
   }
 });
+
+test("offline single-player tester can be granted GH₵500M through the audited ledger", async () => {
+  const { openNodeDb } = await import("../server/sqlite-node.ts");
+  const { migrate } = await import("../server/db.ts");
+  const { createPlayer, perform } = await import("../server/engine.ts");
+  const db = openNodeDb(":memory:");
+  migrate(db);
+  const ctx = { db, now: () => Date.UTC(2026, 9, 12), config: { devTools: true, everyoneIsTester: true } };
+  const id = createPlayer(ctx, { name: "Tester", look: {}, background: "graduate" });
+  const r = perform(ctx, id, "grant500mtestkey", { type: "dev_grant", amount: 500_000_000 * 100 });
+  assert.ok(r.ok, r.error);
+  assert.ok(bal(ctx, id, "bank") >= 500_000_000 * 100);
+  assert.ok(auditPlayer(db, id).ok);
+  // Without the offline flag, ordinary players can't use dev tools.
+  const ctx2 = { ...ctx, config: { devTools: true } };
+  const id2 = createPlayer(ctx2, { name: "Other", look: {}, background: "graduate" });
+  assert.equal(perform(ctx2, id2, "grantdeniedkey01", { type: "dev_grant", amount: 100 }).code, "forbidden");
+});

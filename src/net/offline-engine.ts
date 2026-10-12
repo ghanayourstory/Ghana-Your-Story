@@ -119,7 +119,7 @@ const boot = async () => {
   const raw = new SQL.Database((await loadBytes()) ?? undefined);
   const db = adapt(raw);
   migrate(db);
-  const ctx: Ctx = { db, now: () => Date.now(), config: { devTools: true } };
+  const ctx: Ctx = { db, now: () => Date.now(), config: { devTools: true, everyoneIsTester: true } };
   const provider = createMockProvider();
   let dirty = false;
   const tick = async () => {

@@ -133,6 +133,15 @@ function Game() {
     if (world && state) world.setState(state);
   }, [world, state]);
 
+  // Test funds: GH₵500M for the tester's character, once (offline/test builds only, through the audited grant).
+  useEffect(() => {
+    if (!state?.devTools) return;
+    const key = `sika.grant500m.${state.player.id}`;
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; }
+    void act({ type: "dev_grant", amount: 500_000_000 * 100 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.devTools, state?.player.id]);
+
   useEffect(() => {
     world?.audio.setMuted(muted);
     try { localStorage.setItem("sika.muted", muted ? "1" : "0"); } catch { /* ignore */ }
