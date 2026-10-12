@@ -2,6 +2,7 @@
 import { pick } from "./rng.ts";
 import type { DistrictId } from "./world.ts";
 import { REGIONAL_NPCS } from "./people-regional.ts";
+import { TOWNSFOLK } from "./townsfolk.ts";
 
 export type Topic = "chat" | "advice" | "compliment" | "gift" | "ask_out" | "favour";
 export type Tier = "stranger" | "acquaintance" | "friend" | "close";
@@ -532,6 +533,7 @@ export const NPCS: Npc[] = [
     },
   },
   ...REGIONAL_NPCS,
+  ...TOWNSFOLK,
 ];
 
 export const NPC_BY_ID: Record<string, Npc> = Object.fromEntries(NPCS.map((n) => [n.id, n]));

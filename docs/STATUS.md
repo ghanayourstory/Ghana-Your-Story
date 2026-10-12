@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v15. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v16. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -53,6 +53,7 @@ Last checked: game build v15. This is the Stage 0 "discovery" note from the foun
 - ✅ Weekly rhythm: two market days per market (cheaper stock, double demand), Sunday service at every church, Saturday funerals and weddings you attend with a donation or gift (canopies, chairs and guests in 3D).
 - ✅ Prepaid electricity units: drawn down daily by what you own, solar cuts the draw, empty meter darkens the home and blocks screens until you top up in SikaBank. Water, refuse and data stay a monthly bill.
 - ✅ Named people commute: they walk in from the trotro stop, between places, and off home as their schedule changes.
+- ✅ Foundation across all 20 playable towns (checked by a test): church and mosque, everyday jobs with shifts that fit opening hours, licence lessons, at least two named people with routines, Saturday events. Funeral and wedding customs, venues and dress vary by region.
 - ⏳ School days for younger family; separate household members' routines; water as its own line if it adds play.
 
 ## Next slices, in order

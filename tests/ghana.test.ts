@@ -4,9 +4,10 @@ import { act, bal, gameMin, grant, makeCtx, newPlayer } from "./helpers.ts";
 import { auditPlayer } from "../server/ledger.ts";
 import { REGIONS, TOWNS, routeBetween } from "../shared/ghana.ts";
 import { intercityQuote } from "../shared/cities.ts";
-import { DISTRICTS, PLACES, SERVICES } from "../shared/world.ts";
+import { DISTRICTS, JOBS, PLACES, SERVICES } from "../shared/world.ts";
+import { NPCS } from "../shared/people.ts";
 import { SITES } from "../shared/regional.ts";
-import { VEHICLES } from "../shared/life.ts";
+import { COURSES, VEHICLES } from "../shared/life.ts";
 import { outageWindow, powerOff } from "../shared/power.ts";
 import { marketDays, townEvents } from "../shared/weekly.ts";
 import { MINUTES_PER_DAY, toGameDate } from "../shared/calendar.ts";
@@ -546,5 +547,50 @@ test("aviation: buy a hangar, then a plane, then fly yourself between airports",
   assert.equal(district(ctx, id), "tamale");
   assert.ok(gameMin(ctx, id) - before < 120, "a jet gets there in well under two hours");
   assert.equal(act(ctx, id, { type: "travel", to: "kintampo", mode: "own_plane" }).code, "no_route");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("every town has the basics: worship, work, lessons, people, Saturday events", () => {
+  const cities = [...new Set(Object.values(DISTRICTS).map((d) => d.city))].filter((c) => c !== "accra");
+  for (const city of cities) {
+    const places = PLACES.filter((p) => DISTRICTS[p.district].city === city);
+    const ids = new Set(places.map((p) => p.id));
+    const has = (k: string) => places.some((p) => p.kind === k);
+    assert.ok(has("church") && has("mosque"), `${city}: church and mosque`);
+    const jobs = Object.values(JOBS).filter((j) => ids.has(j.placeId));
+    for (const t of ["Market loader", "Trotro mate", "Nursing aide"]) assert.ok(jobs.some((j) => j.title === t), `${city}: ${t}`);
+    for (const j of jobs) {
+      const pl = PLACES.find((p) => p.id === j.placeId)!;
+      if (pl.open[0] !== 0 || pl.open[1] !== 24) assert.ok(j.shiftWindow[0] >= pl.open[0] && j.shiftWindow[1] < pl.open[1], `${j.id} shift fits opening hours`);
+    }
+    assert.ok(COURSES.driving_b.places.some((x) => ids.has(x)) && COURSES.riding_a.places.some((x) => ids.has(x)), `${city}: licence lessons`);
+    assert.ok(NPCS.filter((n) => n.schedule.some((b) => ids.has(b.place))).length >= 2, `${city}: named people`);
+    let ev = 0;
+    for (let d = 0; d < 14; d++) ev += townEvents(city, d).length;
+    assert.ok(ev >= 1, `${city}: Saturday events`);
+  }
+});
+
+test("a Saturday in Tamale: work as a loader, go to a Saturday event, named people in town", () => {
+  const { ctx, id } = rich();
+  ctx.db.run("UPDATE players SET reputation = 30 WHERE id = ?", id);
+  skipTo(ctx, id, 9);
+  assert.ok(act(ctx, id, { type: "travel", to: "tamale", mode: "bus" }).ok);
+  while (toGameDate(gameMin(ctx, id)).weekdayIndex !== 6) skip(ctx, id, 12);
+  skipTo(ctx, id, 8);
+  const loader = Object.values(JOBS).find((j) => j.title === "Market loader" && DISTRICTS[PLACES.find((p) => p.id === j.placeId)!.district].city === "tamale")!;
+  const ap = act(ctx, id, { type: "job_apply", jobId: loader.id });
+  assert.ok(ap.ok, ap.error);
+  const w = act(ctx, id, { type: "work" });
+  assert.ok(w.ok, w.error);
+  assert.equal(toGameDate(gameMin(ctx, id)).weekdayIndex, 6, "still Saturday after the shift");
+  const day = Math.floor(gameMin(ctx, id) / MINUTES_PER_DAY);
+  const ev = townEvents("tamale", day)[0];
+  assert.ok(ev, "an event in Tamale");
+  assert.equal(PLACES.find((p) => p.id === ev.placeId)!.kind === "church", false, "Tamale events are at the mosque, a school or a landmark");
+  assert.equal(ev.dress, "north");
+  const r = act(ctx, id, { type: "event_attend", eventId: ev.id, gift: ev.gift * 100 });
+  assert.ok(r.ok, r.error);
+  assert.ok(NPCS.some((n) => n.district === "tamale"));
   assert.ok(auditPlayer(ctx.db, id).ok);
 });

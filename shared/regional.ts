@@ -4,7 +4,7 @@
 // are real and sit at their real locations; festival months follow the
 // traditional calendar (Islamic festivals drift a little each year).
 import type { District, DistrictStyle, Effects, Job, Place, PlaceKind, Service } from "./world.ts";
-import type { RegionId } from "./ghana.ts";
+import { TOWN_BY_ID, type RegionId } from "./ghana.ts";
 
 // ---------------------------------------------------------------------------
 // Food and drink from every corner of the country.
@@ -633,6 +633,29 @@ export const REGIONAL_DISTRICTS: District[] = TOWNS_SPEC.map((t) => ({
   id: t.id, name: t.name, tagline: t.tagline, mood: t.mood, style: t.style, city: t.city, geo: t.geo, roads: t.roads, bearing: t.bearing,
   costOfLiving: t.costOfLiving, crowd: t.crowd, traffic: t.traffic, nightlife: t.nightlife, palette: PAL[t.palette], landmark: t.landmark, prestige: 0,
 }));
+
+/** Regions where most people are Muslim (the old Northern Region and its offshoots). */
+export const MUSLIM_MAJORITY: RegionId[] = ["northern", "savannah", "north_east"];
+
+/**
+ * Every town gets the basics of weekly life even if its hand-written list
+ * forgot them: a church and a mosque (almost every Ghanaian town has a zongo
+ * and a church), so Sunday service, Jumu'ah, funerals and weddings work
+ * everywhere. Hand-written places always come first.
+ */
+function churchName(region: RegionId | undefined, town: string): string {
+  if (region === "volta" || region === "oti") return `${town} E.P. Church`;
+  if (region === "central" || region === "western" || region === "western_north") return `${town} Wesley Methodist Church`;
+  if (region === "northern" || region === "savannah" || region === "north_east" || region === "upper_east" || region === "upper_west") return `${town} Catholic Church`;
+  return `${town} Presbyterian Church`;
+}
+for (const t of TOWNS_SPEC) {
+  if (t.city === "accra") continue;
+  const region = TOWN_BY_ID[t.city]?.region;
+  const town = t.name.replace(/ \(.*\)$/, "");
+  if (!t.places.some((p) => p.kind === "church")) t.places.push({ id: `${t.id}_church`, name: churchName(region, town), kind: "church", services: ["church"], open: [6, 21], blurb: "Sunday service, midweek fellowship, and the venue for half the town's weddings and funerals." });
+  if (!t.places.some((p) => p.kind === "mosque")) t.places.push({ id: `${t.id}_mosque`, name: `${town} Zongo Mosque`, kind: "mosque", services: ["mosque", "jumah"], open: [4, 22], blurb: "The zongo's mosque: five daily prayers and a full courtyard on Friday afternoon." });
+}
 
 export const REGIONAL_PLACES: Place[] = TOWNS_SPEC.flatMap(layout);
 

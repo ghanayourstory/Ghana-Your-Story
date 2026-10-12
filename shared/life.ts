@@ -1,7 +1,7 @@
 // The stuff of everyday life: what people buy, ride, grow and learn. Prices
 // are in cedis at roughly 2025 levels. Brand names are fictional stand-ins
 // for the cars and phones you see on Ghanaian roads.
-import type { DistrictId, Effects, SkillKey } from "./world.ts";
+import { DISTRICTS, PLACES, type DistrictId, type Effects, type SkillKey } from "./world.ts";
 
 // ---------------------------------------------------------------------------
 // Vehicles
@@ -319,3 +319,15 @@ export const COURSES: Record<string, Course> = {
   tour_guide: { id: "tour_guide", name: "Tour guiding certificate", places: ["ucc", "kintampo_falls_gate", "mole_desk"], fee: 800, sessions: 3, minutes: 150, hours: [8, 16], perSession: { charisma: 1 }, onComplete: { charisma: 2 }, unlock: "cert_guide", blurb: "History, first aid and telling a good story." },
   mba: { id: "mba", name: "Executive MBA", places: ["ug_legon", "knust_city"], fee: 28_000, sessions: 12, minutes: 240, hours: [8, 20], perSession: { business: 1 }, onComplete: { business: 6, work: 3, reputation: 5 }, unlock: "mba", blurb: "Case studies, a network and letters after your name." },
 };
+
+// Every town has a driving school and a motorbike school somewhere: towns
+// without a college get them at the lorry station, where they usually are.
+for (const c of [COURSES.driving_b, COURSES.riding_a]) {
+  const cities = new Set(c.places.map((id) => DISTRICTS[PLACES.find((p) => p.id === id)?.district ?? ""]?.city));
+  for (const p of PLACES) {
+    const city = DISTRICTS[p.district]?.city;
+    if (p.kind !== "transport" || !city || cities.has(city)) continue;
+    c.places.push(p.id);
+    cities.add(city);
+  }
+}

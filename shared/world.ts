@@ -357,6 +357,47 @@ for (const p of PLACES) {
 }
 PLACES.push(...REGIONAL_PLACES);
 Object.assign(JOBS, REGIONAL_JOBS);
+const PLACE_BY_ID_EARLY = (id: string) => PLACES.find((p) => p.id === id);
+
+// Everyday work exists in every town, not just Kaneshie: a loader at each
+// market, a mate at each station, cooks, clinic aides and night security,
+// evening tutors at schools, and app gig work in the bigger cities. Pay
+// follows the local cost of living; shift windows fit the opening hours.
+const GIG_CITIES = new Set(["kumasi", "tamale", "takoradi", "cape_coast", "ho", "koforidua", "sunyani"]);
+{
+  const make = (base: Job, place: Place) => {
+    const d = DISTRICTS[place.district];
+    if (Object.values(JOBS).some((j) => j.title === base.title && PLACE_BY_ID_EARLY(j.placeId)?.district === place.district)) return;
+    const [o0, o1] = place.open;
+    const w0 = Math.max(base.shiftWindow[0], o0 === 0 && o1 === 24 ? 0 : o0);
+    const w1 = Math.min(base.shiftWindow[1], o0 === 0 && o1 === 24 ? 24 : o1 - 1);
+    if (w1 < w0) return;
+    const col = Math.min(1.15, Math.max(0.7, d?.costOfLiving ?? 1));
+    const id = `${base.id}__${place.district}`;
+    JOBS[id] = { ...base, id, placeId: place.id, shiftWindow: [w0, w1], pay: Math.round((base.pay * col) / 5) * 5 };
+  };
+  const first = (district: string, kind: PlaceKind) => PLACES.find((p) => p.district === district && p.kind === kind);
+  for (const id of Object.keys(DISTRICTS)) {
+    const market = first(id, "market"), station = first(id, "transport"), clinic = first(id, "clinic"), school = first(id, "school"), food = first(id, "food");
+    if (market) make(JOBS.market_loader, market);
+    if (station) make(JOBS.trotro_mate, station);
+    if (food) make(JOBS.chop_cook, food);
+    if (clinic) { make(JOBS.nursing_aide, clinic); make(JOBS.night_watchman, clinic); }
+    if (school) make(JOBS.pupil_teacher, school);
+    if (GIG_CITIES.has(DISTRICTS[id].city) && Object.keys(DISTRICTS).find((k) => DISTRICTS[k].city === DISTRICTS[id].city) === id) {
+      if (food) make(JOBS.delivery_rider, food);
+      if (station) make(JOBS.ride_driver, station);
+    }
+  }
+}
+
+// A shift can only start while the workplace is open.
+for (const j of Object.values(JOBS)) {
+  const pl = PLACE_BY_ID_EARLY(j.placeId);
+  if (!pl || (pl.open[0] === 0 && pl.open[1] === 24) || pl.open[0] > pl.open[1]) continue;
+  const w0 = Math.max(j.shiftWindow[0], pl.open[0]), w1 = Math.min(j.shiftWindow[1], pl.open[1] - 1);
+  if (w0 <= w1) j.shiftWindow = [w0, w1];
+}
 
 // Every church holds its Sunday service.
 for (const p of PLACES) if (p.kind === "church" && !p.services.includes("sunday_service")) p.services.unshift("sunday_service");

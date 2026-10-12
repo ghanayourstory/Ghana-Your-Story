@@ -58,6 +58,7 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
         const s = SERVICES[sid];
         let cost = priceFor(s.cost, p.district);
         if (sid === "clinic" && state.player.unlocks.includes("adjei_care")) cost = Math.round(cost / 2);
+        else if ((sid === "clinic" || sid === "pharmacy") && state.player.unlocks.includes(`nurse_${p.district}`)) cost = Math.round(cost / 2);
         const season = serviceNote(sid, gd.month + 1, gd.day);
         const dayOk = !s.days || s.days.includes(gd.weekdayIndex);
         const avail = open && (!s.hours || isOpenAt(s.hours, gd.hour)) && (season?.available ?? true) && dayOk;
@@ -422,7 +423,7 @@ function TradePanel({ placeId, hour, open }: { placeId: string; hour: number; op
         <>
           <div className="seg" style={{ marginBottom: 6 }}>{[1, 5, 10, 20].map((n) => <button key={n} className={qty === n ? "on" : ""} onClick={() => setQty(n)}>×{n}</button>)}</div>
           {Object.values(GOODS).map((g) => {
-            const price = priceFor(g.buy, p.district);
+            const price = Math.round(priceFor(g.buy, p.district) * 100 * (isMarketDay(p.id, state.time.day) ? 0.92 : 1) * (state.player.unlocks.includes(`trader_${p.id}`) ? 0.95 : 1)) / 100;
             return (
               <div className="svc" key={g.id}>
                 <span className="goal-icon">{g.icon}</span>

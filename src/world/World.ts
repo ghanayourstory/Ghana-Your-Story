@@ -541,7 +541,12 @@ export class World {
           const r = (ei * 31 + c * 8 + row * 4 + k) % 7;
           if (r < 5) {
             const look = randomLook(e.id.length * 977 + ei * 131 + c * 17 + row * 7 + k);
-            if (funeral) { look.shirt = r % 2 ? "#141414" : "#8e1b1b"; look.pants = "#141414"; look.pattern = "plain"; }
+            if (e.dress === "north") {
+              // Smocks (batakari) for the men, wax print and headwraps for the women.
+              if (!look.feminine) { look.pattern = "stripe"; look.shirt = ["#E9DCC6", "#1F3A5F", "#7A2E2E"][r % 3]; }
+              else { look.pattern = "wax"; look.hairStyle = "wrap"; }
+              if (funeral && r % 2) look.shirt = "#1a1a1a";
+            } else if (funeral) { look.shirt = r % 2 ? "#141414" : "#8e1b1b"; look.pants = "#141414"; look.pattern = "plain"; }
             else { look.pattern = r % 2 ? "kente" : "wax"; if (r === 4) { look.shirt = "#f7f3e8"; look.pattern = "plain"; } }
             const rig = buildPerson(look);
             rig.root.position.set(x, 0.16, z);

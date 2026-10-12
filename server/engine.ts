@@ -913,6 +913,7 @@ function actService(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if ((s.effects.energy ?? 0) < -10) requireAwake(p, Math.min(30, -(s.effects.energy ?? 0)), s.verb.toLowerCase());
   let cost = minor(priceFor(s.cost, place.district));
   if (sid === "clinic" && hasUnlock(p, "adjei_care")) cost = Math.round(cost / 2);
+  else if ((sid === "clinic" || sid === "pharmacy") && hasUnlock(p, `nurse_${place.district}`)) cost = Math.round(cost / 2);
   if (s.site && hasUnlock(p, "guide_friend")) cost = Math.round(cost / 2);
   const money = chargeStrict(ctx, p, cost, "spend", `${s.name} at ${place.name}`);
   advance(ctx, p, s.minutes, fb, { quiet: true, sleeping: sid === "lodge" });
@@ -1228,6 +1229,7 @@ function actTalk(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
         reply = L.favourYes;
         addToList(p, "unlocks", npc.favour.unlock);
         if (npc.favour.unlock === "nii_blessing") applyEffects(p, { reputation: 15 }, null);
+        if (npc.favour.unlock.startsWith("driver_")) applyEffects(p, { reputation: 6 }, null);
         pushMemory(rel, p.game_min, `I helped you when you asked: "${npc.favour.ask}"`);
         fb.add(`🤝 ${npc.name.split(" ")[0]} helped you: ${npc.favour.reward}`, [], "goal");
         delta = 2;
@@ -2206,7 +2208,7 @@ function actTradeBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const cap = carryCapacity(!!ctx.db.get("SELECT 1 FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id));
   if (carrying + qty > cap) throw new GameError("too_much", `You can carry ${cap} units${cap < 100 ? " on foot (more with a car)" : ""}; you have ${carrying}.`);
   const md = isMarketDay(place.id, dayOf(p.game_min));
-  const cost = Math.round(minor(priceFor(g.buy, place.district)) * (md ? 0.92 : 1)) * qty;
+  const cost = Math.round(minor(priceFor(g.buy, place.district)) * (md ? 0.92 : 1) * (hasUnlock(p, `trader_${place.id}`) ? 0.95 : 1)) * qty;
   const money = chargeStrict(ctx, p, cost, "trade_buy", `Stock: ${qty} × ${g.name} (${g.unit}) at ${place.name}`);
   ctx.db.run("INSERT INTO stock (player_id, good_id, qty, cost) VALUES (?, ?, ?, ?) ON CONFLICT(player_id, good_id) DO UPDATE SET qty = qty + excluded.qty, cost = cost + excluded.cost", p.id, g.id, qty, cost);
   advance(ctx, p, 15 + Math.ceil(qty / 10) * 5, fb, { quiet: true });

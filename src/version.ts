@@ -1,2 +1,2 @@
 /** Shown in the update notice and Settings. Bump when publishing a build players should notice. */
-export const BUILD_VERSION = "v15 · Saturdays";
+export const BUILD_VERSION = "v16 · All of Ghana";
