@@ -11,7 +11,7 @@ import { loadHumans } from "./world/humans.ts";
 import { loadCarModels } from "./world/carmodels.ts";
 import type { GameState } from "../server/engine.ts";
 import type { PersonLook } from "./world/people.ts";
-import type { DistrictId } from "../shared/world.ts";
+import { DISTRICTS, type DistrictId } from "../shared/world.ts";
 
 type Boot = { phase: "loading" } | { phase: "create"; backend: Backend } | { phase: "play"; backend: Backend; state: GameState };
 
@@ -188,6 +188,7 @@ function Game() {
       if (e.key === "Escape") setPanel(null);
       if (e.key === "p" || e.key === "P") setPanel((p) => (p?.kind === "phone" ? null : { kind: "phone" }));
       if (e.key === "m" || e.key === "M") setPanel({ kind: "travel", ctx: "phone" });
+      if (e.key === "h" || e.key === "H") homeKey.current();
     };
     window.addEventListener("keydown", k);
     return () => window.removeEventListener("keydown", k);
@@ -211,7 +212,43 @@ function Game() {
     }
   }, [nearby, world, state, toast]);
 
+  // Go home from anywhere: straight in if it's this district, otherwise ride
+  // there across town (or pick a bus/flight if it's in another city), then go in.
+  const wantHome = useRef(false);
+  const goHome = useCallback(async () => {
+    if (!world || !state) return;
+    const h = state.player.home;
+    const items = state.items.map((i) => i.itemId);
+    if (world.inside) return toast({ text: "🏠 You're already home.", changes: [], tone: "info" });
+    if (world.goHome(h.spec, items)) return;
+    const here = DISTRICTS[state.player.district], there = DISTRICTS[h.district as DistrictId];
+    if (!there) return;
+    if (here.city !== there.city) {
+      toast({ text: `🏠 Home is in ${there.name}, ${there.city}. Pick a bus or flight to get back.`, changes: [], tone: "info" });
+      return setPanel({ kind: "travel", ctx: "phone", scope: "ghana" });
+    }
+    const hour = state.time.hour;
+    const modes = hour >= 5 && hour < 23 ? ["trotro", "taxi", "walk"] : ["taxi", "walk"];
+    wantHome.current = true;
+    for (const [i, mode] of modes.entries()) {
+      const r = await act({ type: "travel", to: h.district, mode }, { silent: i < modes.length - 1 });
+      if (r.ok) return;
+    }
+    wantHome.current = false;
+  }, [world, state, act, toast]);
+  useEffect(() => {
+    if (!wantHome.current || !world || !state || state.player.district !== state.player.home.district) return;
+    const t = setTimeout(() => {
+      if (world.goHome(state.player.home.spec, state.items.map((i) => i.itemId))) wantHome.current = false;
+    }, 400);
+    return () => clearTimeout(t);
+  }, [world, state]);
+
+  const homeKey = useRef(goHome);
+  homeKey.current = goHome;
+
   const open = (what: string) => {
+    if (what === "home") return void goHome();
     if (what === "map") return setPanel({ kind: "travel", ctx: "phone" });
     if (what === "event") return setPanel({ kind: "event" });
     if (what === "phone") return setPanel({ kind: "phone" });
@@ -265,6 +302,7 @@ function Game() {
             <div className="col small">
               <div>🕹️ <b>Move</b> with WASD / arrow keys (hold Shift to run, <b>Space</b> to jump gutters) or the joystick. Drag to turn the camera, scroll to zoom.</div>
               <div>🟡 Walk into <b>yellow rings</b> to enter places, then press <b>E</b>. Walk up to people to talk.</div>
+              <div>🏠 The green <b>Home</b> button (or <b>H</b>) takes you home from anywhere: sleep, bath, cook, watch TV.</div>
               <div>💼 First money: <b>Kaneshie Market</b> or the <b>trotro station</b> hire anyone. Eat, sleep, repeat — then build.</div>
               <div>📱 Your <b>phone</b> (P) has your bank, jobs, businesses, property, people, farms, Vibes and football.</div>
               <div>🇬🇭 Lorry stations and the phone's <b>Map</b> take you <b>Across Ghana</b>: Kumasi, Tamale, Kintampo, Wa, Cape Coast…</div>

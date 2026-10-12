@@ -279,6 +279,16 @@ export class World {
     this.inside = true;
   }
 
+  /** Walk up to your front door (when your home is in this district) and go in. */
+  goHome(spec: HomeSpec, items: string[] = []): boolean {
+    if (this.inside) return true;
+    if (!this.player || !this.district || this.state?.player.home.district !== this.district.id) return false;
+    this.pos.copy(this.district.homeDoor).add(new THREE.Vector3(0, 0, -Math.sign(this.district.homeDoor.z) * 1));
+    this.camTarget.copy(this.pos);
+    this.enterHome(spec, items);
+    return true;
+  }
+
   exitHome() {
     if (!this.inside || !this.interior || !this.player || !this.district) return;
     this.interiorScene.remove(this.interior.group);
@@ -631,9 +641,11 @@ export class World {
       if (!best) {
         for (const it of this.district.interactables as Interactable[]) {
           const dd = Math.hypot(it.pos.x - this.pos.x, it.pos.z - this.pos.z);
-          if (dd < it.radius && dd < bd) {
+          // Your own door wins over the building it's in (your room in Tetteh House).
+          const score = it.kind === "home" ? dd - 1.5 : dd;
+          if (dd < it.radius && score < bd) {
             if (it.kind === "home" && this.state?.player.home.district !== this.district.id) continue;
-            bd = dd;
+            bd = score;
             best = { kind: it.kind, id: it.placeId ?? it.id, label: it.label };
           }
         }

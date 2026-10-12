@@ -153,6 +153,7 @@ export function Minimap({ world, road, district }: { world: World | null; road: 
 export function Rail({ onOpen, badges, world, muted, setMuted }: { onOpen: (w: string) => void; badges: { phone: number; people: number }; world: World | null; muted: boolean; setMuted: (m: boolean) => void }) {
   return (
     <div className="rail">
+      <button onClick={() => onOpen("home")} title="Go home (H)" className="home-btn">🏠</button>
       <button onClick={() => onOpen("phone")} title="Phone (P)">📱{badges.phone > 0 && <span className="badge">{badges.phone}</span>}</button>
       <button onClick={() => onOpen("map")} title="Map (M)">🗺️</button>
       <button onClick={() => onOpen("people")} title="People">💬{badges.people > 0 && <span className="badge">{badges.people}</span>}</button>

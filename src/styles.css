@@ -219,3 +219,4 @@ canvas.world { position: fixed; inset: 0; width: 100%; height: 100%; display: bl
 
 .mapsvg { width: 100%; border-radius: 18px; background: #e9dcc0; }
 .spark { display: block; width: 100%; height: 40px; }
+.rail button.home-btn { background: linear-gradient(160deg, #3ddc84, #1f7a4d); box-shadow: 0 0 0 2px #ffffff55; }
