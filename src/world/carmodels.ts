@@ -58,12 +58,30 @@ interface Loaded {
 const loaded = new Map<string, Loaded>();
 let loading: Promise<boolean> | null = null;
 
+/** Load a .glb; hosts that won't serve .glb get a base64 .glb.json twin instead. */
+async function fetchGltf(loader: GLTFLoader, file: string): Promise<{ scene: THREE.Group }> {
+  const url = (f: string) => new URL(`vehicles/${f}`, document.baseURI).href;
+  let buf: ArrayBuffer;
+  const res = await fetch(url(file)).catch(() => null);
+  if (res && res.ok && !(res.headers.get("content-type") ?? "").includes("html")) buf = await res.arrayBuffer();
+  else {
+    const j = await fetch(url(`${file}.json`));
+    if (!j.ok) throw new Error(`missing ${file}`);
+    const b64 = ((await j.json()) as { glb: string }).glb;
+    const bin = atob(b64);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    buf = u8.buffer;
+  }
+  return (await loader.parseAsync(buf, "")) as unknown as { scene: THREE.Group };
+}
+
 export function loadCarModels(): Promise<boolean> {
   loading ??= (async () => {
     const loader = new GLTFLoader();
     const files = new Map<string, Promise<{ scene: THREE.Group }>>();
     const results = await Promise.allSettled(Object.entries(DEFS).map(async ([id, def]) => {
-      if (!files.has(def.file)) files.set(def.file, loader.loadAsync(new URL(`vehicles/${def.file}`, document.baseURI).href));
+      if (!files.has(def.file)) files.set(def.file, fetchGltf(loader, def.file));
       const gltf = { scene: (await files.get(def.file)!).scene.clone(true) };
       const root = new THREE.Group();
       const inner = gltf.scene;
