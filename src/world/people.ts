@@ -283,7 +283,21 @@ function buildSimplePerson(look: PersonLook): Rig {
 }
 
 /** Advance the procedural animation. speed in m/s. */
+/** Where the camera's attention is: people far from it animate less often. */
+const focus = new THREE.Vector3();
+let frame = 0;
+export function setAnimFocus(p: THREE.Vector3) { focus.copy(p); frame++; }
+const skipped = new WeakMap<object, number>();
 export function animatePerson(r: Person, dt: number, speed: number) {
+  // Far away: update every 2nd or 4th frame with the time saved up (nobody can see the difference).
+  const d2 = r.root.position.distanceToSquared(focus);
+  const every = d2 > 70 * 70 ? 4 : d2 > 32 * 32 ? 2 : 1;
+  if (every > 1) {
+    const acc = (skipped.get(r) ?? 0) + dt;
+    if ((frame + (r.root.id % every)) % every !== 0) { skipped.set(r, acc); return; }
+    skipped.set(r, 0);
+    dt = acc;
+  }
   if ("real" in r) return animateHuman(r, dt, speed);
   r.speed += (speed - r.speed) * Math.min(1, dt * 8);
   const v = r.speed;

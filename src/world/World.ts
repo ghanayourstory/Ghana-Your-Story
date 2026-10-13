@@ -14,7 +14,7 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, EXTENT_Z, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
-import { animatePerson, buildPerson, randomLook, setHumanMode, type Person, type PersonLook } from "./people.ts";
+import { animatePerson, setAnimFocus, buildPerson, randomLook, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildSite } from "./construction.ts";
 import { buildHomeInterior, buildPieceGroup, type Interior, type InteriorSpot, type SpotUse } from "./interiors.ts";
 import { activityFx, applyPose, clearPose, findPath, fxFor, type Fx } from "./homelife.ts";
@@ -250,7 +250,8 @@ export class World {
     this.quality = quality;
     setHumanMode(quality === "low" ? "key" : "all");
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality !== "low", powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === "high" ? 2 : quality === "medium" ? 1.5 : 1));
+    this.maxPR = Math.min(window.devicePixelRatio, quality === "high" ? 1.5 : quality === "medium" ? 1.25 : 1);
+    this.renderer.setPixelRatio(this.maxPR);
     this.renderer.shadowMap.enabled = quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     // Neutral keeps colours true and bright (ACES greyed the greens and the sky).
@@ -290,12 +291,10 @@ export class World {
     if (this.quality !== "high") return;
     const composer = new EffectComposer(this.renderer);
     const render = new RenderPass(this.scene, this.camera);
-    const ao = new GTAOPass(this.scene, this.camera, 1, 1);
-    ao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.6, thickness: 1.2, scale: 1.2, samples: 12 });
-    ao.blendIntensity = 0.6;
+    // Ambient occlusion cost more frame time than it was worth: off. (Kept the pass type for the fields.)
+    const ao = null as unknown as GTAOPass;
     const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.92);
     composer.addPass(render);
-    composer.addPass(ao);
     composer.addPass(bloom);
     // A touch more colour, like a sunny postcard.
     composer.addPass(new ShaderPass({
@@ -1995,12 +1994,17 @@ export class World {
     return false;
   }
 
+  private crouch = 0;
+  private landT = 0;
   jump() {
-    if (this.inside || this.jumpY > 0.02 || this.frozen || this.drive || this.ride) return;
-    this.vy = 3.4; // about 0.6 m clearance and 0.7 s in the air
+    if (this.inside || this.jumpY > 0.02 || this.crouch > 0 || this.frozen || this.drive || this.ride) return;
+    // A short crouch first, then take-off (~0.65 m high, ~0.6 s in the air).
+    this.crouch = 0.09;
+    this.jumpY = 0.001;
+    this.vy = 0;
     // A jump while moving is a stride across: at least 2.4 m/s, enough to clear a 0.6 m drain from a walk.
     const sp = Math.hypot(this.vel.x, this.vel.z);
-    if (sp > 0.3) this.hopVel = new THREE.Vector3(this.vel.x, 0, this.vel.z).multiplyScalar(Math.max(sp, 2.4) / sp);
+    if (sp > 0.3) this.hopVel = new THREE.Vector3(this.vel.x, 0, this.vel.z).multiplyScalar(Math.max(sp, 3) / sp);
   }
 
   /** Is there an open drain just ahead in this direction? */
@@ -2099,9 +2103,32 @@ export class World {
   // ---------------------------------------------------------------------------
   // Main loop
 
+  /** Resolution adapts to hold the frame rate: down when frames are slow, back up when there's room. */
+  private maxPR = 1;
+  private frameAvg = 16;
+  private prTimer = 0;
+  private adaptResolution(dt: number) {
+    this.frameAvg += (dt * 1000 - this.frameAvg) * 0.05;
+    this.prTimer += dt;
+    if (this.prTimer < 1.5) return;
+    this.prTimer = 0;
+    const pr = this.renderer.getPixelRatio();
+    let next = pr;
+    if (this.frameAvg > 24 && pr > 0.6) next = Math.max(0.6, pr - 0.15);
+    else if (this.frameAvg < 15 && pr < this.maxPR) next = Math.min(this.maxPR, pr + 0.1);
+    if (Math.abs(next - pr) > 0.01) {
+      this.renderer.setPixelRatio(next);
+      this.fx?.composer.setPixelRatio(next);
+      this.resize();
+    }
+  }
+
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
-    const dt = Math.min(0.05, this.clock.getDelta());
+    const raw = this.clock.getDelta();
+    const dt = Math.min(0.05, raw);
+    this.adaptResolution(Math.min(0.2, raw));
+    setAnimFocus(this.inside ? this.pos : this.camTarget);
     if (this.paused) return;
     const t = this.clock.elapsedTime;
     const minute = this.minuteNow;
@@ -2144,19 +2171,21 @@ export class World {
     const mag = autoDir ? 1 : Math.min(1, Math.hypot(ix, iz));
     const running = this.run || this.keys.has("shift") || mag > 0.95 && (this.joy.x !== 0 || this.joy.y !== 0) && Math.hypot(this.joy.x, this.joy.y) > 0.98;
     const energy = this.state?.player.stats.energy ?? 50;
-    // Real people walk about 1.35 m/s and jog about 3.4 m/s.
-    const maxSpeed = (running ? 3.4 : 1.35) * (energy < 10 ? 0.6 : 1);
+    // Game pace on a full-size city: a brisk walk and a proper run (people around you still stroll).
+    const maxSpeed = (running ? 6.2 : 2.7) * (energy < 10 ? 0.7 : 1) * (this.inside ? 0.75 : 1);
     if (mag > 0.05) {
       const fwd = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw));
       const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
       const dir = autoDir ?? fwd.multiplyScalar(iz).add(right.multiplyScalar(ix)).normalize();
-      this.vel.lerp(dir.multiplyScalar(maxSpeed * mag), Math.min(1, dt * (running ? 4 : 6)));
-      const targetYaw = Math.atan2(this.vel.x, this.vel.z);
+      // Snappy: reach full speed in about a fifth of a second; less grip in the air.
+      const grip = this.jumpY > 0.02 ? 3 : 14;
+      this.vel.lerp(dir.multiplyScalar(maxSpeed * mag), Math.min(1, dt * grip));
+      const targetYaw = Math.atan2(dir.x, dir.z);
       let dy = targetYaw - this.yaw;
       dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      this.yaw += dy * Math.min(1, dt * 12);
+      this.yaw += dy * Math.min(1, dt * 18);
     } else {
-      this.vel.multiplyScalar(Math.max(0, 1 - dt * 12));
+      this.vel.multiplyScalar(Math.max(0, 1 - dt * (this.jumpY > 0.02 ? 1 : 16)));
     }
     // Walking into an open drain: hop across it, the way everyone does.
     if (!this.inside && !this.hopVel && this.jumpY === 0 && !this.drive && !this.ride) {
@@ -2167,23 +2196,53 @@ export class World {
     this.pos.addScaledVector(this.hopVel ?? this.vel, dt);
     this.resolve(this.pos, 0.32);
     this.climb(before);
-    // Jumping.
-    this.vy -= 9.8 * dt;
-    this.jumpY = Math.max(0, this.jumpY + this.vy * dt);
-    if (this.jumpY === 0) { this.vy = 0; this.hopVel = null; }
+    // Jumping: a quick crouch, a game-weight arc (stronger gravity than real life so it feels snappy), a soft landing.
+    if (this.crouch > 0) {
+      this.crouch -= dt;
+      if (this.crouch <= 0) { this.crouch = 0; this.vy = 5.6; }
+    } else {
+      const wasAir = this.jumpY > 0;
+      this.vy -= (this.vy > 0 ? 17 : 24) * dt;
+      this.jumpY = Math.max(0, this.jumpY + this.vy * dt);
+      if (this.jumpY === 0) {
+        if (wasAir) this.landT = 0.16;
+        this.vy = 0;
+        this.hopVel = null;
+      }
+    }
+    this.landT = Math.max(0, this.landT - dt);
     const gy = this.groundY(this.pos);
     if (this.player) {
       this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y - this.jumpYPrev, gy, Math.min(1, dt * 14)) + this.jumpY, this.pos.z);
       this.jumpYPrev = this.jumpY;
       this.player.root.rotation.y = this.yaw;
-      animatePerson(this.player, dt, this.jumpY > 0 || this.doing ? 0 : this.vel.length());
+      animatePerson(this.player, dt, this.jumpY > 0 || this.crouch > 0 || this.doing ? 0 : this.vel.length());
       if (this.doing) this.updateDoing(dt, t);
-      // Tuck the legs while airborne.
-      if (this.jumpY > 0.02 && "real" in this.player) {
+      if ("real" in this.player && !this.doing) {
         const b = this.player.bones;
-        for (const sd of ["L", "R"]) {
-          b[`upperleg01.${sd}`].rotation.x = -0.6;
-          b[`lowerleg01.${sd}`].rotation.x = 1.0;
+        const D = Math.PI / 180;
+        if (this.crouch > 0 || this.landT > 0) {
+          // Bend the knees: wind up before take-off, absorb the landing.
+          const k = this.crouch > 0 ? 1 - this.crouch / 0.09 : this.landT / 0.16;
+          for (const sd of ["L", "R"]) {
+            b[`upperleg01.${sd}`].rotation.x = -38 * D * k;
+            b[`lowerleg01.${sd}`].rotation.x = 70 * D * k;
+            b[`foot.${sd}`].rotation.x = -30 * D * k;
+          }
+          b["spine03"].rotation.x = 14 * D * k;
+          this.player.body.position.y = -0.14 * k;
+        } else if (this.jumpY > 0.02) {
+          // In the air: knees tucked, arms up and out for balance; one leg leads when moving.
+          const up = this.vy > 0 ? 1 : 0.6;
+          const moving = Math.hypot(this.vel.x, this.vel.z) > 0.5 || !!this.hopVel;
+          b["upperleg01.L"].rotation.x = (moving ? -70 : -45) * D;
+          b["lowerleg01.L"].rotation.x = (moving ? 40 : 85) * D;
+          b["upperleg01.R"].rotation.x = (moving ? 10 : -45) * D;
+          b["lowerleg01.R"].rotation.x = (moving ? 75 : 85) * D;
+          b["upperarm01.L"].rotation.set(-50 * D * up, 0, -this.player.armDrop - 30 * D);
+          b["upperarm01.R"].rotation.set(-50 * D * up, 0, this.player.armDrop + 30 * D);
+          b["spine03"].rotation.x = 8 * D;
+          this.player.body.position.y = 0;
         }
       }
     }
@@ -2195,7 +2254,7 @@ export class World {
       focus.y = this.floorY;
       if (this.editMode && this.ghost) { focus.set(this.ghost.x, this.interior.storeys?.levels[this.ghost.level]?.y ?? 0, this.ghost.z); this.showFloors(); }
       this.camTarget.lerp(focus, Math.min(1, dt * 3));
-    } else this.camTarget.lerp(this.pos, Math.min(1, dt * 6));
+    } else this.camTarget.lerp(this.pos, Math.min(1, dt * 9));
     const cd = this.camDist;
     const cp = this.inside ? Math.max(this.camPitch, 0.7) : this.camPitch;
     const off = new THREE.Vector3(Math.sin(this.camYaw) * Math.cos(cp), Math.sin(cp), Math.cos(this.camYaw) * Math.cos(cp)).multiplyScalar(cd);
@@ -2298,7 +2357,6 @@ export class World {
     const scene = this.inside ? this.interiorScene : this.scene;
     if (this.fx) {
       this.fx.render.scene = scene;
-      this.fx.ao.scene = scene;
       // Lights bloom more at night.
       this.fx.bloom.strength = this.inside ? 0.25 : 0.2 + this.atmo.night * 0.5;
       this.fx.composer.render();

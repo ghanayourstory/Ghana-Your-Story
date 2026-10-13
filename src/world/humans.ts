@@ -610,22 +610,23 @@ const D = Math.PI / 180;
 
 /** Bone-driven walk/run/idle. speed in m/s. */
 export function animateHuman(r: HumanRig, dt: number, speed: number) {
-  r.speed += (speed - r.speed) * Math.min(1, dt * 6);
+  r.speed += (speed - r.speed) * Math.min(1, dt * 10);
   const v = r.speed;
   const B = r.bones;
   const set = (name: string, x: number, y = 0, z = 0) => B[name]?.rotation.set(x, y, z);
   const drop = r.armDrop;
   const moving = v > 0.12;
   // Stride frequency rises with speed (cadence ~105 steps/min at 1.3 m/s).
-  const run = THREE.MathUtils.smoothstep(v, 2.3, 3.3);
-  const freq = moving ? THREE.MathUtils.lerp(0.5 + 0.3 * v, 1.25 + 0.1 * v, run) : 0;
+  // NPCs walk at ~1.3 m/s; you walk briskly at ~2.7 m/s and run at ~6 m/s.
+  const run = THREE.MathUtils.smoothstep(v, 3.4, 5.2);
+  const freq = moving ? THREE.MathUtils.lerp(0.55 + 0.26 * v, 1.2 + 0.11 * v, run) : 0;
   const amt = THREE.MathUtils.smoothstep(v, 0.12, 1.1); // blend in from standing
   r.phase = (r.phase + dt * (freq || 0.35)) % 1000;
   const t = r.phase % 1;
   if (moving) r.walkBlend = Math.min(1, (r.walkBlend ?? 0) + dt * 4);
   else r.walkBlend = Math.max(0, (r.walkBlend ?? 0) - dt * 3);
   const wb = r.walkBlend * amt;
-  const stride = THREE.MathUtils.clamp(v / Math.max(0.5, freq) / 1.4, 0.4, 1.5); // scale angles to stride length
+  const stride = THREE.MathUtils.clamp(v / Math.max(0.5, freq) / 1.4, 0.4, 1.9); // scale angles to stride length
   const g = (curve: "hip" | "knee" | "ankle", tt: number) => THREE.MathUtils.lerp(sample(WALK[curve], tt), sample(RUN[curve], tt), run);
   const legs = (side: "L" | "R", off: number) => {
     const tt = t + off;
