@@ -11,6 +11,8 @@ import { projectKm } from "../../shared/geo.ts";
 import { DISTRICTS, districtsIn, JOBS, PLACE_BY_ID, SERVICES, TRAVEL_MODES, isOpenAt, priceFor, rankPay, travelQuote, type DistrictId, type TravelMode } from "../../shared/world.ts";
 import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
 import { HOME_ACTIVITIES } from "../../shared/homes.ts";
+import { AirportDesk } from "./aviation.tsx";
+import { CourtApp } from "./court.tsx";
 import { PIECES, ROOM_PLANS, furnishItems } from "../../shared/furnish.ts";
 import { CoursesPanel, DealerPanel, HomeGoods, IntercityPanel, StorePanel, placeIsStore, serviceNote } from "./ghana.tsx";
 import { toGameDate } from "../../shared/calendar.ts";
@@ -57,6 +59,8 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
       {state.player.events.filter((e) => e.placeId === p.id).map((e) => <EventCard key={e.id} ev={e} hour={gd.hour} />)}
       <OwarePanel placeId={p.id} open={open} />
       <TradePanel placeId={p.id} hour={gd.hour + gd.min / 60} open={open} />
+      {p.kind === "airport" && <AirportDesk />}
+      {p.kind === "court" && <div style={{ marginTop: 10 }}><CourtApp /></div>}
 
       {p.services.length > 0 && <h3>What you can do</h3>}
       {p.services.map((sid) => {

@@ -4,6 +4,8 @@ import { LANGUAGES, MAX_LANGUAGES, MAX_PRIORITIES, PRIORITIES } from "../../shar
 import { gigVehicle, startGigShift } from "./gig.ts";
 import { getCaptions, getReduceMotion, getUiScale, setCaptions, setReduceMotion, setUiScale, type UiScale } from "./a11y.ts";
 import { FamilyApp } from "./family.tsx";
+import { AviationApp } from "./aviation.tsx";
+import { CourtApp } from "./court.tsx";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
@@ -20,7 +22,7 @@ import { FarmApp, GarageApp, GhanaApp, VibesApp } from "./ghana.tsx";
 import type { GameState } from "../../server/engine.ts";
 import type { Quality as GfxQuality } from "../world/World.ts";
 
-type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage" | "family" | "story";
+type AppId = "home" | "dream" | "hustle" | "work" | "money" | "people" | "news" | "chop" | "property" | "bet" | "settings" | "ghana" | "vibes" | "farm" | "garage" | "family" | "story" | "aviation" | "court";
 
 const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string }[] = [
   { id: "dream", name: "Dream", icon: "⭐", bg: "linear-gradient(160deg,#ffd34d,#f2a900)" },
@@ -40,6 +42,8 @@ const APPS: { id: AppId | "map" | "ride"; name: string; icon: string; bg: string
   { id: "vibes", name: "Vibes", icon: "📸", bg: "linear-gradient(160deg,#8e2de2,#f2b705)" },
   { id: "farm", name: "Farms", icon: "🌱", bg: "linear-gradient(160deg,#8bc34a,#2e7d32)" },
   { id: "garage", name: "Garage", icon: "🔑", bg: "linear-gradient(160deg,#90a4ae,#37474f)" },
+  { id: "aviation", name: "Aviation", icon: "✈️", bg: "linear-gradient(160deg,#7fc4ff,#1f5aa6)" },
+  { id: "court", name: "Court", icon: "⚖️", bg: "linear-gradient(160deg,#c9b28c,#5b4632)" },
   { id: "settings", name: "Settings", icon: "⚙️", bg: "linear-gradient(160deg,#c7ccd3,#7d858f)" },
 ];
 
@@ -97,6 +101,8 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
             {app === "farm" && <><AppHead id="farm" sub="Seasons, rain and harvests" /><FarmApp /></>}
             {app === "story" && <><AppHead id="story" sub="Longer goals, at your own pace" /><StoryApp /></>}
             {app === "family" && <><AppHead id="family" sub="The people at home" /><FamilyApp onTravel={() => onTravel("phone")} /></>}
+            {app === "aviation" && <><AppHead id="aviation" sub="Flights, charters and your aircraft" /><AviationApp /></>}
+            {app === "court" && <><AppHead id="court" sub="Cases, lawyers and hearings" /><CourtApp /></>}
             {app === "garage" && <><AppHead id="garage" sub="Vehicles, licences and your things" /><GarageApp /></>}
           </div>
           <div className="phone-nav">

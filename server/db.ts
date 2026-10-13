@@ -380,6 +380,58 @@ CREATE TABLE IF NOT EXISTS home_finishes (
   PRIMARY KEY (player_id, home_key, room, kind)
 );
 
+CREATE TABLE IF NOT EXISTS flight_bookings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  ref TEXT NOT NULL,
+  route TEXT NOT NULL,
+  origin TEXT NOT NULL,
+  dest TEXT NOT NULL,
+  day INTEGER NOT NULL,
+  slot INTEGER NOT NULL,
+  dep_min INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  fare INTEGER NOT NULL,
+  bag_fee INTEGER NOT NULL DEFAULT 0,
+  insurance INTEGER NOT NULL DEFAULT 0,
+  transfer INTEGER NOT NULL DEFAULT 0,
+  bags INTEGER NOT NULL DEFAULT 0,
+  refund INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT '',
+  created_min INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS flight_bookings_player ON flight_bookings (player_id);
+
+CREATE TABLE IF NOT EXISTS disputes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  role TEXT NOT NULL,
+  counterparty TEXT NOT NULL,
+  amount INTEGER NOT NULL,
+  city TEXT NOT NULL,
+  ref TEXT NOT NULL DEFAULT '',
+  evidence TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'open',
+  created_min INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS court_cases (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  dispute_id INTEGER NOT NULL,
+  lawyer TEXT NOT NULL,
+  stage TEXT NOT NULL,
+  hearing_min INTEGER NOT NULL,
+  adjourned INTEGER NOT NULL DEFAULT 0,
+  appeal INTEGER NOT NULL DEFAULT 0,
+  statement TEXT NOT NULL DEFAULT '',
+  fees INTEGER NOT NULL DEFAULT 0,
+  outcome TEXT NOT NULL DEFAULT '',
+  transcript TEXT NOT NULL DEFAULT '[]',
+  history TEXT NOT NULL DEFAULT '[]',
+  decided_min INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS provider_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   status TEXT NOT NULL,
@@ -391,6 +443,8 @@ CREATE TABLE IF NOT EXISTS provider_state (
 
 /** Columns added after the first release: applied to older saves on load. */
 const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
+  ["vehicles", "location", "TEXT"],
+  ["vehicles", "ready_min", "INTEGER NOT NULL DEFAULT 0"],
   ["vehicles", "status", "TEXT NOT NULL DEFAULT 'personal'"],
   ["vehicles", "condition", "REAL NOT NULL DEFAULT 100"],
   ["players", "fun", "REAL NOT NULL DEFAULT 70"],

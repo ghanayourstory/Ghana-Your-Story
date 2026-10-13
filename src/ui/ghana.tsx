@@ -1,12 +1,13 @@
 // Ghana-wide UI: the country map, intercity travel, shops, dealers, schools,
 // farms, home goods and the Vibes social app.
 import { useMemo, useState } from "react";
+import { FlightsPanel } from "./aviation.tsx";
 import { useGame } from "../store.tsx";
 import type { World } from "../world/World.ts";
 import { ConfirmButton, EffectsPreview, money } from "./common.tsx";
 import regionsData from "../../shared/data/ghana-regions.json";
 import { REGIONS, TOWNS, TOWN_BY_ID, roadSegments, type RegionId } from "../../shared/ghana.ts";
-import { AIRPORTS, CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../../shared/cities.ts";
+import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../../shared/cities.ts";
 import { DISTRICTS, PLACE_BY_ID, districtsIn, isOpenAt, priceFor, type Place } from "../../shared/world.ts";
 import { COURSES, CROPS, DEALER_STOCK, FARMLANDS, ITEMS, POST_TYPES, VEHICLES, furnishingScore, influencerDaily, stockFor } from "../../shared/life.ts";
 import { FESTIVALS, SITES, SITE_BY_ID } from "../../shared/regional.ts";
@@ -89,7 +90,8 @@ export function IntercityPanel({ onDone, world }: { onDone: () => void; world?: 
       <div className="seg" style={{ marginTop: 10 }}>
         {modes.map((x) => <button key={x} className={x === mode ? "on" : ""} onClick={() => setMode(x)}>{{ bus: "🚌 Bus", vip: "🚍 VIP", flight: "✈️ Fly", car: "🚗 Drive", own_plane: "🛩️ Your plane" }[x]}</button>)}
       </div>
-      <div className="tiny muted" style={{ marginTop: 6 }}>{m.note} {running ? "" : `Departures ${m.hours[0]}:00–${m.hours[1]}:00.`}{mode === "flight" ? ` Airports: ${AIRPORTS.map((a) => TOWN_BY_ID[a].name).join(", ")}.` : ""}</div>
+      {mode === "flight" ? <div style={{ marginTop: 8 }}><FlightsPanel /></div> : <>
+      <div className="tiny muted" style={{ marginTop: 6 }}>{m.note} {running ? "" : `Departures ${m.hours[0]}:00–${m.hours[1]}:00.`}</div>
       <CountryMap here={here} onPick={(c) => setPick(c)} />
       {pick && (() => {
         const q = intercityQuote(fromCity, pick, mode);
@@ -101,7 +103,7 @@ export function IntercityPanel({ onDone, world }: { onDone: () => void; world?: 
             {q ? (
               <>
                 <div className="small" style={{ marginTop: 6 }}>{q.km} km · {formatDuration(q.minutes)} · {money(q.fare * 100)}</div>
-                {mode !== "flight" && <div className="tiny muted">Via {q.route.towns.map((t) => TOWN_BY_ID[t].name).join(" → ")}</div>}
+                {<div className="tiny muted">Via {q.route.towns.map((t) => TOWN_BY_ID[t].name).join(" → ")}</div>}
                 <button className="btn primary block" style={{ marginTop: 8 }} disabled={busy || !running} onClick={() => go(pick)}>{running ? `Go to ${city.name}` : "No departures now"}</button>
               </>
             ) : <div className="tiny bad" style={{ marginTop: 6 }}>No {m.name.toLowerCase()} on this route.</div>}
@@ -119,6 +121,7 @@ export function IntercityPanel({ onDone, world }: { onDone: () => void; world?: 
           <button className="btn primary sm" disabled={busy || !q || !running} onClick={() => go(c)}>Go</button>
         </div>
       ))}
+      </>}
     </>
   );
 }

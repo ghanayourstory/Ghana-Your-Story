@@ -263,7 +263,7 @@ export const RANK_TITLES = ["Junior", "", "Senior", "Lead", "Head"];
 // ---------------------------------------------------------------------------
 // Places
 
-export type PlaceKind = "food" | "work" | "bank" | "gym" | "clinic" | "nightlife" | "beach" | "market" | "realtor" | "home" | "church" | "transport" | "landmark" | "shop" | "school" | "dealer" | "mosque" | "lodge" | "tour" | "furniture" | "phone" | "mall" | "shrine" | "airport" | "hangar";
+export type PlaceKind = "food" | "work" | "bank" | "gym" | "clinic" | "nightlife" | "beach" | "market" | "realtor" | "home" | "church" | "transport" | "landmark" | "shop" | "school" | "dealer" | "mosque" | "lodge" | "tour" | "furniture" | "phone" | "mall" | "shrine" | "airport" | "hangar" | "court";
 
 export interface Place {
   id: string;

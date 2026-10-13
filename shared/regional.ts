@@ -276,7 +276,7 @@ const TOWNS_SPEC: TownSpec[] = [
     costOfLiving: 1.45, crowd: 0.55, traffic: 0.8, nightlife: 0.5, palette: "city", landmark: "Kotoka International Airport",
     places: [
       station("airport_stop", "Airport Junction", "Taxis, ride apps and the shuttle to the terminals."),
-      { id: "kotoka", name: "Kotoka International Airport (Terminal 3)", kind: "airport", services: ["view", "coffee"], open: [0, 24], size: [30, 16, 14], blurb: "Domestic flights to Kumasi, Tamale, Takoradi, Wa, Ho and Sunyani; international to the world.", geo: { lat: 5.6052, lon: -0.1668 } },
+      { id: "kotoka", name: "Kotoka International Airport (Terminal 3)", kind: "airport", services: ["view", "coffee"], open: [0, 24], size: [30, 16, 14], blurb: "Departures, arrivals, check-in and baggage help. Scheduled domestic flights to Kumasi, Tamale and Takoradi (see the departures board); charters elsewhere.", geo: { lat: 5.6052, lon: -0.1668 } },
       { id: "hangar_office", name: "General Aviation Hangars", kind: "hangar", open: [7, 19], size: [22, 14, 10], blurb: "Private hangars for business aviation. Leases, sales and maintenance." },
       { id: "aircraft_dealer", name: "Skyline Aviation Sales", kind: "dealer", open: [9, 18], size: [16, 10, 8], blurb: "Light aircraft, turboprops, business jets and helicopters." },
       { id: "airport_hotel", name: "Runway View Hotel", kind: "lodge", services: ["lodge", "coffee"], open: [0, 24], size: [16, 12, 22], blurb: "Business hotel with a rooftop bar facing the runway." },
@@ -304,6 +304,7 @@ const TOWNS_SPEC: TownSpec[] = [
     costOfLiving: 0.7, crowd: 0.85, traffic: 0.55, nightlife: 0.45, palette: "coast", landmark: "Jamestown Lighthouse",
     places: [
       station("jamestown_stop", "Jamestown Stop", "Trotros to Accra Central and Kaneshie."),
+      { id: "accra_court", name: "Accra District & Circuit Courts (game venue)", kind: "court", open: [8, 16], size: [18, 12, 10], blurb: "Hearings 9:00–13:00. Public gallery, legal aid desk. Fictional venue for the game's court cases." },
       { id: "jamestown_lighthouse", name: "Jamestown Lighthouse", kind: "landmark", services: ["view", ...festsIn("jamestown")], open: [8, 18], blurb: "Climb the red-and-white tower for the best view of old Accra.", geo: { lat: 5.5325, lon: -0.212 } },
       { id: "james_fort", name: "James Fort", kind: "landmark", services: ["view"], open: [9, 17], blurb: "British fort from 1673, later a prison. The waves still hit the walls.", geo: { lat: 5.5318, lon: -0.2105 } },
       { id: "bukom_gym", name: "Bukom Boxing Gym", kind: "gym", services: ["boxing"], open: [6, 20], blurb: "Ring ropes, punching bags made from sacks, and champions on the walls." },
@@ -319,6 +320,7 @@ const TOWNS_SPEC: TownSpec[] = [
     style: "market", geo: { lat: 6.6935, lon: -1.6244 }, roads: { main: "Prempeh II Street", cross: "Harper Road" }, bearing: 15,
     costOfLiving: 0.9, crowd: 1, traffic: 0.95, nightlife: 0.55, palette: "city", landmark: "Kejetia Market",
     places: [
+      { id: "kumasi_court", name: "Kumasi District Court (game venue)", kind: "court", open: [8, 16], size: [16, 11, 9], blurb: "Hearings 9:00–13:00. Public gallery, legal aid desk. Fictional venue for the game's court cases." },
       station("kejetia_station", "Kejetia Lorry Park", "Trotros and buses to every corner of the country. The STC and VIP buses leave from here."),
       { id: "kejetia_market", name: "Kejetia Market", kind: "market", services: ["market_haggle", "roasted_plantain", "koko_koose"], blurb: "One of West Africa's biggest markets: ten thousand stalls under one roof.", geo: { lat: 6.6966, lon: -1.6233 }, size: [26, 16, 9] },
       { id: "maame_akos", name: "Maame Akos Chop Bar", kind: "food", services: ["abenkwan", "omo_tuo", "ampesi", "mpotompoto", "kokonte"], open: [8, 21], blurb: "Fufu pounded by two strong men in rhythm. Goat abenkwan on Sundays." },

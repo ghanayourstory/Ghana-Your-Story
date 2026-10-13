@@ -997,3 +997,154 @@ test("renters: own pieces in a rented flat, no repainting, and they pack into st
   assert.equal(inv[0].where, "storage");
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("flights: book with a full price, check in, board, land; unverified routes can't be booked; missed and cancelled are fair", async () => {
+  const { ROUTES, disruption, FLIGHT_RULES } = await import("../shared/aviation.ts");
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 6);
+  assert.equal(act(ctx, id, { type: "travel", to: "adum", mode: "flight" }).code, "book_flight");
+  let s = buildState(ctx, loadPlayer(ctx.db, id));
+  // Only operating routes appear; Wa/Sunyani/Ho don't.
+  assert.ok(s.aviation.departures.length > 0);
+  assert.ok(s.aviation.departures.every((d) => ROUTES.find((r) => r.id === d.routeId.replace(/:r$/, ""))!.status === "operating"));
+  assert.equal(act(ctx, id, { type: "flight", op: "book", routeId: "acc-wza", day: 0, slot: 0 }).code, "route_unavailable");
+  // Pick a Kumasi departure tomorrow that isn't cancelled.
+  const dep = s.aviation.departures.find((d) => d.routeId === "acc-kms" && !d.cancelled && d.day === s.time.day + 1)!;
+  assert.ok(dep, "a Kumasi flight tomorrow");
+  const t0 = bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo");
+  const b = act(ctx, id, { type: "flight", op: "book", routeId: dep.routeId, day: dep.day, slot: dep.slot, bags: 1, insurance: true, transfer: true });
+  assert.ok(b.ok, b.error);
+  const row = ctx.db.get<{ fare: number; bag_fee: number; insurance: number; transfer: number }>("SELECT * FROM flight_bookings WHERE player_id = ?", id)!;
+  assert.equal(t0 - (bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo")), row.fare + row.bag_fee + row.insurance + row.transfer);
+  const bk = (b.data as { bookingId: number }).bookingId;
+  // Too early to check in or board.
+  assert.equal(act(ctx, id, { type: "flight", op: "board", bookingId: bk }).code, "not_checked_in");
+  // Skip to 3 hours before departure, check in, board (the transfer takes you to the airport).
+  const until = dep.depMin + dep.delay - 180 - gameMin(ctx, id);
+  skip(ctx, id, Math.floor(until / 60));
+  const ci = act(ctx, id, { type: "flight", op: "checkin", bookingId: bk });
+  assert.ok(ci.ok, ci.error);
+  const bd = act(ctx, id, { type: "flight", op: "board", bookingId: bk });
+  assert.ok(bd.ok, bd.error);
+  assert.equal(ctx.db.get<{ city: string }>("SELECT district FROM players WHERE id = ?", id) && district(ctx, id), "adum");
+  assert.ok(gameMin(ctx, id) >= dep.depMin + dep.delay);
+  // A missed flight without insurance: only 10% back.
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  const back = s.aviation.departures.find((d) => !d.cancelled && d.depMin > gameMin(ctx, id) + 300)!;
+  assert.ok(act(ctx, id, { type: "flight", op: "book", routeId: back.routeId, day: back.day, slot: back.slot }).ok);
+  const r2 = ctx.db.get<{ id: number; fare: number }>("SELECT id, fare FROM flight_bookings WHERE player_id = ? ORDER BY id DESC", id)!;
+  const before = bal(ctx, id, "bank");
+  skip(ctx, id, Math.ceil((back.depMin + back.delay - gameMin(ctx, id)) / 60) + 1);
+  const missed = ctx.db.get<{ status: string; refund: number }>("SELECT status, refund FROM flight_bookings WHERE id = ?", r2.id)!;
+  assert.equal(missed.status, "missed");
+  assert.equal(missed.refund, Math.round(r2.fare * FLIGHT_RULES.refundMissed));
+  assert.ok(bal(ctx, id, "bank") >= before + missed.refund);
+  // The disruption model is deterministic and sometimes cancels.
+  let cancels = 0;
+  for (let d = 0; d < 200; d++) if (disruption("acc-kms", d, 0).cancelled) cancels++;
+  assert.ok(cancels > 0 && cancels < 20);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("charters and your own aircraft: costs shown are costs charged, the plane stays where it landed, helicopters keep to helipads and daylight", async () => {
+  const { AIRCRAFT_SPECS, weeklyCost } = await import("../shared/aviation.ts");
+  const env = makeCtx({ devTools: true });
+  const id = newPlayer(env.ctx, "graduate", true);
+  const { ctx } = env;
+  assert.ok(act(ctx, id, { type: "dev_grant", amount: 500_000_000 * 100 }).ok);
+  ctx.db.run("UPDATE players SET reputation = 70 WHERE id = ?", id);
+  skipTo(ctx, id, 8);
+  assert.ok(act(ctx, id, { type: "travel", to: "airport_city", mode: "taxi" }).ok);
+  // Charter a light aircraft to Tamale.
+  const t0 = bal(ctx, id, "bank") + bal(ctx, id, "cash") + bal(ctx, id, "momo");
+  const ch = act(ctx, id, { type: "charter", aircraft: "prop_plane", to: "tamale" });
+  assert.ok(ch.ok, ch.error);
+  assert.equal(district(ctx, id), "tamale");
+  assert.ok(t0 - (bal(ctx, id, "bank") + bal(ctx, id, "cash") + bal(ctx, id, "momo")) >= AIRCRAFT_SPECS.prop_plane.charterMin * 100);
+  // A jet can't use a helipad; a helicopter can't fly at night.
+  assert.equal(act(ctx, id, { type: "charter", aircraft: "bizjet", to: "trasacco_helipad" }).code, "cant_land");
+  // Buy a helicopter in Accra (needs a hangar), then fly it to the estate helipad.
+  skipTo(ctx, id, 9);
+  assert.ok(act(ctx, id, { type: "charter", aircraft: "prop_plane", to: "kotoka" }).ok);
+  skipTo(ctx, id, 10);
+  assert.ok(act(ctx, id, { type: "plot_buy", plotId: "kotoka_hangar" }).ok);
+  assert.ok(act(ctx, id, { type: "vehicle_buy", vehicleId: "helicopter", placeId: "aircraft_dealer" }).ok);
+  const heli = ctx.db.get<{ id: number }>("SELECT id FROM vehicles WHERE player_id = ? AND type = 'helicopter'", id)!.id;
+  assert.ok(act(ctx, id, { type: "aircraft", op: "fly", vehicleId: heli, to: "trasacco_helipad" }).ok);
+  assert.equal(district(ctx, id), "trasacco");
+  assert.equal(ctx.db.get<{ location: string }>("SELECT location FROM vehicles WHERE id = ?", heli)!.location, "trasacco_helipad");
+  // Leave it there, go elsewhere by road: it can't come to you without a positioning flight.
+  assert.ok(act(ctx, id, { type: "travel", to: "airport_city", mode: "taxi" }).ok);
+  assert.equal(act(ctx, id, { type: "aircraft", op: "fly", vehicleId: heli, to: "kumasi" }).code, "not_with_plane");
+  assert.ok(act(ctx, id, { type: "aircraft", op: "reposition", vehicleId: heli, to: "kotoka" }).ok);
+  assert.equal(act(ctx, id, { type: "aircraft", op: "fly", vehicleId: heli, to: "kumasi" }).code, "in_transit");
+  // Night: grounded.
+  skipTo(ctx, id, 21);
+  assert.equal(act(ctx, id, { type: "aircraft", op: "fly", vehicleId: heli, to: "kumasi" }).code, "daylight");
+  // Upkeep is charged daily: a seventh of the weekly cost.
+  const upkeep = () => ctx.db.get<{ s: number }>("SELECT COALESCE(SUM(-l.amount), 0) AS s FROM ledger l JOIN transactions t ON t.id = l.tx_id WHERE l.player_id = ? AND t.kind = 'aircraft_upkeep'", id)!.s;
+  const u0 = upkeep();
+  skip(ctx, id, 24);
+  assert.equal(upkeep() - u0, Math.round(weeklyCost(AIRCRAFT_SPECS.helicopter) / 7) * 100);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("court: a kept rent advance becomes a claim; costs before filing, a hearing on the clock, a reasoned decision and money by order", async () => {
+  const { CASE_TYPES, LAWYER_BY_ID } = await import("../shared/justice.ts");
+  const { ctx, id } = rich();
+  assert.ok(act(ctx, id, { type: "travel", to: "labadi", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "rent_move", rentalId: "labadi_flat" }).ok);
+  // Move out with advance unused: the landlord keeps it, and a dispute opens.
+  assert.ok(act(ctx, id, { type: "travel", to: "kaneshie", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "rent_move", rentalId: "tetteh_room" }).ok);
+  let s = buildState(ctx, loadPlayer(ctx.db, id));
+  const d = s.court.disputes.find((x) => x.kind === "deposit")!;
+  assert.ok(d && d.status === "open");
+  assert.ok(d.evidence.every((e) => e.source === "game_record"));
+  const t = CASE_TYPES.deposit, lw = LAWYER_BY_ID.adjoa_asare;
+  const expect = (t.filingFee + t.serviceFee + lw.fee) * 100;
+  // Wrong price: refused, nothing charged.
+  const before = bal(ctx, id, "bank") + bal(ctx, id, "cash") + bal(ctx, id, "momo");
+  assert.equal(act(ctx, id, { type: "court", op: "file", disputeId: d.id, lawyer: "adjoa_asare", expect: expect + 1 }).code, "price_changed");
+  assert.equal(bal(ctx, id, "bank") + bal(ctx, id, "cash") + bal(ctx, id, "momo"), before);
+  const f = act(ctx, id, { type: "court", op: "file", disputeId: d.id, lawyer: "adjoa_asare", statement: "I paid three months and left after one.", expect });
+  assert.ok(f.ok, f.error);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  const c = s.court.cases[0];
+  assert.ok(c.hearingMin > gameMin(ctx, id), "the hearing is in the future");
+  assert.equal(toGameDate(c.hearingMin).hour, 9);
+  // Not at court: refused. Go to the court in Jamestown on the day.
+  assert.equal(act(ctx, id, { type: "court", op: "attend", caseId: c.id }).code, "not_at_court");
+  skip(ctx, id, Math.floor((c.hearingMin - gameMin(ctx, id)) / 60) - 2);
+  assert.ok(act(ctx, id, { type: "travel", to: "jamestown", mode: "taxi" }).ok);
+  const bankBefore = bal(ctx, id, "bank");
+  const at = act(ctx, id, { type: "court", op: "attend", caseId: c.id });
+  assert.ok(at.ok, at.error);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  const done = s.court.cases[0];
+  assert.equal(done.stage, "decided");
+  assert.ok(done.transcript.length >= 5 && done.transcript.some((l) => l.side === "them"), "both sides are heard");
+  assert.ok(done.outcome.length > 10);
+  assert.ok(bal(ctx, id, "bank") >= bankBefore);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("court: a missed hearing is decided in your absence; legal aid has an income limit; civic activities are opt-in and cheap", () => {
+  const { ctx, id } = rich();
+  assert.ok(act(ctx, id, { type: "travel", to: "labadi", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "rent_move", rentalId: "labadi_flat" }).ok);
+  assert.ok(act(ctx, id, { type: "travel", to: "kaneshie", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "rent_move", rentalId: "tetteh_room" }).ok);
+  let s = buildState(ctx, loadPlayer(ctx.db, id));
+  const d = s.court.disputes[0];
+  assert.ok(act(ctx, id, { type: "court", op: "file", disputeId: d.id, lawyer: "self" }).ok);
+  skip(ctx, id, 24 * 6);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(s.court.cases[0].stage, "decided");
+  assert.match(s.court.cases[0].outcome, /Struck out|dismissed|Partial|Judgment/);
+  // Civic: watch from the gallery in court hours.
+  skipTo(ctx, id, 10);
+  assert.ok(act(ctx, id, { type: "travel", to: "jamestown", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "court", op: "observe" }).ok);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

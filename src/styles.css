@@ -334,3 +334,23 @@ input[type="range"] { accent-color: var(--gold); }
 .furnish .swatch { display: inline-block; width: 14px; height: 14px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.2); vertical-align: -2px; }
 .linkish { background: none; border: 0; color: inherit; text-decoration: underline; cursor: pointer; font: inherit; padding: 0; }
 @media (max-width: 600px) { .furnish { max-height: 56dvh; bottom: 0; border-radius: 18px 18px 0 0; width: 100vw; } }
+
+/* Aviation and court */
+.facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 10px; margin: 8px 0; font-size: 12.5px; }
+.facts dt { color: var(--muted, #7a6f60); font-weight: 600; }
+.facts dd { margin: 0; }
+.receipt { margin: 10px 0; padding: 10px; border-radius: 12px; background: rgba(0,0,0,0.035); font-size: 13px; display: grid; gap: 3px; }
+.trip { padding: 10px; border-radius: 12px; border: 1px solid rgba(0,0,0,0.08); background: #fff; margin-top: 8px; }
+.boarding-pass { display: grid; grid-template-columns: repeat(auto-fit, minmax(90px, 1fr)); gap: 6px; margin-top: 8px; padding: 10px; border-radius: 12px; background: linear-gradient(135deg, #1f5aa6, #2e86ab); color: #fff; }
+.boarding-pass span { display: block; color: #cfe3f5; }
+.boarding-pass b { font-size: 14px; }
+.transcript { margin-top: 8px; padding: 8px 10px; border-left: 3px solid #c9b28c; background: rgba(201,178,140,0.12); border-radius: 0 10px 10px 0; }
+.transcript h4 { margin: 6px 0 4px; font-size: 12px; }
+.transcript .you b { color: #1f7a4d; }
+.transcript .them b { color: #c8452c; }
+.transcript .court b { color: #5b4632; }
+.compare { padding: 8px 10px; border-radius: 12px; background: rgba(31,90,166,0.06); }
+.warn { color: #b26b00; }
+.pill.bad { background: rgba(200,69,44,0.15); color: #a3341f; }
+.pill.warn { background: rgba(242,183,5,0.2); color: #8a5d00; }
+.card-item.on { border-color: #1f7a4d; box-shadow: 0 0 0 2px #1f7a4d33; }

@@ -36,6 +36,8 @@ import {
 } from "../shared/economy.ts";
 import { TOWN_BY_ID } from "../shared/ghana.ts";
 import { HOME_ACTIVITIES, HOME_SPECS, tierForHome } from "../shared/homes.ts";
+import { AIRCRAFT_SPECS, AIRPORTS_GH, AIRPORT_BY_ID, FLIGHT_RULES, ROUTES, ROUTE_BY_ID, cancelRefund, canUse, charterQuoteOf, daylightProblem, disruption, flightFare, flightLeg, weeklyCost, type AircraftSpec } from "../shared/aviation.ts";
+import { ADJOURN_DAYS, APPEAL_DAYS, APPEAL_FEE, CASE_TYPES, CIVIC, COURT_CLOSES, HEARING_HOUR, LAWYER_BY_ID, LEGAL_AID_INCOME_LIMIT, courtFor, type DisputeKind } from "../shared/justice.ts";
 import { FINISHES, PIECES, PIECE_INFO, ROOM_PLANS, deliveryFee, fitsRoom, footprint, furnishComfort, furnishItems, furnishedPackage, fullyFurnished, overlaps, placeableRooms, resaleValue, roomRects, type Finishes, type Furnishing, type PlacedPiece } from "../shared/furnish.ts";
 import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
 import {
@@ -726,6 +728,8 @@ export function advance(ctx: Ctx, p: PlayerRow, minutes: number, fb: Feedback, o
 /** Things that complete at a specific minute: construction, T-bills, upgrades, missed dates. */
 function processTimed(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   const db = ctx.db;
+  settleFlights(ctx, p, fb);
+  settleCourts(ctx, p, fb);
   const now = p.game_min;
   for (const b of db.all<BuildingRow>("SELECT * FROM buildings WHERE player_id = ? AND status IN ('building','upgrading') AND stage_ends_min <= ?", p.id, now)) {
     const design = DESIGNS[b.design];
@@ -823,6 +827,8 @@ function eventMultiplier(db: Db, playerId: number, day: number): number {
 /** Daily settlement. Runs once per game day per player (guarded by last_day_processed). */
 function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   spoilStock(ctx, p, fb);
+  arrearsClaim(ctx, p, day, fb);
+  aircraftUpkeep(ctx, p, fb);
   familyDay(ctx, p, day, fb);
   jobAttendance(p, day, fb);
   householdDay(ctx, p, day, fb);
@@ -937,7 +943,13 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
   }
   // Salary day.
   if (today.date === SALARY_DAY && p.payroll_accrued > 0) {
-    const pay = p.payroll_accrued;
+    let pay = p.payroll_accrued;
+    // Now and then an employer holds back part of the month's pay.
+    if (p.job_id && pay > minor(400) && rand01(`wages:${p.id}:${day}`) < 0.06) {
+      const held = Math.round(pay * 0.4);
+      pay -= held;
+      openDispute(ctx, p, { kind: "wages", role: "claimant", counterparty: PLACE_BY_ID[JOBS[p.job_id].placeId]?.name ?? "Your employer", amount: held, city: DISTRICTS[PLACE_BY_ID[JOBS[p.job_id].placeId]?.district ?? p.district].city, evidence: [{ label: `Shift records: ${p.job_shifts} shifts on file`, source: "game_record" }, { label: `Payroll: ${formatMoney(held)} held back on ${today.monthName} salary day`, source: "game_record", amount: held }] }, fb, `⚠️ Your employer held back ${formatMoney(held)} of this month's pay. You can claim it at the court (Phone → Court).`);
+    }
     p.payroll_accrued = 0;
     post(db, p.id, [{ account: "bank", amount: pay }], { kind: "salary", memo: `${today.monthName} salary`, gameMin: p.game_min, nowMs, idemKey: `salary:${day}` });
     fb.add(`💼 Salary day! ${formatMoney(pay)} landed in your bank.`, [{ k: "bank", d: pay }], "good");
@@ -982,6 +994,15 @@ function homeItemIds(db: Db, p: PlayerRow) {
 }
 
 const RESALE = 0.4;
+/** Moving out with months of advance unused: the landlord keeps it, and you can claim it back in court. */
+function leaveRental(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  if (p.home_kind !== "rental" || p.rent_credit <= 0) return;
+  const r = RENTALS[p.home_ref];
+  if (!r) return;
+  const amount = minor(r.rent * p.rent_credit);
+  openDispute(ctx, p, { kind: "deposit", role: "claimant", counterparty: `Landlord of ${r.name}`, amount, city: DISTRICTS[r.district].city, ref: r.id, evidence: [{ label: `Rent advance paid for ${r.name}`, source: "game_record" }, { label: `${p.rent_credit} month${p.rent_credit > 1 ? "s" : ""} unused when you moved out`, source: "game_record", amount }] }, fb, `🏠 You moved out with ${p.rent_credit} month${p.rent_credit > 1 ? "s" : ""} of advance unused (${formatMoney(amount)}). The landlord isn't returning it: you can claim it (Phone → Court).`);
+  p.rent_credit = 0;
+}
 /** Leaving a rented place: your own pieces come with you into storage; the landlord's stay. */
 function packUpRental(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   if (p.home_kind !== "rental") return;
@@ -1484,6 +1505,10 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "wardrobe": return actWardrobe(ctx, p, a, fb);
     case "furnish": return actFurnish(ctx, p, a, fb);
     case "furnish_item": return actFurnishItem(ctx, p, a, fb);
+    case "flight": return actFlight(ctx, p, a, fb);
+    case "charter": return actCharter(ctx, p, a, fb);
+    case "aircraft": return actAircraft(ctx, p, a, fb);
+    case "court": return actCourt(ctx, p, a, fb);
     case "oware": return actOware(ctx, p, a, fb);
     case "party": return actParty(ctx, p, a, fb);
     case "cleanup": return actCleanup(ctx, p, a, fb);
@@ -1641,13 +1666,14 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const toCity = DISTRICTS[a.to as DistrictId].city;
   const q = intercityQuote(fromCity, toCity, mode);
   if (!q) throw new GameError("no_route", mode === "flight" || mode === "own_plane" ? "No airport there. Take the bus." : "No road route found.");
+  if (mode === "flight") throw new GameError("book_flight", "Flights are booked ahead now: Phone → Aviation, or the airport desk.");
   if (mode === "own_plane") {
-    const planes = ctx.db.all<{ type: string }>("SELECT type FROM vehicles WHERE player_id = ? AND status = 'personal'", p.id).map((v) => VEHICLES[v.type]).filter((v) => v?.category === "aircraft");
-    if (!planes.length) throw new GameError("no_plane", "You don't own an aircraft. Skyline Aviation Sales in Airport City can fix that.");
-    const best = planes.sort((a, b) => b.speedKmh - a.speedKmh)[0];
-    q.minutes = Math.round((q.km / best.speedKmh) * 60) + 40;
-    q.fare = Math.round(400 + best.perKm * q.km);
-    q.energy = -4;
+    // Your own aircraft: same rules as the Aviation app (it must be where you are).
+    const mine = aircraftRows(ctx.db, p).sort((x, y) => AIRCRAFT_SPECS[y.type].speedKmh - AIRCRAFT_SPECS[x.type].speedKmh);
+    if (!mine.length) throw new GameError("no_plane", "You don't own an aircraft. Skyline Aviation Sales in Airport City can fix that.");
+    const to = AIRPORTS_GH.find((x) => x.city === toCity && x.type !== "helipad" && canUse(AIRCRAFT_SPECS[mine[0].type], x));
+    if (!to) throw new GameError("no_route", "No airport there your aircraft can use.");
+    return actAircraft(ctx, p, { type: "aircraft", op: "fly", vehicleId: mine[0].id, to: to.id }, fb);
   }
   const m = INTERCITY_MODES[mode];
   const gd = toGameDate(p.game_min);
@@ -1661,7 +1687,7 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   // Traders pay the mate for the stock riding in the boot.
   const units = mode === "bus" || mode === "vip" ? stockOf(ctx.db, p).reduce((n, r) => n + r.qty, 0) : 0;
   const fare = minor(q.fare) + minor(units * LUGGAGE_PER_UNIT);
-  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}${units ? ` (+ luggage for ${units} units of stock)` : ""}`, mode === "flight" || mode === "own_plane");
+  const money = chargeStrict(ctx, p, fare, "transport", `${m.name}: ${CITIES[fromCity].name} → ${CITIES[toCity].name}${units ? ` (+ luggage for ${units} units of stock)` : ""}`);
   // On long journeys you doze in your seat (unless you're the one driving).
   advance(ctx, p, q.minutes, fb, { quiet: true, sleeping: q.minutes > 240 && mode !== "car" });
   if (mode === "car") wearVehicle(ctx, p, roadVehicle(ctx.db, p, true), q.km * 0.03, fb);
@@ -1669,7 +1695,7 @@ function actIntercity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   p.district = arrivalDistrict(toCity, mode);
   p.pos_x = -58;
   p.pos_z = 6;
-  const via = q.route.roads.length && mode !== "flight" ? ` via ${q.route.roads.slice(0, 2).map((r) => r.split(" (")[0]).join(", ")}` : "";
+  const via = q.route.roads.length ? ` via ${q.route.roads.slice(0, 2).map((r) => r.split(" (")[0]).join(", ")}` : "";
   applyEffects(p, { energy: q.energy, social: mode === "bus" ? 4 : 1 }, fb, `${m.name} from ${CITIES[fromCity].name} to ${CITIES[toCity].name}: ${q.km} km, ${Math.floor(q.minutes / 60)}h ${q.minutes % 60}m${via}.${units ? ` Your ${units} units of stock rode in the boot (luggage ${formatMoney(minor(units * LUGGAGE_PER_UNIT))}).` : ""}`, money);
   if (addToList(p, "visited", p.district)) {
     applyEffects(p, { social: 6, reputation: 1 }, fb, `First time in ${CITIES[toCity].name} (${CITIES[toCity].region} Region): ${DISTRICTS[p.district].tagline}.`);
@@ -2075,6 +2101,7 @@ function actRentMove(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const cost = minor(r.rent * months);
   const money = chargeStrict(ctx, p, cost, "rent", `Rent advance (${months} months): ${r.name}`, true);
   if (p.home_kind === "owned") ctx.db.run("UPDATE buildings SET use = 'vacant' WHERE id = ?", Number(p.home_ref));
+  leaveRental(ctx, p, fb);
   packUpRental(ctx, p, fb);
   p.home_kind = "rental";
   p.home_ref = r.id;
@@ -2111,6 +2138,9 @@ function actPlotBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
       fb.add(`🛋️ Furnished throughout: ${formatMoney(pkg)}. Move things around or swap pieces any time (Home → Furnish).`, [], "info");
       void m2;
     }
+  }
+  if (!plot.ready && rand01(`land:${p.id}:${plot.id}`) < 0.12) {
+    openDispute(ctx, p, { kind: "land", role: "claimant", counterparty: "A family claiming the plot", amount: price, city: DISTRICTS[plot.district].city, ref: String(ins.lastInsertRowid), evidence: [{ label: `Indenture and receipt for ${plot.name}`, source: "game_record", amount: price }, { label: "Land registry search (game)", source: "game_record" }] }, fb, "📜 A family says your plot wasn't the seller's to sell. Ask the court to confirm your title (Phone → Court).");
   }
   rememberAcrossDistrict(ctx.db, p, plot.district, `you bought land here in ${DISTRICTS[plot.district].name}`);
   applyEffects(p, { reputation: 3, social: 5 }, fb, `You bought ${plot.name}. The indenture is registered in your name.`, money);
@@ -3550,6 +3580,8 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       jobRequirements: Object.fromEntries(Object.keys(JOBS).map((j) => [j, jobRequirements(p, j)])),
     },
     time: { ...gd, weather: weatherAt(p.game_min) },
+    aviation: aviationView(db, p),
+    court: courtView(db, p),
     money: {
       ...nw,
       netWorth: nw.total,
@@ -3610,3 +3642,461 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
 
 export type GameState = ReturnType<typeof buildState>;
 
+
+// ---------------------------------------------------------------------------
+// Air travel: scheduled flights booked ahead, charters, and your own aircraft.
+
+const toDisp = (b: { route: string; day: number; slot: number }, stormy = false) => disruption(b.route, b.day, b.slot, stormy);
+type BookingRow = { id: number; ref: string; route: string; origin: string; dest: string; day: number; slot: number; dep_min: number; status: string; fare: number; bag_fee: number; insurance: number; transfer: number; bags: number; refund: number; note: string; created_min: number };
+
+/** Getting to the airport: a ride in Accra (to Airport City), a taxi elsewhere. */
+function airportTransfer(p: PlayerRow, origin: string, hour: number, weekday: number) {
+  const ap = AIRPORT_BY_ID[origin];
+  if (ap.district) {
+    if (p.district === ap.district) return { fare: 0, minutes: 0, note: "You're at the airport already" };
+    const q = travelQuote(p.district, ap.district, "ride", hour, weekday, false);
+    return { fare: q.fare, minutes: q.minutes, note: `Ride app to ${DISTRICTS[ap.district].name}` };
+  }
+  return { fare: 60, minutes: 35, note: "Taxi to the airport (the terminal is outside the playable town)" };
+}
+
+/** Departures you can book from where you are (next 7 days), with their live status. */
+export function departuresFrom(db: Db, p: PlayerRow, stormy = false) {
+  const city = DISTRICTS[p.district].city;
+  const out: { routeId: string; origin: string; dest: string; day: number; slot: number; depMin: number; fare: number; minutes: number; km: number; carrier: string; delay: number; cancelled: boolean; reason: string }[] = [];
+  const today = dayOf(p.game_min);
+  for (const r of ROUTES) {
+    if (r.status !== "operating") continue;
+    const ends = AIRPORT_BY_ID[r.from].city === city ? [r.from, r.to] : AIRPORT_BY_ID[r.to].city === city ? [r.to, r.from] : null;
+    if (!ends) continue;
+    const leg = flightLeg(ends[0], ends[1]);
+    for (let d = today; d <= today + FLIGHT_RULES.bookDaysAhead; d++) {
+      r.times.forEach((t, slot) => {
+        // The return leg leaves 2 hours after the outbound time (game timetable).
+        const dep = d * MINUTES_PER_DAY + Math.round((ends[0] === r.from ? t : t + 2) * 60);
+        if (dep < p.game_min + FLIGHT_RULES.bookCutoffMin) return;
+        const dis = disruption(r.id + (ends[0] === r.from ? "" : ":r"), d, slot, stormy && d === today);
+        out.push({ routeId: r.id + (ends[0] === r.from ? "" : ":r"), origin: ends[0], dest: ends[1], day: d, slot, depMin: dep, fare: flightFare(leg.km), minutes: leg.minutes, km: leg.km, carrier: r.carrier, delay: dis.delay, cancelled: dis.cancelled, reason: dis.reason });
+      });
+    }
+  }
+  void db;
+  return out.sort((a, b) => a.depMin - b.depMin);
+}
+const baseRoute = (id: string) => ROUTE_BY_ID[id.replace(/:r$/, "")];
+function bookingRow(ctx: Ctx, p: PlayerRow, id: unknown) {
+  const b = ctx.db.get<BookingRow>("SELECT * FROM flight_bookings WHERE id = ? AND player_id = ?", Number(id), p.id);
+  if (!b) throw new GameError("no_booking", "That booking isn't yours.");
+  return b;
+}
+const bookingDisruption = (b: BookingRow) => disruption(b.route, b.day, b.slot);
+
+function actFlight(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const gd = toGameDate(p.game_min);
+  const stormy = false;
+  switch (a.op) {
+    case "book": {
+      const dep = departuresFrom(ctx.db, p, stormy).find((d) => d.routeId === a.routeId && d.day === Number(a.day) && d.slot === Number(a.slot));
+      if (!dep) {
+        const r = typeof a.routeId === "string" ? baseRoute(a.routeId) : undefined;
+        if (r && r.status !== "operating") throw new GameError("route_unavailable", `Not bookable: ${r.status === "suspended" ? "service suspended" : "we couldn't confirm this route is flying"}. Take the bus or charter a plane.`);
+        throw new GameError("no_departure", "That departure isn't available any more (too close to take-off, or not from here).");
+      }
+      if (dep.cancelled) throw new GameError("cancelled", `That flight is cancelled (${dep.reason}). Choose another.`);
+      const bags = a.bags ? 1 : 0;
+      const tr = airportTransfer(p, dep.origin, gd.hour, gd.weekdayIndex);
+      const transfer = a.transfer && tr.fare > 0 ? tr.fare : 0;
+      const fare = minor(dep.fare), bag = minor(bags * FLIGHT_RULES.checkedBag), ins = a.insurance ? minor(Math.round(dep.fare * FLIGHT_RULES.insuranceRate)) : 0, trm = minor(transfer);
+      const total = fare + bag + ins + trm;
+      if (a.expect !== undefined && Number(a.expect) !== total) throw new GameError("price_changed", "The price changed. Check it again.");
+      const ref = `GYS-${(p.id * 7919 + p.game_min).toString(36).toUpperCase().slice(-5)}`;
+      const money = chargeStrict(ctx, p, total, "flight", `Flight ${ref}: ${AIRPORT_BY_ID[dep.origin].name} → ${AIRPORT_BY_ID[dep.dest].name}`, true);
+      const ins2 = ctx.db.run("INSERT INTO flight_bookings (player_id, ref, route, origin, dest, day, slot, dep_min, status, fare, bag_fee, insurance, transfer, bags, created_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'booked', ?, ?, ?, ?, ?, ?)",
+        p.id, ref, dep.routeId, dep.origin, dep.dest, dep.day, dep.slot, dep.depMin, fare, bag, ins, trm, bags, p.game_min);
+      advance(ctx, p, 5, fb, { quiet: true });
+      fb.add(`🎫 Booked ${ref}: ${CITIES[AIRPORT_BY_ID[dep.origin].city].name} → ${CITIES[AIRPORT_BY_ID[dep.dest].city].name}, ${toGameDate(dep.depMin).label} ${toGameDate(dep.depMin).clock}. Check in online from 24 hours before.`, money, "info");
+      return { bookingId: Number(ins2.lastInsertRowid), ref };
+    }
+    case "checkin": {
+      const b = bookingRow(ctx, p, a.bookingId);
+      if (b.status !== "booked") throw new GameError("not_bookable", b.status === "checked_in" ? "You're already checked in." : "This booking can't be checked in.");
+      const dis = bookingDisruption(b);
+      if (dis.cancelled) throw new GameError("cancelled", "This flight was cancelled by the airline: rebook or take a refund.");
+      const dep = b.dep_min + dis.delay;
+      if (p.game_min < b.dep_min - FLIGHT_RULES.checkinOpenMin) throw new GameError("too_early", "Online check-in opens 24 hours before departure.");
+      if (p.game_min > dep - FLIGHT_RULES.checkinCloseMin) throw new GameError("too_late", "Check-in closed an hour before departure.");
+      ctx.db.run("UPDATE flight_bookings SET status = 'checked_in' WHERE id = ?", b.id);
+      fb.add(`✅ Checked in for ${b.ref}. Boarding pass is in your phone. Be at the gate by ${toGameDate(dep - FLIGHT_RULES.gateCloseMin).clock}.`, [], "info");
+      return null;
+    }
+    case "board": {
+      const b = bookingRow(ctx, p, a.bookingId);
+      const dis = bookingDisruption(b);
+      if (dis.cancelled) throw new GameError("cancelled", "The airline cancelled this flight: rebook or take a refund.");
+      if (b.status !== "checked_in") throw new GameError(b.status === "booked" ? "not_checked_in" : "not_bookable", b.status === "booked" ? "Check in first (from 24 hours to 1 hour before)." : "This booking can't be used.");
+      const origin = AIRPORT_BY_ID[b.origin], dest = AIRPORT_BY_ID[b.dest];
+      if (DISTRICTS[p.district].city !== origin.city) throw new GameError("wrong_city", `This flight leaves from ${origin.name}, in ${CITIES[origin.city].name}.`);
+      const dep = b.dep_min + dis.delay;
+      // Getting to the airport: your booked transfer, or you're already there.
+      let transferMin = 0;
+      if (origin.district && p.district !== origin.district) {
+        if (!b.transfer) throw new GameError("not_at_airport", `Get to ${DISTRICTS[origin.district].name} first (you didn't book the transfer).`);
+        transferMin = airportTransfer(p, b.origin, toGameDate(p.game_min).hour, toGameDate(p.game_min).weekdayIndex).minutes;
+      } else if (!origin.district && !b.transfer) transferMin = 35;
+      if (p.game_min + transferMin > dep - FLIGHT_RULES.gateCloseMin) throw new GameError("too_late", "You can't make the gate before it closes.");
+      if (transferMin) { advance(ctx, p, transferMin, fb, { quiet: true }); if (origin.district) p.district = origin.district; }
+      // Waiting at the gate until boarding (game time), then the flight.
+      const wait = Math.max(0, dep - FLIGHT_RULES.boardingOpenMin - p.game_min);
+      if (wait > 0) advance(ctx, p, wait, fb, { quiet: true });
+      const leg = flightLeg(b.origin, b.dest);
+      advance(ctx, p, FLIGHT_RULES.boardingOpenMin + leg.minutes + (b.bags ? FLIGHT_RULES.baggageMinutes : 5), fb, { quiet: true });
+      p.district = dest.district ?? arrivalDistrict(dest.city, "flight");
+      p.pos_x = -58;
+      p.pos_z = 6;
+      ctx.db.run("UPDATE flight_bookings SET status = 'flown' WHERE id = ?", b.id);
+      const first = addToList(p, "visited", p.district);
+      addToList(p, "discovered", `region:${CITIES[dest.city].region}`);
+      applyEffects(p, { energy: -8, social: 1 }, fb, `🛬 ${b.ref} landed at ${dest.name}${dis.delay ? ` (${dis.delay} min late: ${dis.reason.toLowerCase()})` : ""}. ${transferMin ? `Transfer ${transferMin} min, ` : ""}${wait ? `waited ${wait} min at the gate, ` : ""}flight ${leg.minutes} min${b.bags ? ", bag collected at the belt" : ""}.`);
+      if (first) applyEffects(p, { social: 6, reputation: 1 }, fb, `First time in ${CITIES[dest.city].name}.`);
+      actSync(ctx, p, {} as Action);
+      return null;
+    }
+    case "cancel": {
+      const b = bookingRow(ctx, p, a.bookingId);
+      if (!["booked", "checked_in"].includes(b.status)) throw new GameError("not_bookable", "This booking can't be cancelled.");
+      const dis = bookingDisruption(b);
+      const share = dis.cancelled || b.insurance ? 1 : b.dep_min - p.game_min >= FLIGHT_RULES.earlyHours * 60 ? FLIGHT_RULES.refundEarly : FLIGHT_RULES.refundLate;
+      const back = cancelRefund({ fare: b.fare, bagFee: b.bag_fee, insurance: b.insurance, transfer: b.transfer, depMin: b.dep_min, cancelled: dis.cancelled }, p.game_min);
+      if (a.expect !== undefined && Number(a.expect) !== back) throw new GameError("price_changed", "The refund amount changed. Check it again.");
+      ctx.db.run("UPDATE flight_bookings SET status = 'refunded', refund = ?, note = ? WHERE id = ?", back, dis.cancelled ? "Airline cancellation: full refund" : `Cancelled by you: ${Math.round(share * 100)}% of fare and bag fee, transfer refunded`, b.id);
+      const ch = credit(ctx, p, "bank", back, "flight_refund", `Refund ${b.ref}`);
+      fb.add(`↩️ Refund for ${b.ref}: ${formatMoney(back)} to your bank.`, ch, "info");
+      return null;
+    }
+    case "change": {
+      const b = bookingRow(ctx, p, a.bookingId);
+      if (!["booked", "checked_in"].includes(b.status)) throw new GameError("not_bookable", "This booking can't be changed.");
+      const dep = departuresFrom(ctx.db, p).find((d) => d.routeId === b.route && d.day === Number(a.day) && d.slot === Number(a.slot));
+      if (!dep || dep.cancelled) throw new GameError("no_departure", "That flight isn't available.");
+      if (dep.depMin <= b.dep_min) throw new GameError("not_later", "Choose a later flight.");
+      const dis = bookingDisruption(b);
+      const fee = dis.cancelled ? 0 : Math.round(b.fare * FLIGHT_RULES.changeFeeRate);
+      const money = fee ? chargeStrict(ctx, p, fee, "flight", `Change fee ${b.ref}`, true) : [];
+      ctx.db.run("UPDATE flight_bookings SET day = ?, slot = ?, dep_min = ?, status = 'booked', note = ? WHERE id = ?", dep.day, dep.slot, dep.depMin, dis.cancelled ? "Rebooked free after airline cancellation" : `Changed (fee ${formatMoney(fee)})`, b.id);
+      fb.add(`🔁 ${b.ref} moved to ${toGameDate(dep.depMin).label} ${toGameDate(dep.depMin).clock}${fee ? `, change fee ${formatMoney(fee)}` : " at no cost"}. Check in again.`, money, "info");
+      return null;
+    }
+  }
+  throw new GameError("bad_op", "Unknown flight action");
+}
+/** Flights whose gate closed: missed (insurance pays back) or cancelled by the airline (refunded). */
+function settleFlights(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  for (const b of ctx.db.all<BookingRow>("SELECT * FROM flight_bookings WHERE player_id = ? AND status IN ('booked','checked_in') AND dep_min < ?", p.id, p.game_min + 600)) {
+    const dis = bookingDisruption(b);
+    const dep = b.dep_min + dis.delay;
+    if (p.game_min < dep - FLIGHT_RULES.gateCloseMin) continue;
+    const paid = b.fare + b.bag_fee;
+    const back = dis.cancelled ? paid + b.insurance + b.transfer : b.insurance ? paid : Math.round(b.fare * FLIGHT_RULES.refundMissed);
+    const note = dis.cancelled ? `Airline cancelled (${dis.reason}): refunded in full` : b.insurance ? "Missed: travel insurance refunded the fare" : "Missed: only airport charges (10%) refunded";
+    ctx.db.run("UPDATE flight_bookings SET status = ?, refund = ?, note = ? WHERE id = ?", dis.cancelled ? "refunded" : "missed", back, note, b.id);
+    const ch = back ? credit(ctx, p, "bank", back, "flight_refund", `${b.ref}: ${note}`) : [];
+    fb.add(`${dis.cancelled ? "✈️❌" : "⌛"} ${b.ref}: ${note} (${formatMoney(back)}).`, ch, dis.cancelled ? "info" : "bad");
+  }
+}
+
+/** Charter a whole aircraft from where you are, now. */
+function actCharter(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const spec = typeof a.aircraft === "string" ? AIRCRAFT_SPECS[a.aircraft] : undefined;
+  const to = typeof a.to === "string" ? AIRPORT_BY_ID[a.to] : undefined;
+  if (!spec || !to) throw new GameError("bad_charter", "Choose an aircraft and a destination.");
+  const from = departurePoint(p, spec);
+  const q = charterQuote(spec, from.id, to.id, p.game_min);
+  if (a.expect !== undefined && Number(a.expect) !== minor(q.total)) throw new GameError("price_changed", "The quote changed. Check it again.");
+  const money = chargeStrict(ctx, p, minor(q.total), "charter", `Charter ${VEHICLES[spec.type]?.name ?? spec.type}: ${from.name} → ${to.name}`, true);
+  advance(ctx, p, q.wait + q.minutes, fb, { quiet: true });
+  p.district = to.district ?? arrivalDistrict(to.city, "flight");
+  p.pos_x = -58;
+  p.pos_z = 6;
+  addToList(p, "visited", p.district);
+  applyEffects(p, { energy: -4, reputation: 1 }, fb, `🛩️ Charter landed at ${to.name}: ${q.km} km in ${q.minutes} min${q.wait ? ` after ${q.wait} min waiting for the aircraft to reach you` : ""}.`, money);
+  actSync(ctx, p, {} as Action);
+  return null;
+}
+/** Where you'd take off from with this aircraft type (your town's airport, or a helipad you're at). */
+function departurePoint(p: PlayerRow, spec: AircraftSpec) {
+  const city = DISTRICTS[p.district].city;
+  const here = AIRPORTS_GH.filter((x) => x.city === city && canUse(spec, x));
+  const at = here.find((x) => x.district === p.district) ?? here.find((x) => x.type !== "helipad");
+  if (!at) throw new GameError("no_airport", spec.needs.includes("H") ? "No helipad or airport it can use here." : "No airport here that aircraft can use.");
+  return at;
+}
+function charterQuote(spec: AircraftSpec, fromId: string, toId: string, now: number) {
+  const r = charterQuoteOf(spec, fromId, toId, now);
+  if (!r.ok) throw new GameError(r.code, r.error);
+  return r.q;
+}
+function daylight(spec: AircraftSpec, depMin: number, minutes: number) {
+  const e = daylightProblem(spec.daylightOnly, depMin, minutes);
+  if (e) throw new GameError("daylight", e);
+}
+
+type AircraftRow = { id: number; type: string; price: number; bought_min: number; status: string; condition: number; location: string | null; ready_min: number };
+function aircraftRows(db: Db, p: PlayerRow) {
+  return db.all<AircraftRow>("SELECT * FROM vehicles WHERE player_id = ? ORDER BY id", p.id).filter((v) => VEHICLES[v.type]?.category === "aircraft").map((v) => ({ ...v, location: v.location ?? "kotoka" }));
+}
+/** Fly your own aircraft (it must be where you are), or send it empty to meet you. */
+function actAircraft(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const row = aircraftRows(ctx.db, p).find((v) => v.id === Number(a.vehicleId));
+  if (!row) throw new GameError("no_plane", "You don't own that aircraft.");
+  const spec = AIRCRAFT_SPECS[row.type];
+  const to = typeof a.to === "string" ? AIRPORT_BY_ID[a.to] : undefined;
+  if (!to) throw new GameError("bad_destination", "Choose where to fly.");
+  const at = AIRPORT_BY_ID[row.location!];
+  if (row.ready_min > p.game_min) throw new GameError("in_transit", `It's still on its way to ${at.name} (ready ${toGameDate(row.ready_min).clock}).`);
+  if (!canUse(spec, to)) throw new GameError("cant_land", `Your ${VEHICLES[row.type].name} can't use ${to.name}.`);
+  const leg = flightLeg(at.id, to.id, spec.speedKmh);
+  if (at.id === to.id) throw new GameError("same_place", "It's already there.");
+  if (leg.km > spec.rangeKm) throw new GameError("range", `Out of range (${spec.rangeKm} km).`);
+  const cost = Math.round(spec.fuelPerKm * leg.km) + spec.landingFee;
+  if (a.op === "reposition") {
+    // Your crew flies it empty to another airport for you.
+    daylight(spec, p.game_min + 30, leg.minutes);
+    const money = chargeStrict(ctx, p, minor(cost), "aircraft_trip", `Positioning flight: ${at.name} → ${to.name} (fuel + landing)`, true);
+    ctx.db.run("UPDATE vehicles SET location = ?, ready_min = ? WHERE id = ?", to.id, p.game_min + 30 + leg.minutes, row.id);
+    fb.add(`🛩️ Your crew is flying it to ${to.name}. Ready at ${toGameDate(p.game_min + 30 + leg.minutes).clock}.`, money, "info");
+    return null;
+  }
+  if (DISTRICTS[p.district].city !== at.city || (at.type === "helipad" && p.district !== at.district)) throw new GameError("not_with_plane", `Your aircraft is at ${at.name}. Get there, or have the crew fly it to you.`);
+  daylight(spec, p.game_min + 20, leg.minutes);
+  const money = chargeStrict(ctx, p, minor(cost), "aircraft_trip", `Flight: ${at.name} → ${to.name} (fuel ${formatMoney(minor(Math.round(spec.fuelPerKm * leg.km)))}, landing ${formatMoney(minor(spec.landingFee))})`, true);
+  advance(ctx, p, 20 + leg.minutes, fb, { quiet: true });
+  ctx.db.run("UPDATE vehicles SET location = ?, ready_min = ? WHERE id = ?", to.id, p.game_min, row.id);
+  p.district = to.district ?? arrivalDistrict(to.city, "own_plane");
+  p.pos_x = -58;
+  p.pos_z = 6;
+  addToList(p, "visited", p.district);
+  addToList(p, "discovered", `region:${CITIES[to.city].region}`);
+  applyEffects(p, { energy: -4, reputation: 1 }, fb, `🛩️ You flew your ${VEHICLES[row.type].name} to ${to.name}: ${leg.km} km, ${leg.minutes} min.`, money);
+  actSync(ctx, p, {} as Action);
+  return null;
+}
+/** Owning aircraft costs money every day: crew, hangar or parking, insurance, maintenance. */
+function aircraftUpkeep(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  for (const v of aircraftRows(ctx.db, p)) {
+    const spec = AIRCRAFT_SPECS[v.type];
+    const daily = minor(Math.round(weeklyCost(spec) / 7));
+    const r = chargeFlexible(ctx, p, daily, "aircraft_upkeep", `${VEHICLES[v.type].name}: crew, hangar, insurance and maintenance (daily share)`);
+    if (r.unpaid > 0) fb.add(`⚠️ Couldn't cover all of today's aircraft costs (${formatMoney(r.unpaid)} short). Sell it or top up your bank.`, r.changes, "bad");
+  }
+}
+
+export function aviationView(db: Db, p: PlayerRow) {
+  const bookings = db.all<BookingRow>("SELECT * FROM flight_bookings WHERE player_id = ? ORDER BY dep_min DESC LIMIT 20", p.id).map((b) => {
+    const dis = bookingDisruption(b);
+    return { id: b.id, ref: b.ref, routeId: b.route, origin: b.origin, dest: b.dest, day: b.day, slot: b.slot, depMin: b.dep_min, delay: dis.delay, cancelled: dis.cancelled, reason: dis.reason, status: b.status, fare: b.fare, bagFee: b.bag_fee, insurance: b.insurance, transfer: b.transfer, bags: b.bags, refund: b.refund, note: b.note };
+  });
+  const aircraft = aircraftRows(db, p).map((v) => ({ id: v.id, type: v.type, name: VEHICLES[v.type].name, location: v.location!, readyMin: v.ready_min, weekly: weeklyCost(AIRCRAFT_SPECS[v.type]) * 100, value: vehicleValue(v, p.game_min) }));
+  return { departures: departuresFrom(db, p), bookings, aircraft };
+}
+
+// ---------------------------------------------------------------------------
+// Courts: disputes that come out of play, cases you file or answer, hearings.
+
+type DisputeRow = { id: number; kind: DisputeKind; role: string; counterparty: string; amount: number; city: string; ref: string; evidence: string; status: string; created_min: number };
+type CaseRow = { id: number; dispute_id: number; lawyer: string; stage: string; hearing_min: number; adjourned: number; appeal: number; statement: string; fees: number; outcome: string; transcript: string; history: string; decided_min: number | null };
+type Evidence = { label: string; source: "game_record" | "your_statement"; amount?: number };
+
+/** A dispute arises from something that happened in the game (with the records to show it). */
+function openDispute(ctx: Ctx, p: PlayerRow, d: { kind: DisputeKind; role: "claimant" | "defendant"; counterparty: string; amount: number; city: string; ref?: string; evidence: Evidence[] }, fb: Feedback, text: string) {
+  const ins = ctx.db.run("INSERT INTO disputes (player_id, kind, role, counterparty, amount, city, ref, evidence, status, created_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", p.id, d.kind, d.role, d.counterparty, d.amount, d.city, d.ref ?? "", JSON.stringify(d.evidence), d.role === "defendant" ? "in_court" : "open", p.game_min);
+  if (d.role === "defendant") {
+    // Claims against you are listed straight away; you choose how to answer.
+    const hm = hearingAt(dayOf(p.game_min) + CASE_TYPES[d.kind].daysToHearing);
+    ctx.db.run("INSERT INTO court_cases (player_id, dispute_id, lawyer, stage, hearing_min, history) VALUES (?, ?, 'self', 'listed', ?, ?)", p.id, Number(ins.lastInsertRowid), hm, JSON.stringify([{ at: p.game_min, what: `Claim served on you; hearing listed for ${toGameDate(hm).label} ${toGameDate(hm).clock}` }]));
+  }
+  fb.add(text, [], "info");
+}
+function caseRows(db: Db, p: PlayerRow) {
+  return db.all<CaseRow & { player_id: number }>("SELECT * FROM court_cases WHERE player_id = ? ORDER BY id DESC", p.id);
+}
+const hearingAt = (day: number) => day * MINUTES_PER_DAY + HEARING_HOUR * 60;
+
+function actCourt(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const db = ctx.db;
+  const disputeOf = (id: unknown) => {
+    const d = db.get<DisputeRow>("SELECT * FROM disputes WHERE id = ? AND player_id = ?", Number(id), p.id);
+    if (!d) throw new GameError("no_dispute", "That isn't one of your matters.");
+    return d;
+  };
+  const caseOf = (id: unknown) => {
+    const c = db.get<CaseRow>("SELECT * FROM court_cases WHERE id = ? AND player_id = ?", Number(id), p.id);
+    if (!c) throw new GameError("no_case", "That isn't one of your cases.");
+    return c;
+  };
+  const log = (c: CaseRow, what: string) => JSON.stringify([...JSON.parse(c.history || "[]"), { at: p.game_min, what }]);
+  switch (a.op) {
+    case "file": {
+      const d = disputeOf(a.disputeId);
+      const answering = d.role === "defendant" && d.status === "in_court";
+      if (d.status !== "open" && !answering) throw new GameError("already", "That matter is already before the court or closed.");
+      const lawyer = LAWYER_BY_ID[String(a.lawyer)];
+      if (!lawyer) throw new GameError("bad_lawyer", "Choose a lawyer, legal aid or yourself.");
+      if (lawyer.legalAid && monthlyIncomeEstimate(db, p) / 100 > LEGAL_AID_INCOME_LIMIT) throw new GameError("not_eligible", `Legal aid is for incomes under ${formatMoney(minor(LEGAL_AID_INCOME_LIMIT))} a month.`);
+      if (!lawyer.focus.includes(d.kind)) throw new GameError("wrong_lawyer", `${lawyer.name} doesn't take ${CASE_TYPES[d.kind].name.toLowerCase()} matters.`);
+      const t = CASE_TYPES[d.kind];
+      const fees = d.role === "claimant" ? t.filingFee + t.serviceFee : 0;
+      const total = minor(fees + lawyer.fee);
+      if (a.expect !== undefined && Number(a.expect) !== total) throw new GameError("price_changed", "The costs changed. Check them again.");
+      const money = total ? chargeStrict(ctx, p, total, "court", `${d.role === "claimant" ? "Filing and service fees" : "Defence"}${lawyer.fee ? ` + ${lawyer.name}` : ""}: ${t.name}`, true) : [];
+      const statement = typeof a.statement === "string" ? a.statement.slice(0, 400) : "";
+      if (answering) {
+        const c = db.get<CaseRow>("SELECT * FROM court_cases WHERE dispute_id = ? AND player_id = ? AND stage IN ('listed','appeal_listed')", d.id, p.id);
+        if (!c) throw new GameError("not_listed", "No hearing to answer.");
+        db.run("UPDATE court_cases SET lawyer = ?, statement = ?, fees = fees + ?, history = ? WHERE id = ?", lawyer.id, statement, total, log(c, `Defence entered${lawyer.id === "self" ? " (representing yourself)" : ` with ${lawyer.name}`}`), c.id);
+        fb.add(`⚖️ Defence entered. Hearing ${toGameDate(c.hearing_min).label} at ${toGameDate(c.hearing_min).clock}, ${courtFor(d.city).name}.`, money, "info");
+        return { caseId: c.id };
+      }
+      const hm = hearingAt(dayOf(p.game_min) + t.daysToHearing);
+      const ins = db.run("INSERT INTO court_cases (player_id, dispute_id, lawyer, stage, hearing_min, statement, fees, history) VALUES (?, ?, ?, 'listed', ?, ?, ?, ?)", p.id, d.id, lawyer.id, hm, statement, total, JSON.stringify([{ at: p.game_min, what: d.role === "claimant" ? "Claim filed and served on the other side" : "Defence entered" }]));
+      db.run("UPDATE disputes SET status = 'in_court' WHERE id = ?", d.id);
+      advance(ctx, p, 60, fb, { quiet: true });
+      fb.add(`⚖️ ${d.role === "claimant" ? "Claim filed" : "Defence entered"}: ${t.name}. First hearing ${toGameDate(hm).label} at ${toGameDate(hm).clock}, ${courtFor(d.city).name}. Attend in person.`, money, "info");
+      return { caseId: Number(ins.lastInsertRowid) };
+    }
+    case "attend": {
+      const c = caseOf(a.caseId);
+      if (!["listed", "appeal_listed"].includes(c.stage)) throw new GameError("not_listed", "No hearing is listed for this case.");
+      const d = disputeOf(c.dispute_id);
+      const court = courtFor(d.city);
+      if (p.district !== court.district) throw new GameError("not_at_court", `The hearing is at ${court.name} in ${DISTRICTS[court.district].name}.`);
+      if (p.game_min < c.hearing_min - 180) throw new GameError("too_early", `The hearing is ${toGameDate(c.hearing_min).label} at ${toGameDate(c.hearing_min).clock}.`);
+      if (p.game_min > c.hearing_min + (COURT_CLOSES - HEARING_HOUR) * 60) throw new GameError("too_late", "The court has risen for the day.");
+      if (p.game_min < c.hearing_min) advance(ctx, p, c.hearing_min - p.game_min, fb, { quiet: true });
+      advance(ctx, p, 90, fb, { quiet: true });
+      return decide(ctx, p, c, d, true, fb, log);
+    }
+    case "adjourn": {
+      const c = caseOf(a.caseId);
+      if (!["listed", "appeal_listed"].includes(c.stage)) throw new GameError("not_listed", "Nothing to adjourn.");
+      if (c.adjourned) throw new GameError("already", "The court has already adjourned this once.");
+      if (dayOf(c.hearing_min) - dayOf(p.game_min) < 1) throw new GameError("too_late", "Ask at least a day before the hearing.");
+      const hm = c.hearing_min + ADJOURN_DAYS * MINUTES_PER_DAY;
+      db.run("UPDATE court_cases SET hearing_min = ?, adjourned = 1, history = ? WHERE id = ?", hm, log(c, `Adjourned at your request to ${toGameDate(hm).label}`), c.id);
+      fb.add(`📅 Adjourned. New hearing ${toGameDate(hm).label} at ${toGameDate(hm).clock}.`, [], "info");
+      return null;
+    }
+    case "appeal": {
+      const c = caseOf(a.caseId);
+      if (c.stage !== "decided" || c.appeal) throw new GameError("no_appeal", c.appeal ? "This has already been appealed once." : "Only a decided case can be appealed.");
+      if (!c.decided_min || p.game_min > c.decided_min + APPEAL_DAYS * MINUTES_PER_DAY) throw new GameError("too_late", `Appeals must be filed within ${APPEAL_DAYS} days.`);
+      const total = minor(APPEAL_FEE);
+      if (a.expect !== undefined && Number(a.expect) !== total) throw new GameError("price_changed", "The fee changed.");
+      const money = chargeStrict(ctx, p, total, "court", "Appeal fee", true);
+      const hm = hearingAt(dayOf(p.game_min) + 5);
+      db.run("UPDATE court_cases SET stage = 'appeal_listed', appeal = 1, hearing_min = ?, fees = fees + ?, history = ? WHERE id = ?", hm, total, log(c, "Appeal filed to the higher court (game)"), c.id);
+      fb.add(`⚖️ Appeal filed. Hearing ${toGameDate(hm).label} at ${toGameDate(hm).clock}.`, money, "info");
+      return null;
+    }
+    case "withdraw": {
+      const c = caseOf(a.caseId);
+      if (!["listed", "appeal_listed"].includes(c.stage)) throw new GameError("not_listed", "Nothing to withdraw.");
+      const d = disputeOf(c.dispute_id);
+      if (d.role !== "claimant") throw new GameError("defendant", "You can't withdraw a claim made against you.");
+      db.run("UPDATE court_cases SET stage = 'withdrawn', history = ? WHERE id = ?", log(c, "Withdrawn by you; fees are not refunded"), c.id);
+      db.run("UPDATE disputes SET status = 'closed' WHERE id = ?", d.id);
+      fb.add("Case withdrawn. Fees already paid aren't refunded.", [], "info");
+      return null;
+    }
+    case "observe":
+    case "volunteer": {
+      const court = courtFor(DISTRICTS[p.district].city);
+      if (p.district !== court.district) throw new GameError("not_at_court", `Go to ${court.name}.`);
+      const hour = toGameDate(p.game_min).hour;
+      if (hour < HEARING_HOUR || hour >= COURT_CLOSES) throw new GameError("closed", `The court sits ${HEARING_HOUR}:00–${COURT_CLOSES}:00.`);
+      const c = CIVIC[a.op];
+      advance(ctx, p, c.minutes, fb, { quiet: true });
+      if (a.op === "observe") applyEffects(p, { work: 1, fun: 4 }, fb, "🏛️ You watched a tenancy claim from the public gallery. You learn what evidence the court looks for.");
+      else applyEffects(p, { reputation: 2, social: 6, energy: -6 }, fb, "🤝 You helped people at the legal aid desk find forms and hearing rooms. No advice, just a hand.");
+      return null;
+    }
+  }
+  throw new GameError("bad_op", "Unknown court action");
+}
+/** The hearing: both sides heard, evidence weighed, decision explained, money moved by the court's order. */
+function decide(ctx: Ctx, p: PlayerRow, c: CaseRow, d: DisputeRow, attended: boolean, fb: Feedback, log: (c: CaseRow, what: string) => string) {
+  const db = ctx.db;
+  const t = CASE_TYPES[d.kind];
+  const lawyer = LAWYER_BY_ID[c.lawyer];
+  const ev = JSON.parse(d.evidence) as Evidence[];
+  const records = ev.filter((e) => e.source === "game_record").length;
+  const court = courtFor(d.city);
+  // Strength: verified records count most, a lawyer helps, a statement helps a little, attending matters.
+  let strength = 0.25 + records * 0.2 + (c.statement ? 0.05 : 0) + lawyer.skill * 0.35 + (attended ? 0 : -0.6) + (c.appeal ? 0.05 : 0);
+  if (d.kind === "arrears") strength = (p.rent_arrears <= 0 ? 0.9 : 0.15) + lawyer.skill * 0.2 + (attended ? 0 : -0.5);
+  const roll = rand01(`case:${p.id}:${c.id}:${c.appeal}`) * 0.3;
+  const score = strength + roll;
+  const playerWins = score >= 0.75, partial = !playerWins && score >= 0.5;
+  const them = d.counterparty;
+  const transcript: { who: string; side: "court" | "you" | "them"; text: string }[] = [
+    { who: court.registrar, side: "court", text: `Case: ${t.name}. ${d.role === "claimant" ? `You v ${them}` : `${them} v You`}. ${c.appeal ? "Appeal hearing." : "First hearing."}` },
+    { who: d.role === "claimant" ? "You" : them, side: d.role === "claimant" ? "you" : "them", text: d.role === "claimant" ? (c.statement || `I claim ${formatMoney(d.amount)}.`) : `The defendant owes ${formatMoney(d.amount)} in rent.` },
+    { who: d.role === "claimant" ? them : "You", side: d.role === "claimant" ? "them" : "you", text: d.role === "claimant" ? ({ deposit: "The room was left in a bad state; we kept the advance to cover it.", wages: "The work wasn't done properly; we paid what was fair.", land: "The family never agreed to sell that plot.", arrears: "" } as Record<string, string>)[d.kind] : (attended ? (c.statement || (p.rent_arrears <= 0 ? "The arrears have been paid; here are the receipts." : "I'm asking for time to pay.")) : "(Absent)") },
+    ...ev.map((e) => ({ who: court.registrar, side: "court" as const, text: `Evidence: ${e.label} — ${e.source === "game_record" ? "game record (verified)" : "statement (not verified)"}.` })),
+    { who: lawyer.id === "self" ? "You" : lawyer.name, side: "you", text: lawyer.id === "self" ? "I represent myself and rely on the records." : "My client's records speak for themselves." },
+  ];
+  let money: Change[] = [];
+  let outcome: string;
+  if (d.kind === "arrears") {
+    if (playerWins) outcome = "Claim dismissed: the rent was shown to be paid.";
+    else {
+      const costs = minor(120);
+      p.rent_arrears += costs;
+      outcome = `Judgment for the landlord: arrears of ${formatMoney(p.rent_arrears - costs)} plus ${formatMoney(costs)} costs, payable from your rent account (pay it from Home or the bank).`;
+    }
+  } else if (playerWins || partial) {
+    const award = Math.round(d.amount * (playerWins ? 1 : 0.5)) + (playerWins && d.role === "claimant" ? minor(t.filingFee + t.serviceFee) : 0);
+    if (d.kind === "land") outcome = playerWins ? "Your title to the plot is confirmed. The other side pays your filing costs." : "Your title is confirmed; each side bears its own costs.";
+    else outcome = playerWins ? `Judgment for you: ${formatMoney(d.amount)} plus your filing costs.` : `Partial judgment: ${formatMoney(Math.round(d.amount * 0.5))}. The evidence was mixed.`;
+    const pay = d.kind === "land" ? (playerWins ? minor(t.filingFee + t.serviceFee) : 0) : award;
+    if (pay > 0) money = credit(ctx, p, "bank", pay, "court_award", `Court order: ${t.name} (paid by ${them})`);
+  } else {
+    if (d.kind === "land") {
+      // The other side's claim upheld: you lose the plot, with compensation of what you paid.
+      const plot = db.get<{ id: number; price: number }>("SELECT id, price FROM plots WHERE id = ? AND player_id = ?", Number(d.ref), p.id);
+      if (plot && !db.get("SELECT 1 FROM buildings WHERE plot_id = ?", plot.id)) {
+        db.run("DELETE FROM plots WHERE id = ?", plot.id);
+        money = credit(ctx, p, "bank", plot.price, "court_award", "Compensation for the plot, by court order");
+        outcome = `The other side's claim was upheld. The plot goes back; you're compensated what you paid (${formatMoney(plot.price)}).`;
+      } else outcome = "The other side's claim was upheld, but your building stands: the court orders them compensated by the original seller (game rule). You keep the property.";
+    } else outcome = attended ? "Claim dismissed: the evidence didn't prove it. You bear your own costs." : "Struck out: you didn't attend. You can file again (fees apply).";
+  }
+  const why = `${attended ? "Both sides were heard." : "You did not attend."} ${records} verified game record${records === 1 ? "" : "s"}${c.statement ? " and your statement (not verified)" : ""}. ${lawyer.id === "self" ? "You represented yourself." : `Represented by ${lawyer.name}.`}`;
+  transcript.push({ who: court.judge, side: "court", text: `${outcome} Reasons: ${why}` });
+  const appealable = !c.appeal && !(playerWins && d.kind !== "arrears");
+  db.run("UPDATE court_cases SET stage = 'decided', outcome = ?, transcript = ?, decided_min = ?, history = ? WHERE id = ?", outcome, JSON.stringify(transcript), p.game_min, log(c, `Decided: ${outcome}`), c.id);
+  db.run("UPDATE disputes SET status = ? WHERE id = ?", appealable ? "decided" : "closed", d.id);
+  fb.add(`⚖️ ${outcome}${appealable ? ` You may appeal within ${APPEAL_DAYS} days.` : ""}`, money, playerWins ? "good" : "info");
+  return null;
+}
+/** Hearings nobody attended: the court decides in your absence. */
+function settleCourts(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  for (const c of ctx.db.all<CaseRow>("SELECT * FROM court_cases WHERE player_id = ? AND stage IN ('listed','appeal_listed') AND hearing_min + ? < ?", p.id, (COURT_CLOSES - HEARING_HOUR) * 60, p.game_min)) {
+    const d = ctx.db.get<DisputeRow>("SELECT * FROM disputes WHERE id = ?", c.dispute_id)!;
+    const log = (cc: CaseRow, what: string) => JSON.stringify([...JSON.parse(cc.history || "[]"), { at: p.game_min, what }]);
+    decide(ctx, p, c, d, false, fb, log);
+  }
+}
+
+/** Rent still unpaid on the 12th: the landlord files a claim (once per matter). */
+function arrearsClaim(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
+  if (p.rent_arrears <= 0 || p.home_kind !== "rental" || toGameDate(day * MINUTES_PER_DAY).date !== 12) return;
+  if (ctx.db.get("SELECT 1 FROM disputes WHERE player_id = ? AND kind = 'arrears' AND status != 'closed'", p.id)) return;
+  const r = RENTALS[p.home_ref];
+  openDispute(ctx, p, { kind: "arrears", role: "defendant", counterparty: `Landlord of ${r?.name ?? "your home"}`, amount: p.rent_arrears, city: DISTRICTS[r?.district ?? p.district].city, evidence: [{ label: "Rent account showing arrears", source: "game_record", amount: p.rent_arrears }] }, fb, "📨 Your landlord has started a claim for rent arrears. See Phone → Court: answer it (with a lawyer, legal aid or yourself), or pay what's owed before the hearing.");
+}
+
+export function courtView(db: Db, p: PlayerRow) {
+  const disputes = db.all<DisputeRow>("SELECT * FROM disputes WHERE player_id = ? ORDER BY id DESC", p.id).map((d) => ({ id: d.id, kind: d.kind, role: d.role, counterparty: d.counterparty, amount: d.amount, city: d.city, evidence: JSON.parse(d.evidence) as Evidence[], status: d.status, createdMin: d.created_min }));
+  const cases = caseRows(db, p).map((c) => ({ id: c.id, disputeId: c.dispute_id, lawyer: c.lawyer, stage: c.stage, hearingMin: c.hearing_min, adjourned: !!c.adjourned, appeal: !!c.appeal, statement: c.statement, fees: c.fees, outcome: c.outcome, transcript: JSON.parse(c.transcript) as { who: string; side: string; text: string }[], history: JSON.parse(c.history) as { at: number; what: string }[], decidedMin: c.decided_min }));
+  return { disputes, cases, legalAidEligible: monthlyIncomeEstimate(db, p) / 100 <= LEGAL_AID_INCOME_LIMIT };
+}
