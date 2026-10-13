@@ -885,3 +885,10 @@ test("rural spokes: villages around the hubs with their own work and rooms", () 
   }
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("Saturday events always have real names (no 'undefined' anywhere)", () => {
+  const cities = [...new Set(Object.values(DISTRICTS).map((d) => d.city))];
+  for (const c of cities) for (let d = 0; d < 120; d++) for (const e of townEvents(c, d)) {
+    assert.ok(!/undefined|NaN/.test(e.title + e.host + e.blurb), `${c} day ${d}: ${e.title}`);
+  }
+});

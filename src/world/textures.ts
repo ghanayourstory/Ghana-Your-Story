@@ -560,7 +560,7 @@ export function label(text: string, opts: { bg?: string; fg?: string; icon?: str
   const key = `label:${text}:${opts.bg}:${opts.fg}:${opts.icon}`;
   return memo(key, () => {
     const [m, mctx] = canvas(8, 8);
-    mctx.font = "700 44px system-ui, sans-serif";
+    mctx.font = "700 44px Figtree, system-ui, sans-serif";
     const full = opts.icon ? `${opts.icon} ${text}` : text;
     const w = Math.ceil(mctx.measureText(full).width) + 48;
     m.remove();
@@ -570,7 +570,7 @@ export function label(text: string, opts: { bg?: string; fg?: string; icon?: str
     ctx.beginPath();
     ctx.roundRect(2, 2, w - 4, 68, r);
     ctx.fill();
-    ctx.font = "700 44px system-ui, sans-serif";
+    ctx.font = "700 44px Figtree, system-ui, sans-serif";
     ctx.fillStyle = opts.fg ?? "#fff";
     ctx.textBaseline = "middle";
     ctx.fillText(full, 24, 38);

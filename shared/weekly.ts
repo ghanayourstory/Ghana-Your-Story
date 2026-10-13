@@ -74,14 +74,14 @@ export function townEvents(city: string, day: number): TownEvent[] {
     const v: Place = venues[hh % venues.length];
     if (out.some((e) => e.placeId === v.id)) continue;
     const surname = pool.surnames[hh % pool.surnames.length];
-    const funeral = (hh >> 3) % 2 === 0;
+    const funeral = (hh >>> 3) % 2 === 0;
     if (funeral) {
-      const names = (hh >> 5) % 2 ? pool.m : pool.f;
+      const names = (hh >>> 5) % 2 ? pool.m : pool.f;
       const elder = `${names[hh % names.length]} ${surname}`;
       const c = custom(region, "funeral", v.kind);
       out.push({ id: `ev:${city}:${day}:${i}`, kind: "funeral", title: c.title(elder), host: `the ${surname} family`, placeId: v.id, district: v.district, hours: [8, 15], gift: 20, blurb: c.blurb, dress });
     } else {
-      const a = pool.m[(hh >> 7) % pool.m.length], b = pool.f[(hh >> 9) % pool.f.length];
+      const a = pool.m[(hh >>> 7) % pool.m.length], b = pool.f[(hh >>> 9) % pool.f.length];
       const c = custom(region, "wedding", v.kind);
       out.push({ id: `ev:${city}:${day}:${i}`, kind: "wedding", title: c.title(`${a} & ${b}`), host: `the ${surname} family`, placeId: v.id, district: v.district, hours: [10, 17], gift: 50, blurb: c.blurb, dress });
     }

@@ -534,7 +534,7 @@ function OwarePanel({ placeId, open }: { placeId: string; open: boolean }) {
     <button key={i} className={`oware-pit ${g.last[mine ? 0 : 1] === i ? "last" : ""}`} disabled={!mine || busy || g.over || !o.legal.includes(i)} onClick={() => act({ type: "oware", step: "move", pit: i })} style={{ width: 44, height: 44, borderRadius: 22, border: "2px solid #6b4528", background: mine && o.legal.includes(i) && !g.over ? "#a8743f" : "#7a5230", color: "#fff", fontWeight: 800 }}>{g.pits[i]}</button>
   );
   return (
-    <div className="card col" style={{ marginTop: 10, gap: 8, background: "#3b2817" }}>
+    <div className="card col" style={{ marginTop: 10, gap: 8, background: "#f3e2c4", borderColor: "#d9bf93" }}>
       <div className="spread"><b>🟤 Oware with {o.opponent}</b><span className="pill gold">You {g.store[0]} · {g.store[1]} Them</span></div>
       <div className="row" style={{ gap: 4, justifyContent: "center" }}>{[11, 10, 9, 8, 7, 6].map((i) => pit(i, false))}</div>
       <div className="row" style={{ gap: 4, justifyContent: "center" }}>{[0, 1, 2, 3, 4, 5].map((i) => pit(i, true))}</div>

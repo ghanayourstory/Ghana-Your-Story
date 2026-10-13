@@ -102,84 +102,116 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
 
   const set = (patch: Partial<PersonLook>) => setLook((l) => ({ ...l, ...patch }));
   const valid = /^[\p{L}\p{M}' .-]{2,24}$/u.test(name.trim());
+  const [step, setStep] = useState<0 | 1 | 2>(0);
+  const town = HOMETOWN_OPTIONS.find((c) => c.id === hometown);
+  const STEPS = [{ k: "One", t: "Who you are" }, { k: "Two", t: "Your look" }, { k: "Three", t: "Your start" }];
   return (
     <div className="create">
       <div className="create-inner">
         <div className="preview">
           <canvas ref={canvas} />
-          <div style={{ position: "absolute", left: 18, top: 16 }} className="brand">
+          <div className="brand brand-tag">
             <div className="coin">₵</div>
-            <div className="wordmark" style={{ fontSize: 26 }}>Ghana:<span style={{ display: "block", fontSize: 20 }}>Your Story</span></div>
+            <div className="wordmark" style={{ fontSize: 26 }}>Ghana<span>:</span><span style={{ display: "block", fontSize: 19, color: "#fff9ef", letterSpacing: "-0.01em" }}>Your Story</span></div>
           </div>
-          <div className="seg" style={{ position: "absolute", right: 14, top: 14 }}>
+          <div className="seg" style={{ position: "absolute", right: 18, top: 18, background: "rgba(255,249,239,0.9)" }}>
             <button className={view === "body" ? "on" : ""} onClick={() => setView("body")}>Full body</button>
             <button className={view === "face" ? "on" : ""} onClick={() => setView("face")}>Face</button>
           </div>
-          <div style={{ position: "absolute", left: 18, bottom: 16, right: 18, textShadow: "0 1px 6px rgba(0,0,0,.6)" }}>
-            <div style={{ fontWeight: 800, fontSize: 22 }}>{name.trim() || "Your name"}</div>
-            <div className="small">Arriving at Kaneshie Station · Monday, 7:00 AM</div>
+          <div className="name-card">
+            <div className="who">{name.trim() || "Your name"}</div>
+            <div className="where">From {town?.name ?? "Kumasi"} · arriving at Kaneshie Station, Accra · Monday, 7:00 AM</div>
           </div>
         </div>
-        <div className="col" style={{ gap: 16 }}>
-          <div>
-            <h1 style={{ margin: "4px 0 6px", fontSize: 30, letterSpacing: "-0.02em" }}>Start a life in Accra</h1>
-            <div className="muted">A rented room, a phone and a dream. Work, make friends, build — and maybe one day drive a V8 through the Valley gate.</div>
+        <div className="form-panel">
+          <div className="form-head">
+            <h1>Start a life in Ghana</h1>
+            <p>A rented room, a phone and a dream. Work, make friends, build a home, and go back to see the family.</p>
           </div>
-          <label className="col" style={{ gap: 6 }}>
-            <b>Name</b>
-            <input className="input" maxLength={24} value={name} placeholder="e.g. Kofi Mensah" onChange={(e) => setName(e.target.value)} />
-          </label>
-          <label className="col" style={{ gap: 6 }}>
-            <b>Hometown</b>
-            <select className="input" value={hometown} onChange={(e) => { setHometown(e.target.value); if (!langsTouched) setLangs([homeLanguage(e.target.value)]); }}>
-              {HOMETOWN_OPTIONS.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.region}</option>)}
-            </select>
-            <div className="tiny muted">Your family lives here: parents, a grandmother, a brother or sister. You start in Accra; you can call, send MoMo or travel home to visit.</div>
-          </label>
-          <div className="col" style={{ gap: 6 }}>
-            <b>Languages <span className="tiny muted">(besides English, up to {MAX_LANGUAGES})</span></b>
-            <div className="seg" style={{ flexWrap: "wrap" }}>{Object.values(LANGUAGES).map((l) => <button key={l.id} className={langs.includes(l.id) ? "on" : ""} onClick={() => { setLangsTouched(true); setLangs((x) => toggle(x, l.id, MAX_LANGUAGES)); }}>{l.name}</button>)}</div>
-            <div className="tiny muted">People warm to you faster when you speak their language. Nobody is unfriendly if you don't.</div>
-          </div>
-          <div className="col" style={{ gap: 6 }}>
-            <b>What matters to you <span className="tiny muted">(pick up to {MAX_PRIORITIES}, optional)</span></b>
-            <div className="seg" style={{ flexWrap: "wrap" }}>{Object.values(PRIORITIES).map((p) => <button key={p.id} className={prios.includes(p.id) ? "on" : ""} onClick={() => setPrios((x) => toggle(x, p.id, MAX_PRIORITIES))}>{p.icon} {p.label}</button>)}</div>
-            <div className="tiny muted">{prios.length ? prios.map((p) => PRIORITIES[p].text).join(" ") : "Good moments in what you care about lift your mood more, and your daily goals lean that way. You can change this later in Settings."}</div>
-          </div>
-          <div className="col" style={{ gap: 6 }}>
-            <b>Background</b>
-            {BACKGROUNDS.map((b) => (
-              <button key={b.id} className={`choice ${bg === b.id ? "on" : ""}`} onClick={() => setBg(b.id)}>
-                <div className="bold">{b.icon} {b.title}</div>
-                <div className="small muted">{b.text}</div>
+          <div className="steps">
+            {STEPS.map((x, i) => (
+              <button key={x.k} className={`${step === i ? "on" : ""} ${i < step ? "done" : ""}`} onClick={() => (i === 0 || valid) && setStep(i as 0 | 1 | 2)}>
+                <small>{i < step ? "✓ Done" : `Step ${x.k}`}</small>{x.t}
               </button>
             ))}
           </div>
-          <div className="col" style={{ gap: 6 }}>
-            <b>Body</b>
-            <div className="seg"><button className={!look.feminine ? "on" : ""} onClick={() => set({ feminine: false, hairStyle: look.hairStyle === "braids" ? "low" : look.hairStyle })}>Masculine</button><button className={look.feminine ? "on" : ""} onClick={() => set({ feminine: true, hairStyle: look.hairStyle === "low" ? "braids" : look.hairStyle })}>Feminine</button></div>
-            <div className="swatches">{SKINS.map((c) => <button key={c} className={`swatch ${look.skin === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ skin: c })} aria-label="Skin tone" />)}</div>
-            <div className="row small"><span className="muted" style={{ width: 60 }}>Height</span><input type="range" min={1.48} max={2.0} step={0.01} value={look.height} onChange={(e) => set({ height: Number(e.target.value) })} className="grow" /><span className="num">{look.height.toFixed(2)}m</span></div>
-            <div className="row small"><span className="muted" style={{ width: 60 }}>Build</span><input type="range" min={0.8} max={1.4} step={0.01} value={look.build} onChange={(e) => set({ build: Number(e.target.value) })} className="grow" /></div>
+          <div className="form-body">
+            {step === 0 && (
+              <>
+                <label className="field">
+                  <b>Your name</b>
+                  <input className="input" maxLength={24} value={name} placeholder="e.g. Kofi Mensah or Ama Owusu" onChange={(e) => setName(e.target.value)} autoFocus />
+                  <span className="hint">Your surname becomes your family's name back home.</span>
+                </label>
+                <label className="field">
+                  <b>Hometown</b>
+                  <select className="input" value={hometown} onChange={(e) => { setHometown(e.target.value); if (!langsTouched) setLangs([homeLanguage(e.target.value)]); }}>
+                    {HOMETOWN_OPTIONS.map((c) => <option key={c.id} value={c.id}>{c.name} · {c.region}</option>)}
+                  </select>
+                  <span className="hint">Your parents, a grandmother and siblings live here. Call them, send MoMo, or travel home to visit.</span>
+                </label>
+                <div className="field">
+                  <b>Languages you speak <span className="hint">besides English, up to {MAX_LANGUAGES}</span></b>
+                  <div className="chipset">{Object.values(LANGUAGES).map((l) => <button key={l.id} className={langs.includes(l.id) ? "on" : ""} onClick={() => { setLangsTouched(true); setLangs((x) => toggle(x, l.id, MAX_LANGUAGES)); }}>{l.name}</button>)}</div>
+                  <span className="hint">People warm to you faster in their own language. Nobody is unfriendly if you don't speak it.</span>
+                </div>
+                <div className="field">
+                  <b>What matters to you <span className="hint">optional, up to {MAX_PRIORITIES}</span></b>
+                  <div className="chipset">{Object.values(PRIORITIES).map((p) => <button key={p.id} className={prios.includes(p.id) ? "on" : ""} onClick={() => setPrios((x) => toggle(x, p.id, MAX_PRIORITIES))}>{p.icon} {p.label}</button>)}</div>
+                  <span className="hint">{prios.length ? prios.map((p) => PRIORITIES[p].text).join(" ") : "Good moments in what you care about lift your mood more, and your daily goals lean that way. Change it later in Settings."}</span>
+                </div>
+              </>
+            )}
+            {step === 1 && (
+              <>
+                <div className="field">
+                  <b>Body</b>
+                  <div className="seg"><button className={!look.feminine ? "on" : ""} onClick={() => set({ feminine: false, hairStyle: look.hairStyle === "braids" ? "low" : look.hairStyle })}>Masculine</button><button className={look.feminine ? "on" : ""} onClick={() => set({ feminine: true, hairStyle: look.hairStyle === "low" ? "braids" : look.hairStyle })}>Feminine</button></div>
+                  <div className="swatches">{SKINS.map((c) => <button key={c} className={`swatch ${look.skin === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ skin: c })} aria-label="Skin tone" />)}</div>
+                  <div className="slider-row"><span className="muted">Height</span><input type="range" min={1.48} max={2.0} step={0.01} value={look.height} onChange={(e) => set({ height: Number(e.target.value) })} /><span className="num">{look.height.toFixed(2)} m</span></div>
+                  <div className="slider-row"><span className="muted">Build</span><input type="range" min={0.8} max={1.4} step={0.01} value={look.build} onChange={(e) => set({ build: Number(e.target.value) })} /><span /></div>
+                </div>
+                <div className="field">
+                  <div className="spread"><b>Face</b><button className="btn sm" onClick={() => { setView("face"); set({ face: Array.from({ length: 13 }, (_, i) => (i === 12 ? 0 : Math.max(-1, Math.min(1, (Math.random() + Math.random() + Math.random() - 1.5) * 0.9)))) }); }}>🎲 New face</button></div>
+                  {FACE_SLIDERS.map(([i, label]) => (
+                    <div className="slider-row" key={i}><span className="muted">{label}</span><input type="range" min={-1} max={1} step={0.05} value={look.face?.[i] ?? 0} onFocus={() => setView("face")} onChange={(e) => { const f = [...(look.face ?? Array(13).fill(0))]; f[i] = Number(e.target.value); set({ face: f }); }} /><span /></div>
+                  ))}
+                </div>
+                <div className="field">
+                  <b>Hair</b>
+                  <div className="chipset">{HAIRS.map((h) => <button key={h.id} className={look.hairStyle === h.id ? "on" : ""} onClick={() => set({ hairStyle: h.id })}>{h.label}</button>)}</div>
+                </div>
+                <div className="field">
+                  <b>Outfit</b>
+                  <div className="chipset">{PATTERNS.map((p) => <button key={p.id} className={look.pattern === p.id ? "on" : ""} onClick={() => set({ pattern: p.id })}>{p.label}</button>)}</div>
+                  <span className="hint">Top</span>
+                  <div className="swatches">{OUTFITS.map((c) => <button key={c} className={`swatch ${look.shirt === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ shirt: c })} aria-label="Top colour" />)}</div>
+                  <span className="hint">Trousers or skirt</span>
+                  <div className="swatches">{PANTS.map((c) => <button key={c} className={`swatch ${look.pants === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ pants: c })} aria-label="Trousers colour" />)}</div>
+                </div>
+              </>
+            )}
+            {step === 2 && (
+              <div className="field">
+                <b>How you arrive</b>
+                {BACKGROUNDS.map((b) => (
+                  <button key={b.id} className={`choice ${bg === b.id ? "on" : ""}`} onClick={() => setBg(b.id)}>
+                    <div className="bold">{b.icon} {b.title}</div>
+                    <div className="small muted" style={{ marginTop: 3 }}>{b.text}</div>
+                  </button>
+                ))}
+                <span className="hint">Whatever you pick, every path is open: jobs, trade, school, land, family, all sixteen regions.</span>
+              </div>
+            )}
+            {error && <div className="notice err">{error}</div>}
           </div>
-          <div className="col" style={{ gap: 6 }}>
-            <div className="spread"><b>Face</b><button className="btn sm" onClick={() => set({ face: Array.from({ length: 13 }, (_, i) => (i === 12 ? 0 : Math.max(-1, Math.min(1, (Math.random() + Math.random() + Math.random() - 1.5) * 0.9)))) })}>🎲 New face</button></div>
-            {FACE_SLIDERS.map(([i, label]) => (
-              <div className="row small" key={i}><span className="muted" style={{ width: 80 }}>{label}</span><input type="range" min={-1} max={1} step={0.05} value={look.face?.[i] ?? 0} onChange={(e) => { const f = [...(look.face ?? Array(13).fill(0))]; f[i] = Number(e.target.value); set({ face: f }); }} className="grow" /></div>
-            ))}
+          <div className="form-foot">
+            {step > 0 && <button className="btn" onClick={() => setStep((step - 1) as 0 | 1 | 2)}>← Back</button>}
+            <div className="grow tiny muted">{!valid && step === 0 ? "Type a name (2–24 letters) to continue." : step === 2 ? "You can change languages and priorities later in Settings." : ""}</div>
+            {step < 2
+              ? <button className="btn primary" style={{ padding: "13px 22px", fontSize: 16 }} disabled={!valid} onClick={() => setStep((step + 1) as 0 | 1 | 2)}>Next →</button>
+              : <button className="btn primary" style={{ padding: "13px 22px", fontSize: 16 }} disabled={!valid || busy} onClick={() => onCreate({ name: name.trim(), background: bg, look, hometown, languages: langs, priorities: prios })}>{busy ? "Arriving…" : "Arrive in Accra →"}</button>}
           </div>
-          <div className="col" style={{ gap: 6 }}>
-            <b>Hair</b>
-            <div className="seg">{HAIRS.map((h) => <button key={h.id} className={look.hairStyle === h.id ? "on" : ""} onClick={() => set({ hairStyle: h.id })}>{h.label}</button>)}</div>
-          </div>
-          <div className="col" style={{ gap: 6 }}>
-            <b>Outfit</b>
-            <div className="seg">{PATTERNS.map((p) => <button key={p.id} className={look.pattern === p.id ? "on" : ""} onClick={() => set({ pattern: p.id })}>{p.label}</button>)}</div>
-            <div className="swatches">{OUTFITS.map((c) => <button key={c} className={`swatch ${look.shirt === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ shirt: c })} aria-label="Top colour" />)}</div>
-            <div className="swatches">{PANTS.map((c) => <button key={c} className={`swatch ${look.pants === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ pants: c })} aria-label="Trousers colour" />)}</div>
-          </div>
-          {error && <div className="notice err">{error}</div>}
-          <button className="btn primary" style={{ padding: 16, fontSize: 17 }} disabled={!valid || busy} onClick={() => onCreate({ name: name.trim(), background: bg, look, hometown, languages: langs, priorities: prios })}>{busy ? "Arriving…" : "Arrive in Accra →"}</button>
         </div>
       </div>
     </div>

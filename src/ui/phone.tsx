@@ -68,7 +68,7 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
   return (
     <div className="phone-wrap" onClick={onClose}>
       <div className="phone" onClick={(e) => e.stopPropagation()}>
-        <div className="screen" style={app !== "home" ? { background: "linear-gradient(180deg,#191622,#100e16)" } : undefined}>
+        <div className="screen">
           <div className="notch" />
           <div className="status-bar">
             <span className="num">{clock12(gd.hour, gd.min).replace(" ", "")}</span>
