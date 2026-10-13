@@ -10,6 +10,7 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
+import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, EXTENT_Z, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
@@ -249,7 +250,8 @@ export class World {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality === "high" ? 2 : quality === "medium" ? 1.5 : 1));
     this.renderer.shadowMap.enabled = quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    // Neutral keeps colours true and bright (ACES greyed the greens and the sky).
+    this.renderer.toneMapping = THREE.NeutralToneMapping;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
     this.atmo = new Atmosphere(this.scene, this.renderer, quality === "high" ? 2048 : 1024);
@@ -292,6 +294,12 @@ export class World {
     composer.addPass(render);
     composer.addPass(ao);
     composer.addPass(bloom);
+    // A touch more colour, like a sunny postcard.
+    composer.addPass(new ShaderPass({
+      uniforms: { tDiffuse: { value: null }, sat: { value: 1.18 } },
+      vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+      fragmentShader: "uniform sampler2D tDiffuse; uniform float sat; varying vec2 vUv; void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); gl_FragColor = vec4(max(vec3(0.0), mix(vec3(l), c.rgb, sat)), c.a); }",
+    }));
     composer.addPass(new OutputPass());
     this.fx = { composer, render, ao, bloom };
   }

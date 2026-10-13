@@ -137,7 +137,7 @@ export function laterite(tone: "red" | "forest" | "ochre" | "path" = "red") {
     stains(ctx, 512, 512, 12, tone === "ochre" ? "rgba(214,180,130,0.32)" : "rgba(190,160,120,0.2)", 70, 23);
     if (tone === "forest") stains(ctx, 512, 512, 14, "rgba(70,105,45,0.35)", 60, 26); // weeds and grass
     else if (tone === "ochre") stains(ctx, 512, 512, 10, "rgba(170,150,80,0.3)", 40, 27); // dry grass
-    else stains(ctx, 512, 512, 6, "rgba(90,100,60,0.18)", 50, 25); // patches of weeds
+    else stains(ctx, 512, 512, 12, "rgba(96,150,58,0.34)", 60, 25); // patches of grass and weeds
     const rnd = mulberry32(24);
     for (let i = 0; i < 400; i++) {
       ctx.fillStyle = `rgba(${60 + rnd() * 80},${40 + rnd() * 40},${30 + rnd() * 30},0.6)`;

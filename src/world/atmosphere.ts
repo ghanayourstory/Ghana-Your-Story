@@ -27,6 +27,8 @@ export class Atmosphere {
   private weather: Weather = "sunny";
   private wetness = 0;
   fogColor = new THREE.Color("#c9d8e6");
+  private puffs = new THREE.Group();
+  private puffMats: THREE.MeshBasicMaterial[] = [];
 
   constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, shadowSize: number) {
     this.sky.scale.setScalar(4500);
@@ -64,6 +66,26 @@ export class Atmosphere {
     this.stars = new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(sp, 3)), new THREE.PointsMaterial({ color: "#ffffff", size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false }));
     scene.add(this.stars);
 
+    // Low-poly cumulus: clusters of faceted white balls in a ring round the sky.
+    const geo = new THREE.IcosahedronGeometry(1, 1);
+    const shade = [new THREE.MeshBasicMaterial({ color: "#ffffff", fog: false, transparent: true }), new THREE.MeshBasicMaterial({ color: "#e4ecf5", fog: false, transparent: true })];
+    this.puffMats = shade;
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let c = 0; c < 26; c++) {
+      const a = (c / 26) * Math.PI * 2 + rnd() * 0.2, d = 520 + rnd() * 380, y = 90 + rnd() * 140;
+      const cx = Math.cos(a) * d, cz = Math.sin(a) * d, s = 22 + rnd() * 26;
+      for (let k = 0; k < 6; k++) {
+        const m = new THREE.Mesh(geo, shade[k < 4 ? 0 : 1]);
+        const sc = s * (0.6 + rnd() * 0.6);
+        m.scale.set(sc * 1.3, sc * 0.8, sc);
+        m.position.set(cx + (rnd() - 0.5) * s * 2.6, y + (k < 4 ? rnd() * s * 0.5 : -s * 0.25), cz + (rnd() - 0.5) * s * 1.2);
+        m.lookAt(0, m.position.y, 0);
+        this.puffs.add(m);
+      }
+    }
+    scene.add(this.puffs);
+
     const N = 2400;
     this.rainPos = new Float32Array(N * 6);
     for (let i = 0; i < N; i++) this.resetDrop(i, new THREE.Vector3(), true);
@@ -99,13 +121,13 @@ export class Atmosphere {
     this.night = 1 - sunUp;
 
     const u = this.sky.material.uniforms;
-    const turb = w === "hazy" ? 16 : rainy ? 14 : w === "cloudy" ? 8 : 3.2;
-    const ray = w === "hazy" ? 0.9 : rainy ? 0.6 : 2.0;
+    const turb = w === "hazy" ? 10 : rainy ? 14 : w === "cloudy" ? 6 : 1.6;
+    const ray = w === "hazy" ? 1.4 : rainy ? 0.6 : 3.2;
     for (const s of [this.sky, this.envSky]) {
       const su = s.material.uniforms;
       su.turbidity.value = turb;
       su.rayleigh.value = ray;
-      su.mieCoefficient.value = w === "hazy" ? 0.03 : 0.006;
+      su.mieCoefficient.value = w === "hazy" ? 0.02 : 0.003;
       su.mieDirectionalG.value = 0.82;
       su.sunPosition.value.copy(this.sunDir).multiplyScalar(1000);
     }
@@ -115,33 +137,36 @@ export class Atmosphere {
     const golden = THREE.MathUtils.clamp(1 - this.sunDir.y * 3, 0, 1);
     const overcast = rainy ? 0.35 : w === "cloudy" ? 0.65 : w === "hazy" ? 0.75 : 1;
     this.sun.color.setRGB(1, 0.93 - golden * 0.25, 0.82 - golden * 0.42);
-    this.sun.intensity = sunUp * 3.4 * overcast;
+    this.sun.intensity = sunUp * 3.0 * overcast;
     this.sun.position.copy(focus).addScaledVector(this.sunDir, 120);
     this.sun.target.position.copy(focus);
     this.sun.castShadow = sunUp > 0.05;
     this.moon.intensity = this.night * 0.45;
     this.moon.position.copy(focus).add(new THREE.Vector3(-40, 90, -30));
     this.moon.target.position.copy(focus);
-    this.hemi.intensity = 0.25 + sunUp * 0.5 * (rainy ? 1.2 : 1) + this.flash * 4;
-    this.hemi.color.setRGB(0.75 + 0.1 * sunUp, 0.82 + 0.08 * sunUp, 1);
-    this.hemi.groundColor.setRGB(0.4 * sunUp + 0.05, 0.3 * sunUp + 0.05, 0.22 * sunUp + 0.08);
+    this.hemi.intensity = 0.3 + sunUp * 1.1 * (rainy ? 1.0 : 1) + this.flash * 4;
+    this.hemi.color.setRGB(0.72 + 0.1 * sunUp, 0.84 + 0.06 * sunUp, 1);
+    this.hemi.groundColor.setRGB(0.36 * sunUp + 0.05, 0.4 * sunUp + 0.05, 0.22 * sunUp + 0.08);
 
     // Fog and horizon colour.
-    const fogDay = w === "hazy" ? new THREE.Color("#d9cdb2") : rainy ? new THREE.Color("#8f9aa3") : w === "cloudy" ? new THREE.Color("#b9c6cf") : new THREE.Color("#bcd6ea");
+    const fogDay = w === "hazy" ? new THREE.Color("#d9cdb2") : rainy ? new THREE.Color("#8f9aa3") : w === "cloudy" ? new THREE.Color("#b9c6cf") : new THREE.Color("#a9d1f0");
     const fogDusk = new THREE.Color("#e7a36b");
     const fogNight = new THREE.Color("#0d1424");
     this.fogColor.copy(fogDay).lerp(fogDusk, golden * sunUp * 0.6).lerp(fogNight, this.night);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(this.fogColor);
-    fog.near = w === "hazy" ? 45 : rainy ? 25 : 80;
-    fog.far = w === "hazy" ? 300 : rainy ? 190 : 420;
+    fog.near = w === "hazy" ? 70 : rainy ? 25 : 160;
+    fog.far = w === "hazy" ? 380 : rainy ? 190 : 700;
     this.skyColor.copy(fogDay).lerp(fogNight, this.night);
 
-    this.renderer.toneMappingExposure = 0.62 + sunUp * 0.12 + this.night * 0.25;
+    this.renderer.toneMappingExposure = 0.78 + sunUp * 0.22 + this.night * 0.2;
 
     // Clouds.
     const cmat = this.cloudMesh.material as THREE.MeshBasicMaterial;
-    cmat.opacity = (rainy ? 0.95 : w === "cloudy" ? 0.85 : w === "hazy" ? 0.25 : 0.35) * (1 - this.night * 0.7);
+    cmat.opacity = (rainy ? 0.95 : w === "cloudy" ? 0.85 : w === "hazy" ? 0.25 : 0.2) * (1 - this.night * 0.7);
+    // Puffy fair-weather clouds round the horizon.
+    this.puffs.position.set(cameraPos.x, 0, cameraPos.z);
+    for (const m of this.puffMats) { m.opacity = (rainy ? 0.2 : w === "cloudy" ? 1 : 0.95) * (1 - this.night * 0.85); m.color.setScalar(rainy ? 0.6 : 0.55 + sunUp * 0.45); }
     cmat.color.setRGB(rainy ? 0.55 : 1, rainy ? 0.58 : 1, rainy ? 0.62 : 1).multiplyScalar(0.25 + sunUp * 0.75);
     cmat.map!.offset.x += dt * 0.002;
     this.cloudMesh.position.x = focus.x;
