@@ -4,6 +4,7 @@ import { GameProvider, useGame } from "./store.tsx";
 import { getToken, pickBackend, setToken, type Backend } from "./net/backend.ts";
 import { CharacterCreate } from "./ui/CharacterCreate.tsx";
 import { MapSheet } from "./ui/map.tsx";
+import { ArrangePanel } from "./ui/furnish.tsx";
 import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
 import { Phone, readMix } from "./ui/phone.tsx";
@@ -90,6 +91,7 @@ type Panel =
   | { kind: "place"; id: string }
   | { kind: "talk"; id: string }
   | { kind: "map" }
+  | { kind: "arrange" }
   | { kind: "travel"; ctx: "stop" | "taxi" | "phone"; scope?: "city" | "ghana" }
   | { kind: "phone"; app?: string }
   | { kind: "event" }
@@ -267,7 +269,7 @@ function Game() {
     if (!world || !state) return;
     const h = state.player.home;
     const items = state.items.map((i) => i.itemId);
-    if (world.inside) return toast({ text: "🏠 You're already home.", changes: [], tone: "info" });
+    if (world.inside) return setPanel({ kind: "bed" }); // already home: open the home menu
     if (world.goHome(h.spec, items)) return;
     const here = DISTRICTS[state.player.district], there = DISTRICTS[h.district as DistrictId];
     if (!there) return;
@@ -368,13 +370,14 @@ function Game() {
       <Toasts />
       {panel?.kind === "place" && <PlaceSheet placeId={panel.id} world={world} onClose={() => setPanel(null)} onTalk={(id) => setPanel({ kind: "talk", id })} onTravel={() => setPanel({ kind: "travel", ctx: "stop" })} onPhone={(app) => setPanel({ kind: "phone", app })} />}
       {panel?.kind === "talk" && <TalkSheet npcId={panel.id} world={world} onClose={() => setPanel(null)} />}
+      {panel?.kind === "arrange" && <ArrangePanel world={world} onClose={() => setPanel(null)} />}
       {panel?.kind === "map" && <MapSheet world={world} onClose={() => setPanel(null)} onTravel={(scope) => setPanel({ kind: "travel", ctx: "phone", scope })} />}
       {panel?.kind === "travel" && <TravelSheet context={panel.ctx} initialScope={panel.scope} world={world} onClose={() => setPanel(null)} />}
       {panel?.kind === "phone" && <Phone world={world} initialApp={panel.app} onClose={() => setPanel(null)} onTravel={() => setPanel({ kind: "travel", ctx: "phone" })} quality={quality} setQuality={setQuality} />}
       {panel?.kind === "event" && <EventModal onClose={() => setPanel(null)} />}
       {panel?.kind === "today" && <TodaySheet onClose={() => setPanel(null)} />}
       {panel?.kind === "family" && <Sheet title="🏡 Home" sub="Your family is happy to see you. Sit with them, catch up, or help with something." onClose={() => setPanel(null)}><div style={{ marginTop: 10 }}><FamilyApp onTravel={() => setPanel({ kind: "travel", ctx: "phone", scope: "ghana" })} /></div></Sheet>}
-      {panel?.kind === "bed" && <HomeSheet world={world} focus={panel.focus} onClose={() => setPanel(null)} />}
+      {panel?.kind === "bed" && <HomeSheet world={world} focus={panel.focus} onClose={() => setPanel(null)} onArrange={() => setPanel({ kind: "arrange" })} />}
       {news && !intro && (
         <div className="modal-wrap" onClick={closeNews}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>

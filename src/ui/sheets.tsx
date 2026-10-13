@@ -361,7 +361,7 @@ const BATH_LABEL: Record<string, string> = { none: "No bathroom — bucket baths
 const KITCHEN_LABEL: Record<string, string> = { coalpot: "No kitchen — coal pot outside", shared: "Shared kitchen", kitchenette: "Kitchenette", fitted: "Fitted kitchen", chef: "Chef's kitchen with island" };
 const WATER_LABEL: Record<string, string> = { public_tap: "Water from the public tap", compound_tap: "Compound standpipe", polytank: "Polytank & pump", running: "Running water" };
 
-export function HomeSheet({ onClose, world, focus }: { onClose: () => void; world: World | null; focus?: string }) {
+export function HomeSheet({ onClose, world, focus, onArrange }: { onClose: () => void; world: World | null; focus?: string; onArrange?: () => void }) {
   const { state, act, busy } = useGame();
   if (!state) return null;
   const comfort = state.player.home.comfort;
@@ -404,6 +404,7 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
           </div>
         );
       })}
+      {!focus && onArrange && world?.inside && <button className="btn primary block" style={{ marginTop: 12 }} onClick={onArrange}>🛋️ Arrange & furnish: place, move, store, sell, paint</button>}
       {!focus && state.player.home.furnish && <FurnishPanel />}
       {!focus && <Wardrobe />}
       {!focus && <HomeGoods />}

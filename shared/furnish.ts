@@ -114,3 +114,137 @@ export const furnishItems = (f: Furnishing) => Object.values(f).flat().map((id) 
 export function furnishedPackage(tier: HomeTier): number {
   return Math.round(Object.values(fullyFurnished(tier)).flat().reduce((a, id) => a + PIECES[id].price, 0) * 0.85);
 }
+
+// ---------------------------------------------------------------------------
+// Free placement. Each piece you place is its own item with a position and a
+// turn; you can move it, put it in storage or sell it. Pieces that hang on a
+// wall (AC, curtains, art) go in the room's wall spot instead.
+
+export type Category = "sleep" | "comfort" | "dining" | "work" | "light" | "decor" | "cooling";
+export const CATEGORY_LABEL: Record<Category, string> = { sleep: "🛏️ Sleep", comfort: "🛋️ Comfort", dining: "🍽️ Dining", work: "💻 Work & study", light: "💡 Light", decor: "🪴 Decor", cooling: "❄️ Cooling" };
+export interface PieceInfo {
+  category: Category;
+  /** Footprint in metres before turning: width along the wall, depth out from it. */
+  size: [number, number];
+  /** Hung on a wall, so it uses the room's wall spot. */
+  wall?: boolean;
+  /** You can walk over it (rugs) or under it (ceiling lights). */
+  passable?: boolean;
+  use: string;
+  power?: string;
+}
+export const PIECE_INFO: Record<string, PieceInfo> = {
+  king_bed: { category: "sleep", size: [2.9, 2.3], use: "Sleep. Best rest in the house." },
+  double_bed: { category: "sleep", size: [2.6, 2.2], use: "Sleep for one or two." },
+  twin_beds: { category: "sleep", size: [2.9, 2.2], use: "Two children, or two guests." },
+  carpenter_bed: { category: "sleep", size: [2.6, 2.2], use: "Sleep. Solid and simple." },
+  wardrobe: { category: "sleep", size: [2.4, 0.65], use: "Storage for clothes and bags." },
+  dresser: { category: "sleep", size: [1.2, 0.5], use: "Getting ready; a mirror and drawers." },
+  desk: { category: "work", size: [1.5, 1.4], use: "Homework, work from home (with a laptop)." },
+  bookshelf: { category: "work", size: [1.6, 0.4], use: "Books and files." },
+  split_ac: { category: "cooling", size: [1, 0.3], wall: true, use: "Cool room, better sleep.", power: "High (about 1.5 HP)" },
+  curtains: { category: "decor", size: [1.5, 0.2], wall: true, use: "Privacy and shade." },
+  art: { category: "decor", size: [1, 0.1], wall: true, use: "Something to look at." },
+  rug: { category: "decor", size: [3, 2.2], passable: true, use: "Soft underfoot." },
+  plant: { category: "decor", size: [0.7, 0.7], use: "Greenery." },
+  lights: { category: "light", size: [0.6, 0.6], passable: true, use: "Warm light from the ceiling.", power: "Low" },
+  leather_sofa: { category: "comfort", size: [3.3, 2.5], use: "Seats five; watch TV in comfort." },
+  fabric_sofa: { category: "comfort", size: [2.3, 0.95], use: "Seats three." },
+  wooden_sofa: { category: "comfort", size: [4.9, 1.9], use: "Three-seater and two singles." },
+  tv65: { category: "comfort", size: [2.4, 0.5], use: "Watch TV and football.", power: "Medium" },
+  tv32: { category: "comfort", size: [1.6, 0.5], use: "Watch TV.", power: "Low" },
+  coffee_table: { category: "comfort", size: [1.1, 0.6], use: "Somewhere to put things down." },
+  armchairs: { category: "comfort", size: [0.9, 0.9], use: "One armchair. Buy two for a pair." },
+  piano: { category: "comfort", size: [1.5, 2.4], use: "Practise; the house fills with music." },
+  dining10: { category: "dining", size: [3.8, 2.1], use: "Seats ten." },
+  dining6: { category: "dining", size: [2.5, 2.1], use: "Seats six." },
+  cabinet: { category: "dining", size: [2.2, 0.45], use: "Display the good plates." },
+};
+
+/** A room you can lay out: its floor, and the rectangle you can place things in (world metres, that floor's local frame). */
+export interface PlanRect { level: number; x0: number; z0: number; x1: number; z1: number }
+
+/** Dimensions of the storey houses, shared by the 3D builder and the server's placement checks. */
+export function manorDims(tier: "villa" | "mansion") {
+  const mansion = tier === "mansion";
+  const hx = mansion ? 12 : 10, hz = mansion ? 8 : 7;
+  return { mansion, hx, hz, FY: 3.4, NL: mansion ? 3 : 2, s0: mansion ? -1.6 : -2, s1: mansion ? 4.4 : 3.6, HW: 2.6, lz0: 0.5, gx1: -5.6, kz: mansion ? 2 : 1.5, outside: 9 };
+}
+
+/** Where each furnishable room is, by home tier. */
+export function roomRects(tier: HomeTier): Record<string, PlanRect> {
+  if (tier === "mansion" || tier === "villa") {
+    const d = manorDims(tier);
+    const out: Record<string, PlanRect> = {
+      living: { level: 0, x0: -d.hx, z0: d.lz0, x1: -d.HW, z1: d.hz },
+      dining: { level: 0, x0: d.HW, z0: d.kz, x1: d.hx, z1: d.hz },
+      study: { level: 0, x0: d.gx1, z0: -3, x1: -d.HW, z1: d.lz0 },
+      [d.mansion ? "bed7" : "bed4"]: { level: 0, x0: -d.hx, z0: -d.hz, x1: d.gx1, z1: -1.8 },
+      lounge: { level: 1, x0: -d.hx, z0: d.lz0, x1: -d.HW, z1: d.hz },
+      bed1: { level: 1, x0: -d.hx, z0: -d.hz, x1: -d.HW, z1: d.lz0 - 3.2 },
+      bed2: { level: 1, x0: d.HW, z0: -d.hz, x1: d.hx, z1: d.s0 },
+      bed3: { level: 1, x0: d.HW, z0: d.s0, x1: d.hx, z1: d.s1 },
+    };
+    if (d.mansion) {
+      out.bed4 = { level: 2, x0: -d.hx, z0: -d.hz, x1: -d.HW, z1: d.s0 };
+      out.bed5 = { level: 2, x0: -d.hx, z0: d.s0, x1: -d.HW, z1: d.s1 };
+      out.bed6 = { level: 2, x0: d.HW, z0: -d.hz, x1: d.hx, z1: d.s0 };
+    }
+    return out;
+  }
+  // A rented flat: the open-plan living space in front of the bedroom partition.
+  if (tier === "flat") return { main: { level: 0, x0: -4.5, z0: -0.4, x1: 4.5, z1: 3.75 } };
+  return {};
+}
+/** The rooms you can furnish freely, with their names and kinds. */
+export function placeableRooms(tier: HomeTier): { id: string; name: string; kind: RoomKind | "any"; level: number }[] {
+  const rects = roomRects(tier);
+  const plans = ROOM_PLANS[tier];
+  if (plans) return plans.filter((p) => rects[p.id]).map((p) => ({ id: p.id, name: p.name, kind: p.kind, level: rects[p.id].level }));
+  return Object.entries(rects).map(([id, r]) => ({ id, name: "Living space", kind: "any" as const, level: r.level }));
+}
+
+/** The footprint of a piece at a position and quarter-turn, as a rectangle. */
+export function footprint(piece: string, x: number, z: number, rot: number) {
+  const [w, d] = PIECE_INFO[piece]?.size ?? [1, 1];
+  const [fw, fd] = rot % 2 ? [d, w] : [w, d];
+  return { minX: x - fw / 2, maxX: x + fw / 2, minZ: z - fd / 2, maxZ: z + fd / 2 };
+}
+export const overlaps = (a: { minX: number; maxX: number; minZ: number; maxZ: number }, b: { minX: number; maxX: number; minZ: number; maxZ: number }) =>
+  a.minX < b.maxX - 0.02 && a.maxX > b.minX + 0.02 && a.minZ < b.maxZ - 0.02 && a.maxZ > b.minZ + 0.02;
+/** Inside the room, with a hand's width from the walls. */
+export function fitsRoom(piece: string, x: number, z: number, rot: number, r: PlanRect) {
+  const f = footprint(piece, x, z, rot);
+  return f.minX >= r.x0 + 0.08 && f.maxX <= r.x1 - 0.08 && f.minZ >= r.z0 + 0.08 && f.maxZ <= r.z1 - 0.08;
+}
+
+/** Delivery and setting up, charged with a new piece. */
+export const deliveryFee = (price: number) => Math.max(40, Math.round(price * 0.03));
+/** What a dealer pays for used furniture: 40% of what you paid, less wear. */
+export const resaleValue = (paid: number, condition = 1) => Math.round(paid * RESALE_RATE * condition);
+export const RESALE_RATE = 0.4;
+
+/** Wall paint (the whole house) and floors (room by room). Prices in GH₵. */
+export const FINISHES = {
+  wall: {
+    cream: { name: "Warm cream", color: "#f4eee3", price: 0 },
+    white: { name: "Brilliant white", color: "#fbfaf6", price: 3_800 },
+    sand: { name: "Sahel sand", color: "#e9dcc4", price: 4_200 },
+    sage: { name: "Sage green", color: "#d3dccb", price: 4_200 },
+    grey: { name: "Dove grey", color: "#dcdcd8", price: 4_200 },
+    clay: { name: "Terracotta clay", color: "#e2c3ad", price: 4_600 },
+  },
+  floor: {
+    oak: { name: "Oak boards", price: 0 },
+    walnut: { name: "Dark walnut boards", price: 2_400 },
+    marble: { name: "Polished marble", price: 5_200 },
+    tiles: { name: "Porcelain tiles", price: 1_800 },
+    terrazzo: { name: "Terrazzo", price: 2_900 },
+  },
+} as const;
+export type WallFinish = keyof typeof FINISHES.wall;
+export type FloorFinish = keyof typeof FINISHES.floor;
+/** Finishes chosen for a home: the paint, and each room's floor. */
+export type Finishes = { wall?: WallFinish; floors?: Record<string, FloorFinish> };
+/** A piece placed by hand (positions are in the floor's own frame). */
+export interface PlacedPiece { id: number; piece: string; room: string; level: number; x: number; z: number; rot: number }

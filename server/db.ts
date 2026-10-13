@@ -355,6 +355,31 @@ CREATE TABLE IF NOT EXISTS furnishings (
   PRIMARY KEY (player_id, building_id, room, piece)
 );
 
+CREATE TABLE IF NOT EXISTS furniture_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  home_key TEXT NOT NULL,
+  room TEXT,
+  piece TEXT NOT NULL,
+  price INTEGER NOT NULL,
+  x REAL,
+  z REAL,
+  rot INTEGER NOT NULL DEFAULT 0,
+  stored INTEGER NOT NULL DEFAULT 0,
+  condition REAL NOT NULL DEFAULT 1,
+  bought_min INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS furniture_player ON furniture_items (player_id);
+
+CREATE TABLE IF NOT EXISTS home_finishes (
+  player_id INTEGER NOT NULL,
+  home_key TEXT NOT NULL,
+  room TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  finish TEXT NOT NULL,
+  PRIMARY KEY (player_id, home_key, room, kind)
+);
+
 CREATE TABLE IF NOT EXISTS provider_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   status TEXT NOT NULL,

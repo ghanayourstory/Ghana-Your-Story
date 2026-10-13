@@ -934,3 +934,66 @@ test("a mansion bought empty is bare; furnish room by room, swap, sell and rearr
   assert.ok(act(two.ctx, two.id, { type: "home_activity", activity: "watch_tv" }).ok);
   assert.ok(auditPlayer(two.ctx.db, two.id).ok);
 });
+
+test("furniture by hand: preview is free, place charges once, move/store/sell keep ownership and amounts honest", () => {
+  const { ctx, id } = rich();
+  grant(ctx, id, 20_000_000);
+  ctx.db.run("UPDATE players SET reputation = 50 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "travel", to: "trasacco", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "plot_buy", plotId: "trasacco_mansion_ready" }).ok);
+  const b = ctx.db.get<{ id: number }>("SELECT id FROM buildings WHERE player_id = ?", id)!;
+  assert.ok(act(ctx, id, { type: "building_use", buildingId: b.id, use: "live" }).ok);
+  const total = () => bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo");
+  const t0 = total();
+  // A king bed in the master bedroom (first floor): x -12..-2.6, z -8..-2.7.
+  const placed = act(ctx, id, { type: "furnish_item", op: "place", piece: "king_bed", room: "bed1", x: -7.5, z: -6.5, rot: 0 });
+  assert.ok(placed.ok, placed.error);
+  assert.equal(t0 - total(), (16_500 + Math.round(16_500 * 0.03)) * 100);
+  // Through a wall, on top of the bed, or the wrong room: refused, nothing charged.
+  const t1 = total();
+  assert.equal(act(ctx, id, { type: "furnish_item", op: "place", piece: "dresser", room: "bed1", x: -12.2, z: -5, rot: 0 }).code, "outside_room");
+  assert.equal(act(ctx, id, { type: "furnish_item", op: "place", piece: "dresser", room: "bed1", x: -7.5, z: -6.5, rot: 0 }).code, "overlap");
+  assert.equal(act(ctx, id, { type: "furnish_item", op: "place", piece: "piano", room: "bed1", x: -7.5, z: -4, rot: 0 }).code, "wrong_room");
+  assert.equal(total(), t1);
+  let s = buildState(ctx, loadPlayer(ctx.db, id));
+  const bedItem = s.player.home.placed.find((p) => p.piece === "king_bed")!;
+  assert.equal(bedItem.level, 1);
+  // Move and turn it: free.
+  assert.ok(act(ctx, id, { type: "furnish_item", op: "move", itemId: bedItem.id, x: -6, z: -6.4, rot: 1 }).ok);
+  assert.equal(total(), t1);
+  // Store it: still yours, no longer in the room.
+  assert.ok(act(ctx, id, { type: "furnish_item", op: "store", itemId: bedItem.id }).ok);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(s.player.home.placed.length, 0);
+  assert.equal(s.player.home.inventory.find((i) => i.id === bedItem.id)!.where, "storage");
+  // Back out of storage for free, into another bedroom.
+  assert.ok(act(ctx, id, { type: "furnish_item", op: "place", itemId: bedItem.id, room: "bed2", x: 7, z: -6, rot: 0 }).ok);
+  assert.equal(total(), t1);
+  // Sell at the quoted price only.
+  const inv = buildState(ctx, loadPlayer(ctx.db, id)).player.home.inventory.find((i) => i.id === bedItem.id)!;
+  assert.equal(inv.resale, Math.round(16_500 * 100 * 0.4));
+  assert.equal(act(ctx, id, { type: "furnish_item", op: "sell", itemId: bedItem.id, expect: inv.resale + 1 }).code, "price_changed");
+  assert.ok(act(ctx, id, { type: "furnish_item", op: "sell", itemId: bedItem.id, expect: inv.resale }).ok);
+  assert.equal(total(), t1 + inv.resale);
+  // Paint: one price for the house, refused if it's already on.
+  assert.ok(act(ctx, id, { type: "furnish_item", op: "finish", kind: "wall", finish: "sage" }).ok);
+  assert.equal(act(ctx, id, { type: "furnish_item", op: "finish", kind: "wall", finish: "sage" }).code, "already");
+  assert.equal(buildState(ctx, loadPlayer(ctx.db, id)).player.home.finishes.wall, "sage");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("renters: own pieces in a rented flat, no repainting, and they pack into storage on moving", () => {
+  const { ctx, id } = rich();
+  assert.ok(act(ctx, id, { type: "travel", to: "labadi", mode: "taxi" }).ok);
+  const mv = act(ctx, id, { type: "rent_move", rentalId: "labadi_flat" });
+  assert.ok(mv.ok, mv.error);
+  const r = act(ctx, id, { type: "furnish_item", op: "place", piece: "plant", room: "main", x: 3.5, z: 3, rot: 0 });
+  assert.ok(r.ok, r.error);
+  assert.equal(act(ctx, id, { type: "furnish_item", op: "finish", kind: "wall", finish: "white" }).code, "not_owner");
+  assert.ok(act(ctx, id, { type: "travel", to: "kaneshie", mode: "taxi" }).ok);
+  assert.ok(act(ctx, id, { type: "rent_move", rentalId: "tetteh_room" }).ok);
+  const inv = buildState(ctx, loadPlayer(ctx.db, id)).player.home.inventory;
+  assert.equal(inv.length, 1);
+  assert.equal(inv[0].where, "storage");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

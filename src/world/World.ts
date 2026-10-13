@@ -16,13 +16,14 @@ import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, EXTE
 import { CityLife } from "./life.ts";
 import { animatePerson, buildPerson, randomLook, setHumanMode, type Person, type PersonLook } from "./people.ts";
 import { buildSite } from "./construction.ts";
-import { buildHomeInterior, type Interior, type InteriorSpot, type SpotUse } from "./interiors.ts";
+import { buildHomeInterior, buildPieceGroup, type Interior, type InteriorSpot, type SpotUse } from "./interiors.ts";
 import { activityFx, applyPose, clearPose, findPath, fxFor, type Fx } from "./homelife.ts";
 import type { HomeSpec } from "../../shared/homes.ts";
 import { buildAircraft, buildVehicle, spinWheels, vehicleKindForModel, type AircraftKind, type VehicleKind, type VehicleRig } from "./vehicles.ts";
 import { VEHICLES } from "../../shared/life.ts";
 import { CityAudio } from "./audio.ts";
 import { setMaxAnisotropy } from "./textures.ts";
+import { PIECE_INFO, fitsRoom, footprint, overlaps, roomRects, type Finishes } from "../../shared/furnish.ts";
 import { PLACE_BY_ID, DISTRICTS, districtsIn, type DistrictId } from "../../shared/world.ts";
 import * as T from "./textures.ts";
 import { PLOTS } from "../../shared/economy.ts";
@@ -60,6 +61,8 @@ export interface WorldCallbacks {
   onExam?: (e: ExamStatus | null) => void;
   /** A caption for an important sound. */
   onCaption?: (text: string) => void;
+  /** Furnishing: Enter places, Escape cancels. */
+  onEditKey?: (key: "place" | "cancel") => void;
 }
 
 /** You, at the wheel of your own car. */
@@ -351,8 +354,7 @@ export class World {
     this.state = s;
     this.setClock(s.time.minute);
     // New furniture delivered while you're home: rebuild the rooms around you.
-    const fk = JSON.stringify(s.player.home.furnish ?? null);
-    if (this.inside && this.interior && fk !== this.furnishKey) this.rebuildInterior();
+    if (this.inside && this.interior && this.homeKeyOf() !== this.furnishKey) this.rebuildInterior();
     if ((s.time.weather === "rain" || s.time.weather === "storm") && this.weather !== s.time.weather) this.caption(s.time.weather === "storm" ? "⛈️ Thunder and heavy rain" : "🌧️ Rain starts falling");
     this.weather = s.time.weather;
     this.atmo.setWeather(s.time.weather);
@@ -751,8 +753,7 @@ export class World {
     this.path = [];
     this.arriveCb = null;
     this.homeItems = items;
-    this.furnishKey = JSON.stringify(this.state?.player.home.furnish ?? null);
-    this.interior = buildHomeInterior(spec, items, this.state?.player.home.furnish ?? null);
+    this.interior = this.buildInterior(spec);
     this.level = 0;
     this.floorY = 0;
     this.lastPower = "";
@@ -771,20 +772,130 @@ export class World {
     this.updateSpouse();
   }
 
+  /** The home as saved, with any preview (hidden piece, trial paint) laid over it. */
+  private buildInterior(spec: HomeSpec) {
+    const h = this.state?.player.home;
+    this.furnishKey = this.homeKeyOf();
+    const pv = this.preview;
+    let furnish = h?.furnish ?? null;
+    if (furnish && pv?.hideStandard) furnish = { ...furnish, [pv.hideStandard.room]: (furnish[pv.hideStandard.room] ?? []).filter((x) => x !== pv.hideStandard!.piece) };
+    const placed = (h?.placed ?? []).filter((it) => it.id !== pv?.hideItem);
+    const fin = { ...(h?.finishes ?? {}), ...(pv?.finishes ?? {}), floors: { ...(h?.finishes?.floors ?? {}), ...(pv?.finishes?.floors ?? {}) } };
+    return buildHomeInterior(spec, this.homeItems, furnish, placed, fin);
+  }
+  private homeKeyOf() {
+    const h = this.state?.player.home;
+    return JSON.stringify([h?.furnish ?? null, h?.placed ?? [], h?.finishes ?? {}, this.preview]);
+  }
   private rebuildInterior() {
     if (!this.interior || !this.state) return;
-    this.furnishKey = JSON.stringify(this.state.player.home.furnish ?? null);
     this.interiorScene.remove(this.interior.group);
-    this.interior = buildHomeInterior(this.state.player.home.spec, this.homeItems, this.state.player.home.furnish ?? null);
+    this.interior = this.buildInterior(this.state.player.home.spec);
     this.interiorScene.add(this.interior.group);
     this.showFloors();
     this.lastPower = "";
   }
 
+  // ---------------------------------------------------------------------------
+  // Furnishing: a see-through ghost you drag, nudge and turn, then place.
+
+  editMode = false;
+  private preview: { hideItem?: number; hideStandard?: { room: string; piece: string }; finishes?: Finishes } | null = null;
+  private ghost: { piece: string; room: string; level: number; x: number; z: number; rot: number; group: THREE.Group; valid: boolean; reason: string } | null = null;
+  private dragGhost = false;
+  private savedCam: { yaw: number; pitch: number; dist: number } | null = null;
+  /** The placed piece you tapped in edit mode. */
+  selectedItem: number | null = null;
+
+  setEditMode(on: boolean) {
+    if (on === this.editMode) return;
+    this.editMode = on;
+    this.endGhost();
+    this.selectedItem = null;
+    this.setPreview(null);
+    if (on) {
+      this.savedCam = { yaw: this.camYaw, pitch: this.camPitch, dist: this.camDist };
+      this.camPitch = 1.15;
+      this.path = [];
+    } else if (this.savedCam) {
+      Object.assign(this, { camYaw: this.savedCam.yaw, camPitch: this.savedCam.pitch, camDist: this.savedCam.dist });
+      this.savedCam = null;
+    }
+  }
+  /** Try paint or floors, or hide a piece while it's being moved: nothing is saved. */
+  setPreview(p: { hideItem?: number; hideStandard?: { room: string; piece: string }; finishes?: Finishes } | null) {
+    this.preview = p;
+    if (this.inside && this.interior) this.rebuildInterior();
+  }
+  /** Start placing a piece in a room (at a spot, or the room's middle). */
+  startGhost(piece: string, room: string, at?: { x: number; z: number; rot: number }) {
+    if (!this.inside || !this.interior || !this.state) return false;
+    const rect = roomRects(this.state.player.home.spec.tier)[room];
+    if (!rect) return false;
+    this.endGhost();
+    const group = buildPieceGroup(piece);
+    const tint = new THREE.MeshStandardMaterial({ color: "#3ddc84", transparent: true, opacity: 0.6, depthWrite: false });
+    group.traverse((o) => { const m = o as THREE.Mesh; if (m.isMesh) { m.material = tint; m.castShadow = false; m.renderOrder = 5; } });
+    group.userData.tint = tint;
+    this.interiorScene.add(group);
+    const snap = (v: number) => Math.round(v * 4) / 4;
+    this.ghost = { piece, room, level: rect.level, x: snap(at?.x ?? (rect.x0 + rect.x1) / 2), z: snap(at?.z ?? (rect.z0 + rect.z1) / 2), rot: at?.rot ?? 0, group, valid: true, reason: "" };
+    this.updateGhost();
+    // A new piece starts at the nearest free spot, not on top of something.
+    if (!at && !this.ghost.valid) {
+      const g = this.ghost, cx = g.x, cz = g.z;
+      search: for (let rad = 0.5; rad < 8; rad += 0.5) for (let a = 0; a < 16; a++) for (const rot of [0, 1]) {
+        g.x = snap(cx + Math.cos((a / 16) * Math.PI * 2) * rad); g.z = snap(cz + Math.sin((a / 16) * Math.PI * 2) * rad); g.rot = rot;
+        this.updateGhost();
+        if (g.valid) break search;
+      }
+      if (!g.valid) { g.x = cx; g.z = cz; g.rot = 0; this.updateGhost(); }
+    }
+    return true;
+  }
+  endGhost() {
+    if (this.ghost) { this.interiorScene.remove(this.ghost.group); (this.ghost.group.userData.tint as THREE.Material).dispose(); }
+    this.ghost = null;
+    this.dragGhost = false;
+  }
+  nudgeGhost(dx: number, dz: number) { if (this.ghost) { this.ghost.x += dx; this.ghost.z += dz; this.updateGhost(); } }
+  rotateGhost() { if (this.ghost) { this.ghost.rot = (this.ghost.rot + 1) % 4; this.updateGhost(); } }
+  private editKey: ((k: "place" | "cancel") => void) | null = null;
+  setEditKeyHandler(fn: ((k: "place" | "cancel") => void) | null) { this.editKey = fn; }
+  turnCamera(d: number) { this.camYaw += d * Math.PI / 4; }
+  ghostInfo() {
+    const g = this.ghost;
+    return g ? { piece: g.piece, room: g.room, x: g.x, z: g.z, rot: g.rot, valid: g.valid, reason: g.reason } : null;
+  }
+  /** Is the ghost somewhere it can go? Same checks as the server, plus walls, doorways and the fixed fittings. */
+  private updateGhost() {
+    const g = this.ghost, it = this.interior, st = this.state;
+    if (!g || !it || !st) return;
+    const rect = roomRects(st.player.home.spec.tier)[g.room];
+    const lvY = it.storeys?.levels[g.level]?.y ?? 0;
+    g.group.position.set(g.x, lvY + 0.02, g.z);
+    g.group.rotation.y = -g.rot * Math.PI / 2;
+    const f = footprint(g.piece, g.x, g.z, g.rot);
+    const info = PIECE_INFO[g.piece];
+    let reason = "";
+    if (!fitsRoom(g.piece, g.x, g.z, g.rot, rect)) reason = "Part of it is through a wall or outside the room.";
+    else if (!info?.passable) {
+      const cols = it.storeys?.levels[g.level]?.colliders ?? it.colliders;
+      if (cols.some((c) => overlaps(f, c))) reason = "Something's already there.";
+      else if ((it.clear ?? []).some((c) => c.level === g.level && overlaps(f, c))) reason = "Keep the doorway clear.";
+    }
+    g.valid = !reason;
+    g.reason = reason;
+    (g.group.userData.tint as THREE.MeshStandardMaterial).color.set(g.valid ? "#3ddc84" : "#ff4d4f");
+  }
+
+  /** Walk up to your front door
+
   /** The floor plan for one storey, for finding a path on it. */
   /** Upper floors show once your eyes are near their level; everything above stays hidden. */
   private showFloors() {
-    for (const lv of this.interior?.storeys?.levels ?? []) if (lv.group) lv.group.visible = lv.y <= this.floorY + 2.6;
+    const y = this.editMode && this.ghost ? (this.interior?.storeys?.levels[this.ghost.level]?.y ?? 0) : this.floorY;
+    for (const lv of this.interior?.storeys?.levels ?? []) if (lv.group) lv.group.visible = lv.y <= y + 2.6;
   }
   /** Which floor a height is on. */
   private levelAt(y: number) {
@@ -831,6 +942,7 @@ export class World {
   // Home life: tap to walk, tap things to use them, walls cut away.
 
   private tap(cx: number, cy: number) {
+    if (this.editMode) return this.editTap(cx, cy);
     if (!this.inside || !this.interior || this.ride || this.doing || this.frozen) return;
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
@@ -856,6 +968,28 @@ export class World {
       const b = this.interior.bounds;
       this.walkTo(new THREE.Vector3(THREE.MathUtils.clamp(p.x, b.minX + 0.3, b.maxX - 0.3), st ? st.levels[tapLevel].y : 0, THREE.MathUtils.clamp(p.z, b.minZ + 0.3, b.maxZ - 0.3)), null);
     }
+  }
+
+  /** Where on a floor the pointer is. */
+  private floorPoint(cx: number, cy: number, y: number) {
+    const rect = this.canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
+    this.raycaster.setFromCamera(ndc, this.camera);
+    const hit = new THREE.Vector3();
+    return this.raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), -y), hit) ? hit : null;
+  }
+  /** Edit mode: tap a placed piece to select it. */
+  private editTap(cx: number, cy: number) {
+    if (!this.interior || this.ghost) return;
+    const lv = this.interior.storeys?.levels ?? [{ y: 0 }];
+    const viewLevel = this.levelAt(this.floorY);
+    for (let k = Math.min(viewLevel, lv.length - 1); k >= 0; k--) {
+      const p = this.floorPoint(cx, cy, lv[k].y);
+      if (!p) continue;
+      const hit = (this.interior.placed ?? []).filter((r) => r.level === k && p.x > r.minX && p.x < r.maxX && p.z > r.minZ && p.z < r.maxZ);
+      if (hit.length) { this.selectedItem = hit[hit.length - 1].id; return; }
+    }
+    this.selectedItem = null;
   }
 
   walkTo(target: THREE.Vector3, then: (() => void) | null) {
@@ -1755,6 +1889,23 @@ export class World {
   private bindInput() {
     const down = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.tagName === "INPUT" || (e.target as HTMLElement)?.tagName === "TEXTAREA") return;
+      if (this.editMode) {
+        const g = this.ghost;
+        const k = e.key;
+        if (g && k.startsWith("Arrow")) {
+          e.preventDefault();
+          // Arrows move along the screen, whichever way the camera faces.
+          const f = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw)), rt = new THREE.Vector3(-f.z, 0, f.x);
+          const dir = k === "ArrowUp" ? f : k === "ArrowDown" ? f.clone().negate() : k === "ArrowRight" ? rt : rt.clone().negate();
+          const ax = Math.abs(dir.x) > Math.abs(dir.z);
+          this.nudgeGhost(ax ? Math.sign(dir.x) * 0.25 : 0, ax ? 0 : Math.sign(dir.z) * 0.25);
+          return;
+        }
+        if (g && (k === "r" || k === "R")) return this.rotateGhost();
+        if (g && k === "Enter") return this.editKey?.("place");
+        if (k === "Escape") return this.editKey?.("cancel");
+        return;
+      }
       this.keys.add(e.key.toLowerCase());
       if (e.key === " ") {
         e.preventDefault();
@@ -1773,6 +1924,13 @@ export class World {
     let downAt = { x: 0, y: 0, t: 0 };
     this.canvas.addEventListener("pointerdown", (e) => {
       downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
+      if (this.editMode && this.ghost) {
+        // Drag the ghost with one finger or the mouse.
+        this.dragGhost = true;
+        this.canvas.setPointerCapture(e.pointerId);
+        pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        return;
+      }
       this.audio.start();
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       dragging = true;
@@ -1783,6 +1941,12 @@ export class World {
     this.canvas.addEventListener("pointermove", (e) => {
       if (!pointers.has(e.pointerId)) return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.dragGhost && this.ghost && this.interior) {
+        const y = this.interior.storeys?.levels[this.ghost.level]?.y ?? 0;
+        const p = this.floorPoint(e.clientX, e.clientY, y);
+        if (p) { this.ghost.x = Math.round(p.x * 4) / 4; this.ghost.z = Math.round(p.z * 4) / 4; this.updateGhost(); }
+        return;
+      }
       if (pointers.size === 2) {
         const [a, b] = [...pointers.values()];
         const dist = Math.hypot(a.x - b.x, a.y - b.y);
@@ -1797,6 +1961,7 @@ export class World {
       ly = e.clientY;
     });
     const end = (e: PointerEvent) => {
+      if (this.dragGhost) { this.dragGhost = false; pointers.delete(e.pointerId); return; }
       if (e.type === "pointerup" && pointers.size === 1 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8 && performance.now() - downAt.t < 450) this.tap(e.clientX, e.clientY);
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinch = 0;
@@ -1946,7 +2111,7 @@ export class World {
     // Player movement relative to the camera.
     let ix = 0, iz = 0;
     if (this.drive) this.updateDrive(dt);
-    if (!this.frozen && !this.ride && !this.drive) {
+    if (!this.frozen && !this.ride && !this.drive && !this.editMode) {
       if (this.keys.has("w") || this.keys.has("arrowup")) iz += 1;
       if (this.keys.has("s") || this.keys.has("arrowdown")) iz -= 1;
       if (this.keys.has("a") || this.keys.has("arrowleft")) ix -= 1;
@@ -2028,6 +2193,7 @@ export class World {
       const b = this.interior.bounds;
       const focus = this.pos.clone().lerp(new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2), this.interior.storeys ? 0.15 : 0.4);
       focus.y = this.floorY;
+      if (this.editMode && this.ghost) { focus.set(this.ghost.x, this.interior.storeys?.levels[this.ghost.level]?.y ?? 0, this.ghost.z); this.showFloors(); }
       this.camTarget.lerp(focus, Math.min(1, dt * 3));
     } else this.camTarget.lerp(this.pos, Math.min(1, dt * 6));
     const cd = this.camDist;

@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { Batcher, G } from "./batch.ts";
 import * as T from "./textures.ts";
 import type { HomeSpec } from "../../shared/homes.ts";
-import { fullyFurnished, type Furnishing } from "../../shared/furnish.ts";
+import { FINISHES, footprint, fullyFurnished, manorDims, type Finishes, type Furnishing, type PlacedPiece } from "../../shared/furnish.ts";
 
 export type Pose = "lie" | "sit" | "squat" | "stand" | "bath" | "swim" | "hidden";
 export interface SpotUse {
@@ -42,6 +42,10 @@ export interface Level {
 }
 export interface Interior {
   group: THREE.Group;
+  /** Hand-placed pieces, for tapping them in edit mode. */
+  placed?: { id: number; piece: string; level: number; minX: number; maxX: number; minZ: number; maxZ: number }[];
+  /** Doorways to keep clear when placing furniture, by floor. */
+  clear?: { level: number; minX: number; maxX: number; minZ: number; maxZ: number }[];
   /** Storey buildings: the floors, and the straight flights that climb from one to the next. */
   storeys?: { levels: Level[]; flights: { from: number; x0: number; x1: number; zStart: number; zEnd: number }[] };
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
@@ -216,6 +220,8 @@ class Room {
   spots: InteriorSpot[] = [];
   walls: CutWall[] = [];
   uses = new Map<InteriorSpot["id"], SpotUse>();
+  /** Doorways: keep furniture out of these. */
+  clear: { minX: number; maxX: number; minZ: number; maxZ: number }[] = [];
   /** Full wall height for this home; low "cut" walls are raised to it and cut by the camera instead. */
   wallH = 2.9;
   /** A solid, separately drawn wall piece (so it can be cut away). */
@@ -257,6 +263,7 @@ class Room {
       if (along === "x") this.cutBox(m, mid, h / 2, z0, len, h, t);
       else this.cutBox(m, x0, h / 2, mid, t, h, len);
     }
+    if (gap) this.clear.push(along === "x" ? { minX: gap[0], maxX: gap[1], minZ: z0 - 0.9, maxZ: z0 + 0.9 } : { minX: x0 - 0.9, maxX: x0 + 0.9, minZ: gap[0], maxZ: gap[1] });
     if (gap && h > 2.3) {
       // Lintel over the doorway.
       const mid = (gap[0] + gap[1]) / 2, len = gap[1] - gap[0];
@@ -566,8 +573,87 @@ function ownedExtras(r: Room, items: string[], spots: { tv: [number, number]; fr
 // ---------------------------------------------------------------------------
 // Layouts by kind of home
 
-export function buildHomeInterior(spec: HomeSpec, items: string[], furnish: Furnishing | null = null): Interior {
-  if ((spec.tier as string) === "mansion" || (spec.tier as string) === "villa") return buildManor(spec, items, furnish);
+/**
+ * One piece of furniture drawn at the origin of the current frame, facing +z
+ * (its back to -z). Used for hand-placed pieces and the placement ghost.
+ */
+export function drawPiece(r: Room, piece: string) {
+  switch (piece) {
+    case "king_bed": return bedDir(r, 0, 0, "king", 1, "#8a7a68");
+    case "double_bed": return bedDir(r, 0, 0, "double", 1, "#6b7684");
+    case "carpenter_bed": return bedDir(r, 0, 0, "double", 1, "#7d8a74", false);
+    case "twin_beds":
+      bedDir(r, -0.85, 0, "single", 1, "#7d8a74", false, false);
+      bedDir(r, 0.85, 0, "single", 1, "#7d8fa3", false, false);
+      r.box(MAT.darkWood(), 0, 0.28, -0.8, 0.45, 0.56, 0.4, true);
+      return;
+    case "wardrobe":
+      r.box(MAT.color("#efe7da", 0.6), 0, 1.15, 0, 2.4, 2.3, 0.6, true);
+      for (let i = 1; i < 3; i++) r.box(MAT.color("#d8cfc0", 0.6), -1.2 + (i * 2.4) / 3, 1.15, 0.305, 0.02, 2.2, 0.01);
+      for (let i = 0; i < 3; i++) r.box(MAT.color("#c8a86a", 0.3, 0.7), -1.2 + ((i + 0.5) * 2.4) / 3 + 0.2, 1.15, 0.31, 0.02, 0.35, 0.02);
+      return;
+    case "dresser":
+      r.box(MAT.color("#f1e9dc", 0.5), 0, 0.4, 0, 1.2, 0.8, 0.45, true);
+      for (let i = 0; i < 3; i++) r.box(MAT.color("#c8a86a", 0.3, 0.7), 0, 0.18 + i * 0.25, 0.23, 0.12, 0.02, 0.01);
+      r.box(MAT.color("#cfe3ea", 0.02, 0.9), 0, 1.35, -0.18, 0.8, 0.9, 0.03);
+      r.box(MAT.color("#c8a86a", 0.3, 0.7), 0, 1.35, -0.2, 0.86, 0.96, 0.02);
+      return;
+    case "desk": return desk(r, 0, -0.35, 1);
+    case "bookshelf": return bookshelf(r, 0, 0, 1.6, 1);
+    case "rug": return lrug(r, 0, 0, 3, 2.2);
+    case "plant": return plant(r, 0, 0, true);
+    case "lights": return pendantLamp(r, 0, 2.6, 0, r.wallH);
+    case "leather_sofa": return sofaSet(r, 0.05, -0.8, "l_shape", 1);
+    case "fabric_sofa": return sofaSet(r, 0, 0, "fabric", 1);
+    case "wooden_sofa": return sofaSet(r, 0, -0.45, "wooden", 1);
+    case "tv65": return tvWall(r, 0, 0, true);
+    case "tv32": return tvWall(r, 0, 0, false);
+    case "coffee_table": coffeeTable(r, 0, 0); fruitBowl(r, 0, 0.44, 0); return;
+    case "armchairs":
+      r.box(MAT.color("#c9b28c", 0.9), 0, 0.22, 0, 0.85, 0.44, 0.85, true);
+      r.box(MAT.color("#d8c4a0", 0.95), 0, 0.5, 0.04, 0.76, 0.14, 0.7);
+      r.box(MAT.color("#c9b28c", 0.9), 0, 0.75, -0.36, 0.85, 0.6, 0.14);
+      for (const s of [-1, 1]) r.box(MAT.color("#c9b28c", 0.9), s * 0.38, 0.55, 0, 0.1, 0.3, 0.85);
+      return;
+    case "piano":
+      r.box(MAT.black(), 0, 0.75, -0.25, 1.5, 0.25, 1.9, true);
+      for (const [x, z] of [[-0.6, -1], [0.6, -1], [0, 0.55]] as const) r.box(MAT.black(), x, 0.32, z, 0.08, 0.64, 0.08);
+      r.box(MAT.black(), 0, 0.85, 0.8, 1.5, 0.3, 0.3);
+      r.box(MAT.white(), 0, 0.75, 0.88, 1.3, 0.04, 0.16);
+      r.box(MAT.black(), 0, 0.25, 1.15, 0.8, 0.5, 0.32);
+      return;
+    case "dining10": return diningSet(r, 0, 0, 10, MAT.darkMarble());
+    case "dining6": return diningSet(r, 0, 0, 6, MAT.darkWood());
+    case "cabinet":
+      r.box(MAT.darkWood(), 0, 1.0, 0, 2.2, 2.0, 0.45, true);
+      r.box(MAT.glass(), 0, 1.3, 0.23, 2.0, 1.2, 0.01);
+      return;
+  }
+}
+/** A piece on its own, for the placement ghost (drawn at the origin, facing +z). */
+export function buildPieceGroup(piece: string) {
+  const r = new Room();
+  r.wallH = 3.4;
+  drawPiece(r, piece);
+  const g = r.b.build();
+  g.add(r.extra);
+  return g;
+}
+/** Hand-placed pieces on one floor, with their footprints for tapping. */
+function drawPlaced(r: Room, placed: PlacedPiece[], level: number, out: NonNullable<Interior["placed"]>) {
+  for (const it of placed) {
+    if (it.level !== level) continue;
+    r.turned(it.x, it.z, -it.rot * Math.PI / 2, () => drawPiece(r, it.piece));
+    out.push({ id: it.id, piece: it.piece, level, ...footprint(it.piece, it.x, it.z, it.rot) });
+  }
+}
+/** The floor material for a finish. */
+function floorMat(f: string | undefined, fallback: M): M {
+  return f === "walnut" ? MAT.darkWood() : f === "marble" ? MAT.marble() : f === "tiles" ? MAT.floorTiles() : f === "terrazzo" ? MAT.terrazzo() : f === "oak" ? MAT.wood() : fallback;
+}
+
+export function buildHomeInterior(spec: HomeSpec, items: string[], furnish: Furnishing | null = null, placed: PlacedPiece[] = [], finishes: Finishes = {}): Interior {
+  if ((spec.tier as string) === "mansion" || (spec.tier as string) === "villa") return buildManor(spec, items, furnish, placed, finishes);
   const r = new Room();
   const has = (i: string) => items.includes(i);
   let bounds = { minX: -3, maxX: 3, minZ: -3, maxZ: 3 };
@@ -984,12 +1070,15 @@ export function buildHomeInterior(spec: HomeSpec, items: string[], furnish: Furn
   r.spot("bed", bedPos.x, bedPos.z, "Bed");
   r.spot("exit", door.x, door.z, "Go outside");
   for (const sp of r.spots) sp.use = r.uses.get(sp.id);
+  const placedRects: NonNullable<Interior["placed"]> = [];
+  drawPlaced(r, placed, 0, placedRects);
   const group = r.b.build();
   group.add(r.extra);
   group.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
   return {
     group, bounds, colliders: r.colliders, spots: r.spots, walls: r.walls, door, bed: bedPos,
     size: [bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ],
+    placed: placedRects, clear: r.clear.map((c) => ({ ...c, level: 0 })),
   };
 }
 
@@ -1210,23 +1299,22 @@ function terraceSet(r: Room, x: number, z: number) {
 
 export type Flight = { from: number; x0: number; x1: number; zStart: number; zEnd: number };
 
-function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null): Interior {
+function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null, placed: PlacedPiece[], finishes: Finishes): Interior {
   const mansion = spec.tier === "mansion";
+  const dims = manorDims(spec.tier as "villa" | "mansion");
+  const fl = (room: string, fallback: M) => floorMat(finishes.floors?.[room], fallback);
   const f = furnish ?? fullyFurnished(spec.tier);
   const hasIn = (room: string): Has => (id) => (f[room] ?? []).includes(id);
   const roomEmpty = (room: string) => !(f[room] ?? []).some((x) => x !== "_flip");
-  const hx = mansion ? 12 : 10, hz = mansion ? 8 : 7, FY = 3.4;
-  const NL = mansion ? 3 : 2;
-  const s0 = mansion ? -1.6 : -2, s1 = mansion ? 4.4 : 3.6; // the stair core runs from s0 (back) to s1 (front)
-  const HW = 2.6; // the hall: x from -HW to HW on every floor
-  const outside = 9;
+  // Shared with the server's placement checks, so the rooms line up.
+  const { hx, hz, FY, NL, s0, s1, HW, outside } = dims; // the stair core runs from s0 (back) to s1 (front); the hall is x in [-HW, HW]
   const flights: Flight[] = [];
   for (let i = 0; i < NL - 1; i++) flights.push(i % 2 === 0 ? { from: i, x0: -1.5, x1: -0.1, zStart: s1, zEnd: s0 } : { from: i, x0: 0.1, x1: 1.5, zStart: s0, zEnd: s1 });
   const L: Room[] = [];
   for (let k = 0; k < NL; k++) { const rr = new Room(); rr.wallH = FY; L.push(rr); }
   const r = L[0];
   const lamp = (rr: Room, x: number, y: number, z: number, i = 7, d = 10) => { const l = new THREE.PointLight("#ffe2b0", i, d, 1.6); l.position.set(x, y, z); rr.extra.add(l); };
-  const wallM = MAT.plaster("#f4eee3");
+  const wallM = MAT.plaster(FINISHES.wall[finishes.wall ?? "cream"].color);
   const cols = ["#8a7a68", "#6b7684", "#7d8a74", "#a08c6c", "#857a8c", "#8c7466", "#7a7a72"];
   const D1 = [s0 - 2.2, s0 - 1.2] as [number, number]; // a door off the back hall
   const D2 = [s1 - 1.6, s1 - 0.6] as [number, number]; // a door off the stair-side corridor
@@ -1239,7 +1327,7 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
     const rr = L[k];
     const fr = frameOf(x0, z0, x1, z1, head);
     const has = hasIn(id);
-    rr.floor(MAT.wood(), x0, z0, x1, z1, 0.005);
+    rr.floor(fl(id, MAT.wood()), x0, z0, x1, z1, 0.005);
     rr.turned(fr.ox, fr.oz, fr.a, () => bedroomLocal(rr, fr.hw, fr.len, toLocal(fr, doorX, doorZ), name, cols[ci % cols.length], has));
     // Where you lie down (or the mat on the floor if there's no bed yet).
     const anyBed = ["king_bed", "double_bed", "carpenter_bed", "twin_beds"].some(has);
@@ -1346,7 +1434,7 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
   const lx0 = -hx, lx1 = -HW, lz0 = 0.5, lcx = (lx0 + lx1) / 2;
   const Lv = hasIn("living");
   r.wall(wallM, lx0, lz0, lx1, lz0, FY);
-  r.floor(MAT.wood(), lx0, lz0, lx1, hz, 0.005);
+  r.floor(fl("living", MAT.wood()), lx0, lz0, lx1, hz, 0.005);
   seating(r, lcx, lz0, lz0 + 4.0, Lv);
   r.onWall("x", lz0, () => { if (Lv("split_ac")) splitAC(r, lcx + 2.8, lz0, 1, 2.7); if (Lv("art")) canvasArt(r, lcx - 2.9, 1.9, lz0, 1.4, 1.0, 1, 1); });
   r.onWall("x", hz, () => curtains(r, lcx, hz, 2.8, -1, "#e6ddcc", Lv("curtains")));
@@ -1372,7 +1460,7 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
   label(r, "Shower room", -hx + 1.3, -0.6);
   bedroomAt(0, guestId, "Guest bedroom", -hx, -hz, gx1, -1.8, "back", gx1, -4, 6);
   const St = hasIn("study"), scx = (gx1 + lx1) / 2;
-  r.floor(MAT.wood(), gx1, -3, lx1, lz0, 0.005);
+  r.floor(fl("study", MAT.wood()), gx1, -3, lx1, lz0, 0.005);
   if (St("desk")) desk(r, scx, lz0 - 0.55, -1);
   if (St("bookshelf")) r.turned(gx1 + 0.2, -1.2, Math.PI / 2, () => bookshelf(r, 0, 0, 2.0, 1));
   if (St("split_ac")) r.onWall("x", lz0, () => splitAC(r, scx, lz0, -1));
@@ -1387,6 +1475,7 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
   const dx0 = HW, dx1 = hx, dcx = (dx0 + dx1) / 2, kz = mansion ? 2 : 1.5, dcz = (kz + hz) / 2 + 0.3;
   const Dn = hasIn("dining");
   r.wall(wallM, dx0, kz, dx1, kz, FY, [dx0 + 1.4, dx0 + 3.9]);
+  if (finishes.floors?.dining) r.floor(fl("dining", MAT.marble()), dx0, kz, dx1, hz, 0.005);
   if (Dn("dining10")) diningSet(r, dcx, dcz, 10, MAT.darkMarble());
   else if (Dn("dining6")) diningSet(r, dcx, dcz, 6, MAT.darkWood());
   if (Dn("lights")) for (const ddx of [-1, 1]) pendantLamp(r, dcx + ddx, 2.4, dcz, FY);
@@ -1416,7 +1505,7 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
   // Family lounge — the upstairs sitting room, over the living room.
   const Lo = hasIn("lounge");
   U1.wall(wallM, -hx, lz0, -HW, lz0, FY);
-  U1.floor(MAT.wood(), -hx, lz0, -HW, hz, 0.005);
+  U1.floor(fl("lounge", MAT.wood()), -hx, lz0, -HW, hz, 0.005);
   seating(U1, lcx, lz0, lz0 + 4.0, Lo);
   if (Lo("bookshelf")) U1.turned(-hx + 0.2, lz0 + 2.2, Math.PI / 2, () => bookshelf(U1, 0, 0, 1.6, 1));
   U1.onWall("x", hz, () => { if (Lo("split_ac")) splitAC(U1, lcx, hz, -1); curtains(U1, lcx, hz, 2.6, -1, "#e6ddcc", Lo("curtains")); });
@@ -1530,6 +1619,8 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
 
   const door = new THREE.Vector3(0, 0, hz + outside - 0.9);
   r.spot("exit", door.x, door.z, "Go outside");
+  const placedRects: NonNullable<Interior["placed"]> = [];
+  L.forEach((rr, k) => drawPlaced(rr, placed, k, placedRects));
   const group = r.b.build();
   group.add(r.extra);
   const levels: Level[] = [{ y: 0, group: null, colliders: r.colliders, blocked: [] }];
@@ -1552,5 +1643,7 @@ function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null)
     bed: new THREE.Vector3(bedUse.x, sleepIn.level * FY, bedUse.z),
     size: [2 * hx, 2 * hz + outside],
     storeys: { levels, flights },
+    placed: placedRects,
+    clear: L.flatMap((rr, k) => rr.clear.map((c) => ({ ...c, level: k }))),
   };
 }

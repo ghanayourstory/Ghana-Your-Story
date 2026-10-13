@@ -36,7 +36,7 @@ import {
 } from "../shared/economy.ts";
 import { TOWN_BY_ID } from "../shared/ghana.ts";
 import { HOME_ACTIVITIES, HOME_SPECS, tierForHome } from "../shared/homes.ts";
-import { PIECES, ROOM_PLANS, furnishComfort, furnishItems, furnishedPackage, fullyFurnished, type Furnishing } from "../shared/furnish.ts";
+import { FINISHES, PIECES, PIECE_INFO, ROOM_PLANS, deliveryFee, fitsRoom, footprint, furnishComfort, furnishItems, furnishedPackage, fullyFurnished, overlaps, placeableRooms, resaleValue, roomRects, type Finishes, type Furnishing, type PlacedPiece } from "../shared/furnish.ts";
 import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
 import {
   BREAKDOWN_FIX, NO_INSURANCE_FINE, insuranceCost, repairCost,
@@ -956,7 +956,10 @@ function baseComfort(db: Db, p: PlayerRow): number {
 function homeComfort(db: Db, p: PlayerRow): number {
   const tier = homeSpecFor(db, p).tier;
   const f = homeFurnishing(db, p);
-  return baseComfort(db, p) + furnishingScore(ownedItems(db, p).map((i) => i.item_id)).bonus + (f ? furnishComfort(f, tier) : 0);
+  const placed = placedHere(db, p);
+  const merged: Furnishing = { ...(f ?? {}) };
+  for (const it of placed) merged[it.room] = [...(merged[it.room] ?? []), it.piece];
+  return baseComfort(db, p) + furnishingScore(ownedItems(db, p).map((i) => i.item_id)).bonus + (f || placed.length ? furnishComfort(merged, tier) : 0);
 }
 
 /**
@@ -974,10 +977,181 @@ export function homeFurnishing(db: Db, p: PlayerRow): Furnishing | null {
 /** Shop items plus what your furniture counts as (a TV in the lounge). */
 function homeItemIds(db: Db, p: PlayerRow) {
   const f = homeFurnishing(db, p);
-  return [...ownedItems(db, p).map((i) => i.item_id), ...(f ? furnishItems(f) : [])];
+  const placed: Furnishing = { placed: placedHere(db, p).map((i) => i.piece) };
+  return [...ownedItems(db, p).map((i) => i.item_id), ...(f ? furnishItems(f) : []), ...furnishItems(placed)];
 }
 
 const RESALE = 0.4;
+/** Leaving a rented place: your own pieces come with you into storage; the landlord's stay. */
+function packUpRental(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  if (p.home_kind !== "rental") return;
+  const n = ctx.db.run("UPDATE furniture_items SET stored = 1, room = NULL, x = NULL, z = NULL WHERE player_id = ? AND home_key = ? AND stored = 0", p.id, homeKey(p)).changes;
+  if (n) fb.add(`📦 Your ${n} piece${n > 1 ? "s" : ""} of furniture moved with you into storage. Place ${n > 1 ? "them" : "it"} in your new home any time.`, [], "info");
+}
+
+/** Which home furniture belongs to: a building you own, or the place you rent. */
+export const homeKey = (p: PlayerRow) => (p.home_kind === "owned" ? `b:${p.home_ref}` : `r:${p.home_ref}`);
+type ItemRow = { id: number; home_key: string; room: string | null; piece: string; price: number; x: number | null; z: number | null; rot: number; stored: number; condition: number; bought_min: number };
+function itemRows(db: Db, p: PlayerRow) {
+  return db.all<ItemRow>("SELECT * FROM furniture_items WHERE player_id = ? ORDER BY id", p.id);
+}
+/** Pieces placed by hand in the home you live in now. */
+export function placedHere(db: Db, p: PlayerRow): PlacedPiece[] {
+  const rects = roomRects(homeSpecFor(db, p).tier);
+  return itemRows(db, p).filter((i) => i.home_key === homeKey(p) && !i.stored && i.room && i.x !== null && rects[i.room]).map((i) => ({ id: i.id, piece: i.piece, room: i.room!, level: rects[i.room!].level, x: i.x!, z: i.z!, rot: i.rot }));
+}
+export function homeFinishes(db: Db, p: PlayerRow): Finishes {
+  const out: Finishes = { floors: {} };
+  for (const f of db.all<{ room: string; kind: string; finish: string }>("SELECT room, kind, finish FROM home_finishes WHERE player_id = ? AND home_key = ?", p.id, homeKey(p))) {
+    if (f.kind === "wall") out.wall = f.finish as Finishes["wall"];
+    else out.floors![f.room] = f.finish as never;
+  }
+  return out;
+}
+/** Everything you own, wherever it is, with what a dealer would pay for it. */
+function furnitureInventory(db: Db, p: PlayerRow) {
+  const here = homeKey(p);
+  const rows = itemRows(db, p).map((i) => ({ id: i.id, piece: i.piece, name: PIECES[i.piece]?.name ?? i.piece, where: i.stored ? "storage" : i.home_key === here ? "here" : "other_home", room: i.room, paid: i.price, resale: resaleValue(i.price, i.condition), condition: i.condition, standard: false }));
+  // Pieces in a room's standard spot (bought before placement, or with a furnished house).
+  if (p.home_kind === "owned") {
+    for (const f of db.all<{ room: string; piece: string; price: number }>("SELECT room, piece, price FROM furnishings WHERE player_id = ? AND building_id = ? AND piece != '_flip'", p.id, Number(p.home_ref)))
+      rows.push({ id: 0, piece: f.piece, name: PIECES[f.piece]?.name ?? f.piece, where: "here", room: f.room, paid: f.price, resale: resaleValue(f.price), condition: 1, standard: true });
+  }
+  return rows;
+}
+
+/**
+ * Lay out a home by hand: place (buy new, or bring from storage), move, put
+ * in storage, sell, or change the paint and floors. Owners can do anything;
+ * renters can bring in and take out their own pieces but not the landlord's.
+ */
+function actFurnishItem(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("not_home", "Be at home to arrange furniture.");
+  const tier = homeSpecFor(ctx.db, p).tier;
+  const rects = roomRects(tier);
+  const rooms = placeableRooms(tier);
+  const key = homeKey(p);
+  const rowOf = (id: unknown) => {
+    const row = ctx.db.get<ItemRow>("SELECT * FROM furniture_items WHERE id = ? AND player_id = ?", Number(id), p.id);
+    if (!row) throw new GameError("not_owned", "That piece isn't yours.");
+    return row;
+  };
+  const num = (v: unknown, name: string) => {
+    if (typeof v !== "number" || !Number.isFinite(v)) throw new GameError("bad_position", `Missing ${name}.`);
+    return Math.round(v * 20) / 20;
+  };
+  /** Room, bounds and overlap checks for a piece going to (x, z, rot). */
+  const checkSpot = (piece: string, roomId: unknown, x: number, z: number, rot: number, ignore = 0) => {
+    const room = rooms.find((r) => r.id === roomId);
+    if (!room) throw new GameError("bad_room", "Choose a room in your home.");
+    const info = PIECE_INFO[piece];
+    if (!info || info.wall) throw new GameError("wall_piece", "That hangs on a wall: buy it from the room list instead.");
+    if (room.kind !== "any" && !PIECES[piece].rooms.includes(room.kind)) throw new GameError("wrong_room", `A ${PIECES[piece].name.toLowerCase()} doesn't go in the ${room.name.toLowerCase()}.`);
+    if (!fitsRoom(piece, x, z, rot, rects[room.id])) throw new GameError("outside_room", "It doesn't fit there: part of it is through a wall.");
+    if (!info.passable) {
+      const f = footprint(piece, x, z, rot);
+      for (const o of placedHere(ctx.db, p)) {
+        if (o.id === ignore || o.room !== room.id || PIECE_INFO[o.piece]?.passable) continue;
+        if (overlaps(f, footprint(o.piece, o.x, o.z, o.rot))) throw new GameError("overlap", `It would sit on top of your ${PIECES[o.piece].name.toLowerCase()}.`);
+      }
+    }
+    return room;
+  };
+  const rot = ((Math.round(Number(a.rot) || 0) % 4) + 4) % 4;
+  switch (a.op) {
+    case "place": {
+      const x = num(a.x, "x"), z = num(a.z, "z");
+      if (a.itemId) {
+        // From storage: free, it's already yours.
+        const row = rowOf(a.itemId);
+        if (!row.stored) throw new GameError("not_stored", "That piece is already placed. Move it instead.");
+        const room = checkSpot(row.piece, a.room, x, z, rot);
+        ctx.db.run("UPDATE furniture_items SET stored = 0, home_key = ?, room = ?, x = ?, z = ?, rot = ? WHERE id = ?", key, room.id, x, z, rot, row.id);
+        advance(ctx, p, 15, fb, { quiet: true });
+        fb.add(`📦 Out of storage: ${PIECES[row.piece].name.toLowerCase()} set up in the ${room.name.toLowerCase().split(" (")[0]}.`, [], "info");
+        return { itemId: row.id };
+      }
+      const piece = typeof a.piece === "string" ? a.piece : "";
+      if (!PIECES[piece]) throw new GameError("bad_piece", "Unknown furniture");
+      const room = checkSpot(piece, a.room, x, z, rot);
+      const price = minor(PIECES[piece].price), delivery = minor(deliveryFee(PIECES[piece].price));
+      const money = chargeStrict(ctx, p, price + delivery, "furniture", `${PIECES[piece].name} for the ${room.name.toLowerCase().split(" (")[0]} (incl. delivery ${formatMoney(delivery)})`);
+      const ins = ctx.db.run("INSERT INTO furniture_items (player_id, home_key, room, piece, price, x, z, rot, bought_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", p.id, key, room.id, piece, price, x, z, rot, p.game_min);
+      advance(ctx, p, 30, fb, { quiet: true });
+      applyEffects(p, { fun: 3 }, fb, `🚚 Delivered and set up: ${PIECES[piece].name.toLowerCase()} in the ${room.name.toLowerCase().split(" (")[0]}.`, money);
+      return { itemId: Number(ins.lastInsertRowid) };
+    }
+    case "move": {
+      const x = num(a.x, "x"), z = num(a.z, "z");
+      if (a.fromStandard) {
+        // A piece in its standard spot becomes a hand-placed one.
+        if (p.home_kind !== "owned") throw new GameError("not_owner", "That's the landlord's.");
+        const std = a.fromStandard as { room?: unknown; piece?: unknown };
+        const f = ctx.db.get<{ price: number }>("SELECT price FROM furnishings WHERE player_id = ? AND building_id = ? AND room = ? AND piece = ?", p.id, Number(p.home_ref), String(std.room), String(std.piece));
+        if (!f) throw new GameError("not_owned", "That piece isn't in that room.");
+        const room = checkSpot(String(std.piece), a.room, x, z, rot);
+        ctx.db.run("DELETE FROM furnishings WHERE player_id = ? AND building_id = ? AND room = ? AND piece = ?", p.id, Number(p.home_ref), String(std.room), String(std.piece));
+        const ins = ctx.db.run("INSERT INTO furniture_items (player_id, home_key, room, piece, price, x, z, rot, bought_min) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", p.id, key, room.id, String(std.piece), f.price, x, z, rot, p.game_min);
+        advance(ctx, p, 10, fb, { quiet: true });
+        return { itemId: Number(ins.lastInsertRowid) };
+      }
+      const row = rowOf(a.itemId);
+      if (row.stored || row.home_key !== key) throw new GameError("not_here", "Bring it out of storage first.");
+      const room = checkSpot(row.piece, a.room ?? row.room, x, z, rot, row.id);
+      ctx.db.run("UPDATE furniture_items SET room = ?, x = ?, z = ?, rot = ? WHERE id = ?", room.id, x, z, rot, row.id);
+      advance(ctx, p, 10, fb, { quiet: true });
+      return { itemId: row.id };
+    }
+    case "store": {
+      if (a.fromStandard) {
+        if (p.home_kind !== "owned") throw new GameError("not_owner", "That's the landlord's.");
+        const std = a.fromStandard as { room?: unknown; piece?: unknown };
+        const f = ctx.db.get<{ price: number }>("SELECT price FROM furnishings WHERE player_id = ? AND building_id = ? AND room = ? AND piece = ?", p.id, Number(p.home_ref), String(std.room), String(std.piece));
+        if (!f) throw new GameError("not_owned", "That piece isn't in that room.");
+        ctx.db.run("DELETE FROM furnishings WHERE player_id = ? AND building_id = ? AND room = ? AND piece = ?", p.id, Number(p.home_ref), String(std.room), String(std.piece));
+        ctx.db.run("INSERT INTO furniture_items (player_id, home_key, room, piece, price, stored, bought_min) VALUES (?, ?, NULL, ?, ?, 1, ?)", p.id, key, String(std.piece), f.price, p.game_min);
+      } else {
+        const row = rowOf(a.itemId);
+        if (row.stored) throw new GameError("already", "It's already in storage.");
+        ctx.db.run("UPDATE furniture_items SET stored = 1, room = NULL, x = NULL, z = NULL WHERE id = ?", row.id);
+      }
+      advance(ctx, p, 10, fb, { quiet: true });
+      fb.add("📦 Put away in storage. It's still yours: place it again any time.", [], "info");
+      return null;
+    }
+    case "sell": {
+      const row = rowOf(a.itemId);
+      const back = resaleValue(row.price, row.condition);
+      // The amount you were shown must be the amount you get.
+      if (a.expect !== undefined && Number(a.expect) !== back) throw new GameError("price_changed", "The offer changed. Check it again.");
+      ctx.db.run("DELETE FROM furniture_items WHERE id = ?", row.id);
+      const ch = credit(ctx, p, "cash", back, "furniture_sale", `Sold ${PIECES[row.piece]?.name ?? row.piece} (40% of ${formatMoney(row.price)})`);
+      advance(ctx, p, 15, fb, { quiet: true });
+      fb.add(`💵 Sold the ${PIECES[row.piece]?.name.toLowerCase()} for ${formatMoney(back)}.`, ch, "good");
+      return null;
+    }
+    case "finish": {
+      if (p.home_kind !== "owned") throw new GameError("not_owner", "Ask the landlord before you paint. Buy a house to change paint and floors.");
+      const kind = a.kind === "wall" ? "wall" : a.kind === "floor" ? "floor" : null;
+      if (!kind) throw new GameError("bad_finish", "Choose paint or a floor.");
+      const table = FINISHES[kind] as Record<string, { name: string; price: number }>;
+      const fin = typeof a.finish === "string" ? table[a.finish] : undefined;
+      if (!fin) throw new GameError("bad_finish", "Unknown finish.");
+      const room = kind === "wall" ? "house" : String(a.room);
+      if (kind === "floor" && !rects[room]) throw new GameError("bad_room", "Choose a room.");
+      const cur = ctx.db.get<{ finish: string }>("SELECT finish FROM home_finishes WHERE player_id = ? AND home_key = ? AND room = ? AND kind = ?", p.id, key, room, kind);
+      if ((cur?.finish ?? (kind === "wall" ? "cream" : "oak")) === a.finish) throw new GameError("already", "That's what you have now.");
+      // Paint covers the whole house; a floor is priced for an average room.
+      const money = fin.price ? chargeStrict(ctx, p, minor(fin.price), "home_finish", `${kind === "wall" ? "Repaint the house" : "New floor"}: ${fin.name}`) : [];
+      ctx.db.run("INSERT INTO home_finishes (player_id, home_key, room, kind, finish) VALUES (?, ?, ?, ?, ?) ON CONFLICT(player_id, home_key, room, kind) DO UPDATE SET finish = excluded.finish", p.id, key, room, kind, String(a.finish));
+      advance(ctx, p, kind === "wall" ? 240 : 120, fb, { quiet: true });
+      applyEffects(p, { fun: 4 }, fb, kind === "wall" ? `🖌️ The painters are done: ${fin.name.toLowerCase()} throughout.` : `🪵 New floor laid: ${fin.name.toLowerCase()}.`, money);
+      return null;
+    }
+  }
+  throw new GameError("bad_op", "Unknown furniture action");
+}
+
 /** Buy, sell or rearrange furniture room by room in a home you own. */
 function actFurnish(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (p.home_kind !== "owned") throw new GameError("not_owner", "It's the landlord's furniture. Buy a house to furnish it your way.");
@@ -1309,6 +1483,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "household": return actHousehold(ctx, p, a, fb);
     case "wardrobe": return actWardrobe(ctx, p, a, fb);
     case "furnish": return actFurnish(ctx, p, a, fb);
+    case "furnish_item": return actFurnishItem(ctx, p, a, fb);
     case "oware": return actOware(ctx, p, a, fb);
     case "party": return actParty(ctx, p, a, fb);
     case "cleanup": return actCleanup(ctx, p, a, fb);
@@ -1900,6 +2075,7 @@ function actRentMove(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const cost = minor(r.rent * months);
   const money = chargeStrict(ctx, p, cost, "rent", `Rent advance (${months} months): ${r.name}`, true);
   if (p.home_kind === "owned") ctx.db.run("UPDATE buildings SET use = 'vacant' WHERE id = ?", Number(p.home_ref));
+  packUpRental(ctx, p, fb);
   p.home_kind = "rental";
   p.home_ref = r.id;
   p.rent_credit = months - 1; // this month is covered by the first month of the advance
@@ -2007,6 +2183,7 @@ function actBuildingUse(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   if (use === "live") {
     if (design.kind !== "home") throw new GameError("bad_use", "You can't live in a shop block");
     if (p.home_kind === "owned" && Number(p.home_ref) !== b.id) ctx.db.run("UPDATE buildings SET use='vacant' WHERE id=?", Number(p.home_ref));
+    packUpRental(ctx, p, fb);
     p.home_kind = "owned";
     p.home_ref = String(b.id);
     p.rent_credit = 0;
@@ -3368,7 +3545,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       skills: { work: round1(p.work), fitness: round1(p.fitness), charisma: round1(p.charisma), business: round1(p.business) },
       reputation: round1(p.reputation), creditScore: p.credit_score,
       job: p.job_id ? { id: p.job_id, rank: p.job_rank, rankTitle: RANK_TITLES[p.job_rank], shifts: p.job_shifts, nextRankAt: p.job_rank < MAX_RANK ? SHIFTS_PER_RANK * (p.job_rank + 1) : null, payPerShift: minor(rankPay(JOBS[p.job_id].pay, p.job_rank)) } : null,
-      home: { kind: p.home_kind, ref: p.home_ref, district: homeDistrict(db, p), comfort: homeComfort(db, p), rentCredit: p.rent_credit, spec: homeSpecFor(db, p), furnish: homeFurnishing(db, p) },
+      home: { kind: p.home_kind, ref: p.home_ref, district: homeDistrict(db, p), comfort: homeComfort(db, p), rentCredit: p.rent_credit, spec: homeSpecFor(db, p), furnish: homeFurnishing(db, p), placed: placedHere(db, p), finishes: homeFinishes(db, p), inventory: furnitureInventory(db, p), key: homeKey(p) },
       unlocks: list(p.unlocks), visited: list(p.visited), discovered: list(p.discovered), isTest: !!p.is_test,
       jobRequirements: Object.fromEntries(Object.keys(JOBS).map((j) => [j, jobRequirements(p, j)])),
     },

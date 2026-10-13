@@ -84,6 +84,8 @@ export function GameProvider({ backend, initial, children, onLogout }: { backend
     }
   }, [backend, toast, onLogout]);
 
+  (window as unknown as { __act?: typeof act }).__act = act; // handy for automated play-tests
+
   const refresh = useCallback(async () => {
     const res = await backend.request<{ state: GameState; feedback: FeedbackItem[] }>("GET", "/api/state");
     if (res.status === 401) return onLogout();
