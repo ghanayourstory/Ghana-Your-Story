@@ -272,7 +272,7 @@ export class World {
     this.quality = quality;
     setHumanMode(quality === "low" ? "key" : "all");
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: quality !== "low", powerPreference: "high-performance" });
-    this.maxPR = Math.min(window.devicePixelRatio, quality === "high" ? 1.5 : quality === "medium" ? 1.25 : 1);
+    this.maxPR = Math.min(window.devicePixelRatio, quality === "high" ? 2 : quality === "medium" ? 1.6 : 1.1);
     this.renderer.setPixelRatio(this.maxPR);
     this.renderer.shadowMap.enabled = quality !== "low";
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -2285,8 +2285,11 @@ export class World {
     this.prTimer = 0;
     const pr = this.renderer.getPixelRatio();
     let next = pr;
-    if (this.frameAvg > 24 && pr > 0.6) next = Math.max(0.6, pr - 0.15);
-    else if (this.frameAvg < 15 && pr < this.maxPR) next = Math.min(this.maxPR, pr + 0.1);
+    // Only give up sharpness when the game is genuinely struggling (under ~28 fps), never below 0.9×,
+    // and win it back as soon as there's headroom: a blurry picture is worse than a few lost frames.
+    const floor = Math.min(this.maxPR, 0.9);
+    if (this.frameAvg > 36 && pr > floor) next = Math.max(floor, pr - 0.1);
+    else if (this.frameAvg < 22 && pr < this.maxPR) next = Math.min(this.maxPR, pr + 0.1);
     if (Math.abs(next - pr) > 0.01) {
       this.renderer.setPixelRatio(next);
       this.fx?.composer.setPixelRatio(next);

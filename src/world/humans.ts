@@ -132,7 +132,7 @@ function fabricTex(pattern: string, color: string) {
   return t;
 }
 
-function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; crotch?: [number, number, number]; toga?: [number, number, number]; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
+function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; crotch?: [number, number, number]; crotchColor?: string; toga?: [number, number, number]; socks?: string; kneeY?: number; thighCutY?: number; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
   // Physical material with a soft sheen reads more like skin than plain plastic.
   const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.78, metalness: 0, sheen: 0.15, sheenRoughness: 0.9, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
   // Stylised: a touch lighter and warmer than the swatch so faces read in shade.
@@ -162,6 +162,9 @@ function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; 
     uNeckY: { value: neck[1] },
     uCrotch: { value: new THREE.Vector3(...(hide.crotch ?? [-9, -9, 0])) },
     uToga: { value: new THREE.Vector3(...(hide.toga ?? [99, 99, 1])) },
+    uCrotchCol: { value: new THREE.Color(hide.crotchColor ?? look.pants).multiplyScalar(0.8) },
+    uThighCut: { value: hide.thighCutY ?? -9 },
+    uSocks: { value: new THREE.Vector4(...new THREE.Color(hide.socks ?? "#ffffff").toArray(), hide.socks ? hide.kneeY ?? 0.5 : -1) },
     uNeckZ: { value: neck[2] },
   };
   m.onBeforeCompile = (shader) => {
@@ -181,7 +184,7 @@ varying vec3 vObjPos;
 uniform float uFem; uniform float uRows;
 uniform vec3 uSkin; uniform sampler2D uShirtTex; uniform sampler2D uPantsTex; uniform vec3 uShoe; uniform vec3 uHair; uniform vec3 uLips;
 uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideThighs; uniform float uHideShins; uniform float uHideFeet; uniform float uNeckY; uniform float uNeckZ; uniform float uSleeveX;
-uniform vec3 uCrotch; uniform vec3 uToga;
+uniform vec3 uCrotch; uniform vec3 uCrotchCol; uniform float uThighCut; uniform vec3 uToga; uniform vec4 uSocks;
 uniform float uLongSleeve; uniform sampler2D uSleeveTex; uniform float uElbowX; uniform float uWristX;
 float hHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -207,9 +210,9 @@ float rg = floor(vRegion + 0.5);
 // Skin under garments is hidden so it never pokes through the cloth.
 float neckLine = uNeckY - 0.085 + 3.0 * vObjPos.x * vObjPos.x - max(0.0, uNeckZ - vObjPos.z) * 0.3;
 float togaLine = mix(uToga.x, uToga.y, smoothstep(-uToga.z, uToga.z * 0.7, vObjPos.x));
-if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < min(neckLine - 0.012, togaLine - 0.012) && abs(vObjPos.x) < uSleeveX - 0.01) || (uHideThighs > 0.5 && rg == 3.0) || (uHideShins > 0.5 && rg == 6.0) || (uHideFeet > 0.5 && rg == 4.0)) discard;
-// Between the legs under trousers or a skirt: nothing of the body should show.
-if (vObjPos.y < uCrotch.x && vObjPos.y > uCrotch.y && abs(vObjPos.x) < uCrotch.z) discard;
+if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < min(neckLine - 0.012, togaLine - 0.012) && abs(vObjPos.x) < uSleeveX - 0.01) || (uHideThighs > 0.5 && rg == 3.0 && vObjPos.y > uThighCut) || (uHideShins > 0.5 && rg == 6.0) || (uHideFeet > 0.5 && rg == 4.0)) discard;
+// Between the legs under trousers or a skirt: in shadow, never bare body (and never see-through).
+bool crotchShade = vObjPos.y < uCrotch.x && vObjPos.y > uCrotch.y && abs(vObjPos.x) < uCrotch.z;
 vec3 c = uSkin;
 // Real skin: blotchy tone at a few centimetres, finer mottling, pores.
 float n1 = vNoise(vObjPos * 30.0), n2 = vNoise(vObjPos * 110.0);
@@ -220,6 +223,12 @@ float rough = 0.52 + 0.08 * n2;
 vec2 cuv = vUv2 * 9.0;
 if (rg == 1.0 || rg == 2.0 || rg == 3.0 || rg == 6.0) { /* skin tone with variation, set above */ }
 else if (rg == 4.0) { c = uShoe; rough = 0.35; skinH = 0.0; }
+// Football socks pulled up to just below the knee, with a band at the top.
+if (uSocks.w > 0.0 && vObjPos.y < uSocks.w + 0.02 && vObjPos.y > 0.06 && abs(vObjPos.x) < 0.35) {
+  c = uSocks.rgb * (0.92 + 0.08 * n1);
+  if (vObjPos.y > uSocks.w - 0.03) c = mix(c, vec3(0.95), 0.85);
+  rough = 0.85; skinH = 0.0;
+}
 else if (rg == 5.0) { if (uShortHair > 0.5) { c = uHair * (0.75 + 0.5 * hHash(floor(vObjPos * 2400.0))); rough = 0.95; } }
 else if (rg == 7.0) { c = uLips; rough = 0.38; }
 else if (rg == 8.0) { c = mix(uSkin, uHair, 0.75); rough = 0.95; }
@@ -244,20 +253,45 @@ if (uLongSleeve > 0.5 && rg == 0.0 && abs(vObjPos.x) > uElbowX - 0.05 && abs(vOb
   rough = 0.9;
   skinH = 0.0;
 }
+if (crotchShade) { c = uCrotchCol; skinH = 0.0; rough = 0.9; }
 diffuseColor.rgb = c;`,
       )
       .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = rough;")
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, skinH, 0.00012);");
   };
-  m.customProgramCacheKey = () => "sika-human-6";
+  m.customProgramCacheKey = () => "sika-human-8";
   return m;
 }
 
 /** Cloth with a triplanar-projected pattern: no UV seams, pattern scale in real centimetres. */
 /** Garment details drawn on the top: 0 none, 1 suit jacket (lapels, shirt, tie, buttons), 2 collared shirt, 3 jersey trim. */
-interface TopStyle { sleeveX: number; style: number; inner: string; tie: string; toga?: [number, number, number] }
+interface TopStyle {
+  sleeveX: number; style: number; inner: string; tie: string; toga?: [number, number, number];
+  /** Cut the whole garment straight across below this height (shorts at the knee). */
+  cutY?: number;
+  /** Football kit: trim colour and the number on the back. */
+  kit?: { accent: string; number: number };
+}
+const numberTexCache = new Map<number, THREE.CanvasTexture>();
+function numberTex(n: number) {
+  let t = numberTexCache.get(n);
+  if (!t) {
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = 128;
+    const g = cv.getContext("2d")!;
+    g.fillStyle = "#000"; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = "#fff";
+    g.font = "900 104px 'Arial Black', Arial, sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(String(n), 64, 70, 120);
+    t = new THREE.CanvasTexture(cv);
+    numberTexCache.set(n, t);
+  }
+  return t;
+}
 function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99, top: TopStyle = { sleeveX: 99, style: 0, inner: "#ffffff", tie: "#000000" }) {
-  const m = new THREE.MeshStandardMaterial({ roughness: top.style === 1 ? 0.7 : 0.92, side: THREE.DoubleSide });
+  const kit = top.kit;
+  const m = new THREE.MeshStandardMaterial({ roughness: top.style === 1 ? 0.7 : kit || top.style === 4 ? 0.55 : 0.88, side: THREE.DoubleSide });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uFabric = { value: tex };
     shader.uniforms.uNeckY = { value: neckY };
@@ -268,11 +302,14 @@ function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99, t
     shader.uniforms.uInner = { value: new THREE.Color(top.inner) };
     shader.uniforms.uTie = { value: new THREE.Color(top.tie) };
     shader.uniforms.uToga = { value: new THREE.Vector3(...(top.toga ?? [99, 99, 1])) };
+    shader.uniforms.uCutY = { value: top.cutY ?? -99 };
+    shader.uniforms.uAccent = { value: new THREE.Color(kit?.accent ?? "#ffffff") };
+    shader.uniforms.uNumTex = { value: numberTex(kit?.number ?? 0) };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRest = position;\nvRestN = normal;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nuniform float uSleeveX;\nuniform float uStyle;\nuniform vec3 uInner;\nuniform vec3 uTie;\nuniform vec3 uToga;\nfloat foldH;\n" + `
+      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nuniform float uSleeveX;\nuniform float uStyle;\nuniform vec3 uInner;\nuniform vec3 uTie;\nuniform vec3 uToga;\nuniform float uCutY;\nuniform vec3 uAccent;\nuniform sampler2D uNumTex;\nfloat foldH;\n" + `
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -296,6 +333,7 @@ if (vRest.y > uNeckY - 0.085 + 3.0 * vRest.x * vRest.x - max(0.0, uNeckZ - vRest
 if (vRest.y > mix(uToga.x, uToga.y, smoothstep(-uToga.z, uToga.z * 0.7, vRest.x))) discard;
 // A straight hem instead of the mesh edge.
 if (vRest.y < uHemY && abs(vRest.x) < 0.3) discard;
+if (vRest.y < uCutY) discard;
 // Sleeve length: cut the arm off where the sleeve ends.
 if (abs(vRest.x) > uSleeveX) discard;
 vec3 w = pow(abs(normalize(vRestN)), vec3(4.0));
@@ -307,7 +345,7 @@ float drape = vNoise(vec3(vRest.x * 22.0, vRest.y * 5.0, vRest.z * 22.0));
 float crease = vNoise(vec3(vRest.x * 60.0, vRest.y * 14.0, vRest.z * 60.0));
 float weave = vNoise(vRest * 1400.0);
 foldH = drape * 0.75 + crease * 0.25 + weave * 0.04;
-fab *= 0.86 + 0.2 * drape;
+fab *= 0.93 + 0.1 * drape;
 float yN = uNeckY - 0.085 - vRest.y;
 bool front = vRestN.z > 0.3 && abs(vRest.x) < 0.2;
 if (uStyle > 0.5 && uStyle < 1.5 && front) {
@@ -322,6 +360,31 @@ if (uStyle > 0.5 && uStyle < 1.5 && front) {
   if (yN > 0.0 && yN < 0.31 && abs(abs(vRest.x) - vHalf) < 0.007) fab *= 0.55;
   if (yN > 0.33 && yN < 0.5 && abs(vRest.x) < 0.011 && fract(yN * 12.0) < 0.28) fab = vec3(0.06);
 }
+if (uStyle > 2.5 && uStyle < 3.5) {
+  // Football jersey: contrast collar, cuffs and side panels, a crest on the chest and the number on the back.
+  float neckLine = uNeckY - 0.085 + 3.0 * vRest.x * vRest.x - max(0.0, uNeckZ - vRest.z) * 0.3;
+  if (neckLine - vRest.y < 0.02) fab = uAccent;
+  if (abs(vRest.x) > uSleeveX - 0.024) fab = uAccent;
+  if (abs(vRestN.x) > 0.72 && abs(vRest.x) < uSleeveX - 0.06 && vRest.y < uNeckY - 0.12) fab = mix(fab, uAccent, 0.9);
+  vec2 crest = vec2(vRest.x - 0.075, vRest.y - (uNeckY - 0.2));
+  // Club crest: a small shield with a two-tone inner field.
+  float shieldW = 0.024 * (crest.y > -0.006 ? 1.0 : clamp((crest.y + 0.032) / 0.026, 0.0, 1.0));
+  if (vRestN.z > 0.3 && crest.y < 0.022 && crest.y > -0.032 && abs(crest.x) < shieldW) {
+    fab = uAccent;
+    if (crest.y < 0.016 && crest.y > -0.024 && abs(crest.x) < shieldW - 0.005) fab = crest.x > 0.0 ? mix(fab, vec3(0.75, 0.12, 0.1), 0.85) : mix(fab, vec3(0.95, 0.72, 0.05), 0.85);
+  }
+  if (vRestN.z < -0.25 && abs(vRest.x) < 0.11) {
+    vec2 nuv = vec2(0.5 - vRest.x / 0.22, (vRest.y - (uNeckY - 0.46)) / 0.26);
+    if (nuv.y > 0.0 && nuv.y < 1.0 && texture2D(uNumTex, nuv).r > 0.5) fab = uAccent;
+  }
+  fab *= 1.02;
+}
+if (uStyle > 3.5 && uStyle < 4.5) {
+  // Football shorts: a stripe down each side and a band at the hem.
+  if (abs(vRestN.x) > 0.78) fab = uAccent;
+  if (vRest.y < uCutY + 0.025) fab = uAccent;
+  if (vRest.y > 1.0) fab = uAccent;
+}
 if (uStyle > 1.5 && uStyle < 2.5 && front && yN > 0.02) {
   // Collared shirt: a button placket down the front.
   if (abs(vRest.x) < 0.012) fab *= 0.88;
@@ -331,9 +394,9 @@ if (uStyle > 1.5 && uStyle < 2.5 && front && yN > 0.02) {
 if (!gl_FrontFacing) { fab *= 0.16; foldH = 0.0; }
 diffuseColor.rgb = fab;`,
       )
-      .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, foldH, 0.006);");
+      .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, foldH, 0.0035);");
   };
-  m.customProgramCacheKey = () => "sika-fabric-5";
+  m.customProgramCacheKey = () => "sika-fabric-7";
   return m;
 }
 
@@ -407,6 +470,10 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     sleeveX,
     crotch: [a.hips.waistY - 0.06, a.hips.kneeY, a.hips.hipHalfWidth * 0.45],
     toga,
+    socks: outfit.id === "jersey" ? look.shirt : undefined,
+    crotchColor: outfit.id === "jersey" ? (new THREE.Color(look.shirt).getHSL({ h: 0, s: 0, l: 0 }).l > 0.62 ? "#1b1d22" : "#f6f6f2") : lower === "trousers" || lower === "shorts" ? (outfit.id === "tee" && look.pants === "#2B2B2B" ? "#2f4a6e" : look.pants) : look.shirt,
+    kneeY: a.hips.kneeY - 0.03,
+    thighCutY: lower === "shorts" ? a.hips.kneeY + 0.06 : undefined,
     longSleeve: outfit.sleeves === "long" ? { tex: fabricTex(pattern, jacketColor), elbowX: arm.elbow[0], wristX: arm.wrist[0] } : undefined,
   }, neckHead));
   mesh.add(bones[0]);
@@ -476,12 +543,19 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     body.add(m2);
   };
   const hipR = h.hipHalfWidth;
-  const topStyle = { sleeveX, style: outfit.jacket ? 1 : outfit.collar ? 2 : outfit.id === "jersey" ? 3 : 0, inner: "#f4f2ec", tie: look.shirt, toga };
-  const topMat = fabricMaterial(fabricTex(pattern, jacketColor), neckHead?.[1], neckHead?.[2], h.waistY - (outfit.jacket ? 0.16 : 0.1), topStyle);
+  const topStyle: TopStyle = { sleeveX, style: outfit.jacket ? 1 : outfit.collar ? 2 : outfit.id === "jersey" ? 3 : 0, inner: "#f4f2ec", tie: look.shirt, toga };
+  // Football kit colours: the shirt colour with a contrasting trim; shorts in the trim colour.
+  const light = new THREE.Color(look.shirt).getHSL({ h: 0, s: 0, l: 0 }).l > 0.62;
+  const kitAccent = light ? "#1b1d22" : "#f6f6f2";
+  if (outfit.id === "jersey") topStyle.kit = { accent: kitAccent, number: 2 + (Math.abs(Math.round(look.height * 1000 + look.build * 77)) % 22) };
+  const topMat = fabricMaterial(fabricTex(pattern, jacketColor), neckHead?.[1], neckHead?.[2], h.waistY - (outfit.jacket ? 0.16 : outfit.id === "jersey" ? 0.04 : 0.07), topStyle);
   dress(t.shells.top, topMat);
   if (outfit.jacket) lathe(fabricTex("plain", jacketColor), [[hipR * 0.92, h.waistY + 0.02], [hipR * 1.04, h.waistY - 0.1], [hipR * 1.08, h.waistY - 0.2]], [6, 2], 0.7);
   if (lower === "trousers" || lower === "shorts") {
-    const pm = fabricMaterial(fabricTex(outfit.id === "tee" ? "denim" : "plain", outfit.id === "tee" && look.pants === "#2B2B2B" ? "#2f4a6e" : look.pants));
+    const jersey = outfit.id === "jersey";
+    const pm = jersey
+      ? fabricMaterial(fabricTex("plain", kitAccent), 99, 0, -99, { sleeveX: 99, style: 4, inner: "#fff", tie: "#000", cutY: h.kneeY + 0.05, kit: { accent: look.shirt, number: 0 } })
+      : fabricMaterial(fabricTex(outfit.id === "tee" ? "denim" : "plain", outfit.id === "tee" && look.pants === "#2B2B2B" ? "#2f4a6e" : look.pants), 99, 0, -99, { sleeveX: 99, style: 0, inner: "#fff", tie: "#000", cutY: lower === "shorts" ? h.kneeY + 0.05 : undefined });
     dress(t.shells.shorts, pm);
     if (lower === "trousers") dress(t.shells.shins, pm);
   } else if (lower === "knee_skirt") {

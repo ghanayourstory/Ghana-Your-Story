@@ -633,7 +633,8 @@ export function fabric(pattern: "plain" | "kente" | "wax" | "stripe" | "denim", 
       ctx.lineWidth = 1.2;
       for (let i = -128; i < 128; i += 4) { ctx.beginPath(); ctx.moveTo(i, 128); ctx.lineTo(i + 128, 0); ctx.stroke(); }
     }
-    grain(ctx, 128, 128, 0.12, 5);
+    // Fine weave only: heavy grain made cotton read as sackcloth.
+    grain(ctx, 128, 128, pattern === "plain" ? 0.035 : 0.06, 5);
     return toTexture(c);
   });
 }
