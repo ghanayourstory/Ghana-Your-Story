@@ -2,6 +2,7 @@
 // (African young adult male/female), with procedural skin and clothing
 // shading, eyes, hair and a bone-driven walk cycle.
 import * as THREE from "three";
+import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { fabric } from "./textures.ts";
 import type { PersonLook } from "./people.ts";
 import { OUTFITS, defaultOutfit, type ShoeId } from "../../shared/clothing.ts";
@@ -130,7 +131,7 @@ function fabricTex(pattern: string, color: string) {
   return t;
 }
 
-function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
+function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; crotch?: [number, number, number]; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
   // Physical material with a soft sheen reads more like skin than plain plastic.
   const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.78, metalness: 0, sheen: 0.15, sheenRoughness: 0.9, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
   // Stylised: a touch lighter and warmer than the swatch so faces read in shade.
@@ -158,6 +159,7 @@ function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; 
     uWristX: { value: hide.longSleeve?.wristX ?? 99 },
     uHideFeet: { value: hide.feet ? 1 : 0 },
     uNeckY: { value: neck[1] },
+    uCrotch: { value: new THREE.Vector3(...(hide.crotch ?? [-9, -9, 0])) },
     uNeckZ: { value: neck[2] },
   };
   m.onBeforeCompile = (shader) => {
@@ -177,6 +179,7 @@ varying vec3 vObjPos;
 uniform float uFem; uniform float uRows;
 uniform vec3 uSkin; uniform sampler2D uShirtTex; uniform sampler2D uPantsTex; uniform vec3 uShoe; uniform vec3 uHair; uniform vec3 uLips;
 uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideThighs; uniform float uHideShins; uniform float uHideFeet; uniform float uNeckY; uniform float uNeckZ; uniform float uSleeveX;
+uniform vec3 uCrotch;
 uniform float uLongSleeve; uniform sampler2D uSleeveTex; uniform float uElbowX; uniform float uWristX;
 float hHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -202,6 +205,8 @@ float rg = floor(vRegion + 0.5);
 // Skin under garments is hidden so it never pokes through the cloth.
 float neckLine = uNeckY - 0.085 + 3.0 * vObjPos.x * vObjPos.x - max(0.0, uNeckZ - vObjPos.z) * 0.3;
 if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < neckLine - 0.012 && abs(vObjPos.x) < uSleeveX - 0.01) || (uHideThighs > 0.5 && rg == 3.0) || (uHideShins > 0.5 && rg == 6.0) || (uHideFeet > 0.5 && rg == 4.0)) discard;
+// Between the legs under trousers or a skirt: nothing of the body should show.
+if (vObjPos.y < uCrotch.x && vObjPos.y > uCrotch.y && abs(vObjPos.x) < uCrotch.z) discard;
 vec3 c = uSkin;
 // Real skin: blotchy tone at a few centimetres, finer mottling, pores.
 float n1 = vNoise(vObjPos * 30.0), n2 = vNoise(vObjPos * 110.0);
@@ -241,7 +246,7 @@ diffuseColor.rgb = c;`,
       .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = rough;")
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, skinH, 0.00012);");
   };
-  m.customProgramCacheKey = () => "sika-human-4";
+  m.customProgramCacheKey = () => "sika-human-5";
   return m;
 }
 
@@ -316,12 +321,13 @@ if (uStyle > 1.5 && uStyle < 2.5 && front && yN > 0.02) {
   if (abs(vRest.x) < 0.012) fab *= 0.88;
   if (abs(vRest.x) < 0.006 && fract(yN * 11.0) < 0.14) fab = mix(fab, vec3(0.95), 0.85);
 }
-if (uStyle > 2.5 && abs(vRest.x) > uSleeveX - 0.025) fab = vec3(0.95);
+// The inside of a garment is in shadow.
+if (!gl_FrontFacing) { fab *= 0.16; foldH = 0.0; }
 diffuseColor.rgb = fab;`,
       )
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, foldH, 0.006);");
   };
-  m.customProgramCacheKey = () => "sika-fabric-3";
+  m.customProgramCacheKey = () => "sika-fabric-4";
   return m;
 }
 
@@ -388,6 +394,7 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     shins: lower === "trousers" || lower === "long_skirt" || lower === "cloth",
     feet: closedShoes,
     sleeveX,
+    crotch: [a.hips.waistY - 0.06, a.hips.kneeY, a.hips.hipHalfWidth * 0.45],
     longSleeve: outfit.sleeves === "long" ? { tex: fabricTex(pattern, jacketColor), elbowX: arm.elbow[0], wristX: arm.wrist[0] } : undefined,
   }, neckHead));
   mesh.add(bones[0]);
@@ -504,6 +511,35 @@ function hairMat(c: string) {
   return m;
 }
 
+const curlyMats = new Map<string, THREE.Material>();
+let curlTex: THREE.CanvasTexture | null = null;
+/** Hair with a tight-curl bump texture, so an afro reads as hair, not a helmet. */
+function curlyMat(c: string) {
+  let m = curlyMats.get(c);
+  if (!m) {
+    if (!curlTex) {
+      const cv = document.createElement("canvas");
+      cv.width = cv.height = 128;
+      const g = cv.getContext("2d")!;
+      g.fillStyle = "#808080"; g.fillRect(0, 0, 128, 128);
+      let s = 7;
+      const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+      for (let i = 0; i < 900; i++) {
+        const x = rnd() * 128, y = rnd() * 128, rr = 1.5 + rnd() * 2.5;
+        g.strokeStyle = rnd() < 0.5 ? "#e0e0e0" : "#202020";
+        g.lineWidth = 1.2;
+        g.beginPath(); g.arc(x, y, rr, rnd() * 6, rnd() * 6 + 4); g.stroke();
+      }
+      curlTex = new THREE.CanvasTexture(cv);
+      curlTex.wrapS = curlTex.wrapT = THREE.RepeatWrapping;
+      curlTex.repeat.set(5, 5);
+    }
+    m = new THREE.MeshStandardMaterial({ color: c, roughness: 1, bumpMap: curlTex, bumpScale: 3 });
+    curlyMats.set(c, m);
+  }
+  return m;
+}
+
 function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: number) {
   const m = hairMat(look.hair);
   const add = (geo: THREE.BufferGeometry, mat: THREE.Material, pos: THREE.Vector3, scale: [number, number, number], rot: [number, number, number] = [0, 0, 0]) => {
@@ -519,15 +555,19 @@ function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: n
   const style = look.headwear === "headwrap" ? "wrap" : look.headwear === "cap" ? "cap" : look.hairStyle ?? "low";
   switch (style) {
     case "afro": {
-      const g = new THREE.IcosahedronGeometry(1, 4);
+      // A round, soft afro that sits back from the hairline: lumpy outline, flat underside,
+      // the front lifted clear of the forehead, and a curly bump texture.
+      const g = mergeVertices(new THREE.IcosahedronGeometry(1, 5).deleteAttribute("normal").deleteAttribute("uv"));
       const p = g.attributes.position as THREE.BufferAttribute;
       for (let i = 0; i < p.count; i++) {
         const v = new THREE.Vector3().fromBufferAttribute(p, i);
-        v.multiplyScalar(1 + (Math.sin(v.x * 23) * Math.sin(v.y * 19) * Math.sin(v.z * 29)) * 0.035);
+        v.multiplyScalar(1 + (Math.sin(v.x * 17) * Math.sin(v.y * 13 + 1) * Math.sin(v.z * 19)) * 0.04);
+        v.y = Math.max(v.y, -0.62);
+        if (v.z > 0.05) v.y = Math.max(v.y, -0.62 + (v.z - 0.05) * 0.55);
         p.setXYZ(i, v.x, v.y, v.z);
       }
       g.computeVertexNormals();
-      add(g, m, center.clone().add(new THREE.Vector3(0, r * 0.38, -r * 0.18)), [r * 1.32, r * 1.18, r * 1.3]);
+      add(g, curlyMat(look.hair), center.clone().add(new THREE.Vector3(0, r * 0.4, -r * 0.18)), [r * 1.3, r * 1.2, r * 1.3]);
       break;
     }
     case "bun":
@@ -566,8 +606,10 @@ function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: n
     }
     case "cap": {
       const capM = new THREE.MeshStandardMaterial({ color: look.pants, roughness: 0.75 });
-      add(new THREE.SphereGeometry(1, 24, 12, 0, Math.PI * 2, 0, Math.PI / 2), capM, center.clone().add(new THREE.Vector3(0, r * 0.28, -r * 0.05)), [r * 1.06, r * 0.95, r * 1.1]);
-      add(new THREE.CylinderGeometry(1, 1, 1, 24, 1, false, -Math.PI / 2, Math.PI), capM, center.clone().add(new THREE.Vector3(0, r * 0.3, r * 0.75)), [r * 0.95, r * 0.04, r * 0.7], [0, Math.PI, 0]);
+      // Baseball cap: a crown that covers the top of the head, a button, and a curved brim.
+      add(new THREE.SphereGeometry(1, 28, 14, 0, Math.PI * 2, 0, Math.PI / 2), capM, center.clone().add(new THREE.Vector3(0, r * 0.12, -r * 0.06)), [r * 1.1, r * 1.24, r * 1.16], [-0.12, 0, 0]);
+      add(sphere, capM, center.clone().add(new THREE.Vector3(0, r * 1.34, -r * 0.2)), [r * 0.09, r * 0.05, r * 0.09]);
+      add(new THREE.CylinderGeometry(1, 1, 1, 24, 1, false, -Math.PI / 2, Math.PI), capM, center.clone().add(new THREE.Vector3(0, r * 0.22, r * 0.9)), [r * 0.9, r * 0.05, r * 0.8], [0.22, 0, 0]);
       break;
     }
     default:
