@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { fabric } from "./textures.ts";
 import { mulberry32 } from "../../shared/rng.ts";
 import { animateHuman, buildHuman, humansReady, type HumanRig } from "./humans.ts";
+import type { OutfitId, ShoeId } from "../../shared/clothing.ts";
 
 export type Person = Rig | HumanRig;
 /** Which people use the realistic skinned bodies: everyone, only key people, or nobody (old phones). */
@@ -24,6 +25,9 @@ export interface PersonLook {
   pattern?: Pattern;
   headwear?: "cap" | "headwrap" | "none";
   carry?: "tray" | "bag" | null;
+  /** What they're wearing (cut) and on their feet. */
+  outfit?: OutfitId;
+  shoes?: ShoeId;
   /** Face shape mix (13 axes, -1..1): nose, jaw, chin, cheeks, eyes, lips, head shape, age. */
   face?: number[];
 }
@@ -355,6 +359,9 @@ export function randomLook(seed: number, opts: { carry?: boolean } = {}): Person
     face: Array.from({ length: 13 }, (_, i) => (i === 12 ? Math.max(0, gauss(r) * 0.5 + (r() < 0.2 ? 0.6 : 0)) : THREE.MathUtils.clamp(gauss(r) * 0.55, -1, 1))),
     hairStyle: feminine ? pick(["braids", "bun", "afro", "wrap", "low", "locs"] as HairStyle[]) : pick(["low", "low", "afro", "cap", "locs"] as HairStyle[]),
     pattern: pick(patterns),
+    // Everyday clothes on the street; a few suits and smocks, sandals everywhere.
+    outfit: feminine ? pick(["tee", "kaba", "kaba", "dress", "dress", "shirt", "tee"] as OutfitId[]) : pick(["tee", "tee", "shirt", "shirt", "jersey", "smock", "suit"] as OutfitId[]),
+    shoes: r() < 0.35 ? "sandals" : undefined,
     carry: opts.carry ? "tray" : r() < 0.15 ? "bag" : null,
   };
 }

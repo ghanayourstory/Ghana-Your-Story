@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { fabric } from "./textures.ts";
 import type { PersonLook } from "./people.ts";
+import { OUTFITS, defaultOutfit, type ShoeId } from "../../shared/clothing.ts";
 
 interface HumanAsset {
   gender: "male" | "female";
@@ -129,7 +130,7 @@ function fabricTex(pattern: string, color: string) {
   return t;
 }
 
-function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; legs: boolean; feet: boolean }, neck: [number, number, number] = [99, 99, 0]) {
+function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
   // Physical material with a soft sheen reads more like skin than plain plastic.
   const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.78, metalness: 0, sheen: 0.15, sheenRoughness: 0.9, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
   // Stylised: a touch lighter and warmer than the swatch so faces read in shade.
@@ -148,7 +149,13 @@ function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; 
     uShortHairV: { value: look.hairStyle === "wrap" || look.hairStyle === "cap" ? 0 : 1 },
     uSkirt: { value: skirt ? 1 : 0 },
     uHideTop: { value: hide.top ? 1 : 0 },
-    uHideLegs: { value: hide.legs ? 1 : 0 },
+    uHideThighs: { value: hide.thighs ? 1 : 0 },
+    uHideShins: { value: hide.shins ? 1 : 0 },
+    uSleeveX: { value: hide.sleeveX },
+    uLongSleeve: { value: hide.longSleeve ? 1 : 0 },
+    uSleeveTex: { value: hide.longSleeve?.tex ?? fabricTex("plain", "#ffffff") },
+    uElbowX: { value: hide.longSleeve?.elbowX ?? 99 },
+    uWristX: { value: hide.longSleeve?.wristX ?? 99 },
     uHideFeet: { value: hide.feet ? 1 : 0 },
     uNeckY: { value: neck[1] },
     uNeckZ: { value: neck[2] },
@@ -169,7 +176,8 @@ varying vec2 vUv2;
 varying vec3 vObjPos;
 uniform float uFem; uniform float uRows;
 uniform vec3 uSkin; uniform sampler2D uShirtTex; uniform sampler2D uPantsTex; uniform vec3 uShoe; uniform vec3 uHair; uniform vec3 uLips;
-uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideLegs; uniform float uHideFeet; uniform float uNeckY; uniform float uNeckZ;
+uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideThighs; uniform float uHideShins; uniform float uHideFeet; uniform float uNeckY; uniform float uNeckZ; uniform float uSleeveX;
+uniform float uLongSleeve; uniform sampler2D uSleeveTex; uniform float uElbowX; uniform float uWristX;
 float hHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vNoise(vec3 x) {
@@ -193,7 +201,7 @@ float skinH;`,
 float rg = floor(vRegion + 0.5);
 // Skin under garments is hidden so it never pokes through the cloth.
 float neckLine = uNeckY - 0.085 + 3.0 * vObjPos.x * vObjPos.x - max(0.0, uNeckZ - vObjPos.z) * 0.3;
-if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < neckLine - 0.012) || (uHideLegs > 0.5 && (rg == 3.0 || rg == 6.0)) || (uHideFeet > 0.5 && rg == 4.0)) discard;
+if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < neckLine - 0.012 && abs(vObjPos.x) < uSleeveX - 0.01) || (uHideThighs > 0.5 && rg == 3.0) || (uHideShins > 0.5 && rg == 6.0) || (uHideFeet > 0.5 && rg == 4.0)) discard;
 vec3 c = uSkin;
 // Real skin: blotchy tone at a few centimetres, finer mottling, pores.
 float n1 = vNoise(vObjPos * 30.0), n2 = vNoise(vObjPos * 110.0);
@@ -222,28 +230,40 @@ if (rg == 0.0) {
   rough -= 0.1 * smoothstep(0.02, 0.0, abs(vObjPos.x)) ;
   skinH *= 1.0 - vFace.x * uShortHair;
 }
+// Long sleeves: the forearm is covered in the top's fabric down to the wrist.
+if (uLongSleeve > 0.5 && rg == 0.0 && abs(vObjPos.x) > uElbowX - 0.05 && abs(vObjPos.x) < uWristX - 0.012 && vObjPos.y < uNeckY - 0.1) {
+  c = texture2D(uSleeveTex, vObjPos.zy * 8.0).rgb * (0.86 + 0.14 * n1);
+  rough = 0.9;
+  skinH = 0.0;
+}
 diffuseColor.rgb = c;`,
       )
       .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = rough;")
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, skinH, 0.00012);");
   };
-  m.customProgramCacheKey = () => "sika-human-2";
+  m.customProgramCacheKey = () => "sika-human-4";
   return m;
 }
 
 /** Cloth with a triplanar-projected pattern: no UV seams, pattern scale in real centimetres. */
-function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99) {
-  const m = new THREE.MeshStandardMaterial({ roughness: 0.92, side: THREE.DoubleSide });
+/** Garment details drawn on the top: 0 none, 1 suit jacket (lapels, shirt, tie, buttons), 2 collared shirt, 3 jersey trim. */
+interface TopStyle { sleeveX: number; style: number; inner: string; tie: string }
+function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99, top: TopStyle = { sleeveX: 99, style: 0, inner: "#ffffff", tie: "#000000" }) {
+  const m = new THREE.MeshStandardMaterial({ roughness: top.style === 1 ? 0.7 : 0.92, side: THREE.DoubleSide });
   m.onBeforeCompile = (shader) => {
     shader.uniforms.uFabric = { value: tex };
     shader.uniforms.uNeckY = { value: neckY };
     shader.uniforms.uNeckZ = { value: neckZ };
     shader.uniforms.uHemY = { value: hemY };
+    shader.uniforms.uSleeveX = { value: top.sleeveX };
+    shader.uniforms.uStyle = { value: top.style };
+    shader.uniforms.uInner = { value: new THREE.Color(top.inner) };
+    shader.uniforms.uTie = { value: new THREE.Color(top.tie) };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRest = position;\nvRestN = normal;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nfloat foldH;\n" + `
+      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nuniform float uSleeveX;\nuniform float uStyle;\nuniform vec3 uInner;\nuniform vec3 uTie;\nfloat foldH;\n" + `
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -265,6 +285,8 @@ vec3 bumpNormal(vec3 n, float h, float scale) {
 if (vRest.y > uNeckY - 0.085 + 3.0 * vRest.x * vRest.x - max(0.0, uNeckZ - vRest.z) * 0.3) discard;
 // A straight hem instead of the mesh edge.
 if (vRest.y < uHemY && abs(vRest.x) < 0.3) discard;
+// Sleeve length: cut the arm off where the sleeve ends.
+if (abs(vRest.x) > uSleeveX) discard;
 vec3 w = pow(abs(normalize(vRestN)), vec3(4.0));
 w /= (w.x + w.y + w.z);
 float sc = 8.0;
@@ -275,11 +297,31 @@ float crease = vNoise(vec3(vRest.x * 60.0, vRest.y * 14.0, vRest.z * 60.0));
 float weave = vNoise(vRest * 1400.0);
 foldH = drape * 0.75 + crease * 0.25 + weave * 0.04;
 fab *= 0.86 + 0.2 * drape;
+float yN = uNeckY - 0.085 - vRest.y;
+bool front = vRestN.z > 0.3 && abs(vRest.x) < 0.2;
+if (uStyle > 0.5 && uStyle < 1.5 && front) {
+  // Suit jacket: a V of white shirt and a tie between the lapels, then buttons.
+  float vHalf = clamp(yN, 0.0, 0.3) * 0.34;
+  if (yN > -0.01 && yN < 0.3 && abs(vRest.x) < vHalf) {
+    fab = uInner * (0.92 + 0.08 * drape);
+    float tieW = 0.013 + max(0.0, yN - 0.05) * 0.06;
+    if (yN > 0.03 && abs(vRest.x) < tieW) fab = uTie * (0.85 + 0.15 * crease);
+    if (yN < 0.035 && abs(vRest.x) < 0.02) fab = uTie * 0.8;
+  }
+  if (yN > 0.0 && yN < 0.31 && abs(abs(vRest.x) - vHalf) < 0.007) fab *= 0.55;
+  if (yN > 0.33 && yN < 0.5 && abs(vRest.x) < 0.011 && fract(yN * 12.0) < 0.28) fab = vec3(0.06);
+}
+if (uStyle > 1.5 && uStyle < 2.5 && front && yN > 0.02) {
+  // Collared shirt: a button placket down the front.
+  if (abs(vRest.x) < 0.012) fab *= 0.88;
+  if (abs(vRest.x) < 0.006 && fract(yN * 11.0) < 0.14) fab = mix(fab, vec3(0.95), 0.85);
+}
+if (uStyle > 2.5 && abs(vRest.x) > uSleeveX - 0.025) fab = vec3(0.95);
 diffuseColor.rgb = fab;`,
       )
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, foldH, 0.006);");
   };
-  m.customProgramCacheKey = () => "sika-fabric-2";
+  m.customProgramCacheKey = () => "sika-fabric-3";
   return m;
 }
 
@@ -330,9 +372,24 @@ export function buildHuman(look: PersonLook): HumanRig | null {
       bones[b.parent].add(bones[i]);
     } else bones[i].position.copy(h);
   });
-  const skirt = look.feminine && (look.pattern ?? "plain") !== "plain";
+  const outfit = OUTFITS[look.outfit ?? defaultOutfit(look)] ?? OUTFITS.shirt;
+  const shoeKind: ShoeId = look.shoes ?? (outfit.shoes === "heels" && !look.feminine ? "formal" : outfit.shoes);
   const neckHead = a.bones.find((b) => b.name === "neck01")?.head;
-  const mesh = new THREE.SkinnedMesh(t.geometry, personMaterial(look, skirt, { top: true, legs: !skirt, feet: true }, neckHead));
+  const arm = a.arm;
+  const sleeveX = outfit.sleeves === "long" ? 99 : outfit.sleeves === "elbow" ? arm.elbow[0] + 0.02 : outfit.sleeves === "short" ? arm.shoulder[0] + (arm.elbow[0] - arm.shoulder[0]) * 0.42 : arm.shoulder[0] + 0.015;
+  const lower = outfit.lower;
+  const closedShoes = shoeKind !== "sandals" && shoeKind !== "barefoot";
+  const pattern = outfit.pattern ?? (outfit.id === "suit" ? "plain" : look.pattern ?? "plain");
+  // Suits: jacket and trousers share the dark colour; the shirt is white and the tie takes the top colour.
+  const jacketColor = outfit.id === "suit" ? look.pants : look.shirt;
+  const mesh = new THREE.SkinnedMesh(t.geometry, personMaterial(look, lower !== "trousers" && lower !== "shorts", {
+    top: true,
+    thighs: true,
+    shins: lower === "trousers" || lower === "long_skirt" || lower === "cloth",
+    feet: closedShoes,
+    sleeveX,
+    longSleeve: outfit.sleeves === "long" ? { tex: fabricTex(pattern, jacketColor), elbowX: arm.elbow[0], wristX: arm.wrist[0] } : undefined,
+  }, neckHead));
   mesh.add(bones[0]);
   const skeleton = new THREE.Skeleton(bones);
   mesh.bind(skeleton);
@@ -350,29 +407,45 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     body.add(g);
     garments.push(g);
   };
-  const cloth = (pattern: string, color: string, neck?: [number, number, number], hem?: number) => fabricMaterial(fabricTex(pattern, color), neck?.[1], neck?.[2], hem);
-  const neckBone = t.asset.bones.find((b) => b.name === "neck01");
-  dress(t.shells.top, cloth(look.pattern ?? "plain", look.shirt, neckBone?.head, a.hips.waistY - 0.1));
-  if (!skirt) {
-    const pm = cloth("plain", look.pants);
+  const h = a.hips;
+  // Rigid cloth around the hips and legs (skirts, smock flare, jacket tails, kente): a lathe that moves with the pelvis.
+  const lathe = (tex: THREE.Texture, prof: [number, number][], repeat: [number, number], rough = 0.9) => {
+    const t2 = tex.clone();
+    t2.repeat.set(...repeat);
+    t2.needsUpdate = true;
+    const geo2 = new THREE.LatheGeometry(prof.map(([rr, y]) => new THREE.Vector2(rr, y)), 32);
+    const m2 = new THREE.Mesh(geo2, new THREE.MeshStandardMaterial({ map: t2, roughness: rough, side: THREE.DoubleSide }));
+    m2.scale.set(1, 1, 0.82);
+    m2.castShadow = true;
+    body.add(m2);
+  };
+  const hipR = h.hipHalfWidth;
+  const topStyle = { sleeveX, style: outfit.jacket ? 1 : outfit.collar ? 2 : outfit.id === "jersey" ? 3 : 0, inner: "#f4f2ec", tie: look.shirt };
+  const topMat = fabricMaterial(fabricTex(pattern, jacketColor), neckHead?.[1], neckHead?.[2], h.waistY - (outfit.jacket ? 0.16 : 0.1), topStyle);
+  dress(t.shells.top, topMat);
+  if (outfit.jacket) lathe(fabricTex("plain", jacketColor), [[hipR * 0.92, h.waistY + 0.02], [hipR * 1.04, h.waistY - 0.1], [hipR * 1.08, h.waistY - 0.2]], [6, 2], 0.7);
+  if (lower === "trousers" || lower === "shorts") {
+    const pm = fabricMaterial(fabricTex(outfit.id === "tee" ? "denim" : "plain", outfit.id === "tee" && look.pants === "#2B2B2B" ? "#2f4a6e" : look.pants));
     dress(t.shells.shorts, pm);
-    dress(t.shells.shins, pm);
-  } else {
-    // A flared wrapper skirt from waist to just below the knee.
-    const h = a.hips;
-    const r0 = h.hipHalfWidth * 0.86, r1 = h.hipHalfWidth * 1.08;
-    const prof = [new THREE.Vector2(r0 * 0.9, h.waistY + 0.03), new THREE.Vector2(r0 * 1.12, h.waistY - 0.12), new THREE.Vector2(r1, h.kneeY - 0.06)];
-    const skirtTex = fabricTex(look.pattern ?? "wax", look.pants).clone();
-    skirtTex.repeat.set(7, 3);
-    skirtTex.needsUpdate = true;
-    const sk = new THREE.Mesh(new THREE.LatheGeometry(prof, 28), new THREE.MeshStandardMaterial({ map: skirtTex, roughness: 0.9, side: THREE.DoubleSide }));
-    sk.scale.set(1, 1, 0.82);
-    sk.castShadow = true;
-    body.add(sk);
+    if (lower === "trousers") dress(t.shells.shins, pm);
+  } else if (lower === "knee_skirt") {
+    lathe(fabricTex(pattern, look.shirt), [[hipR * 0.86 * 0.9, h.waistY + 0.03], [hipR * 0.96, h.waistY - 0.12], [hipR * 1.1, h.kneeY - 0.06]], [7, 3]);
+  } else if (lower === "long_skirt") {
+    // Kaba and slit: a little peplum at the waist, then a fitted skirt to the ankles.
+    lathe(fabricTex(pattern, look.shirt), [[hipR * 0.9, h.waistY + 0.04], [hipR * 1.12, h.waistY - 0.08]], [7, 1]);
+    lathe(fabricTex(pattern, look.pants === "#2B2B2B" ? look.shirt : look.pants), [[hipR * 0.82, h.waistY + 0.02], [hipR * 1.02, h.waistY - 0.16], [hipR * 0.92, h.kneeY], [hipR * 0.8, 0.1]], [7, 5]);
+  } else if (lower === "cloth") {
+    // Kente: one great cloth wrapped from the chest to the ankles.
+    const chest = (neckHead?.[1] ?? 1.5) - 0.24;
+    lathe(fabricTex("kente", look.shirt), [[hipR * 0.95, chest], [hipR * 1.12, h.waistY], [hipR * 1.12, h.kneeY], [hipR * 1.0, 0.08]], [8, 6]);
   }
-  const shoeColors = look.feminine ? ["#6b3a22", "#1c1c1e", "#b08d57", "#c8452c"] : ["#f2f2ef", "#1b1b1d", "#5b3a29", "#2e4a6b"];
-  const shoeColor = shoeColors[(look.shirt.charCodeAt(1) + look.pants.charCodeAt(2)) % shoeColors.length];
-  dress(t.shells.shoes, new THREE.MeshStandardMaterial({ color: shoeColor, roughness: 0.45 }));
+  if (outfit.id === "smock") lathe(fabricTex("stripe", look.shirt), [[hipR * 0.9, h.waistY + 0.06], [hipR * 1.15, h.waistY - 0.1], [hipR * 1.35, h.kneeY + 0.2]], [9, 3]);
+  // Shoes, modelled on each foot.
+  for (const side of ["L", "R"] as const) {
+    const fb = a.bones.find((b) => b.name === `foot.${side}`)!.head, tb = a.bones.find((b) => b.name === `toe1-1.${side}`)!.head;
+    const shoe = buildShoe(shoeKind, look, new THREE.Vector3(...fb), new THREE.Vector3(...tb));
+    if (shoe) bones[a.bones.findIndex((b) => b.name === `foot.${side}`)].add(shoe);
+  }
   // Body type from the build slider.
   const build = look.build;
   const influences = [
@@ -631,4 +704,70 @@ function curve01(stride: number) {
 /** Attach something to the top of a person's head (vendors' trays). */
 export function headTop(r: HumanRig) {
   return r.bones.head;
+}
+
+// ---------------------------------------------------------------------------
+// Shoes: real shapes on the feet, not tinted skin.
+
+const shoeGeo = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  sphere: new THREE.SphereGeometry(1, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2),
+  cyl: new THREE.CylinderGeometry(1, 1, 1, 16),
+  torus: new THREE.TorusGeometry(1, 0.14, 6, 20, Math.PI),
+};
+const shoeMats = new Map<string, THREE.Material>();
+const shoeMat = (c: string, rough: number) => {
+  const k = `${c}:${rough}`;
+  let m = shoeMats.get(k);
+  if (!m) { m = new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: rough < 0.3 ? 0.1 : 0 }); shoeMats.set(k, m); }
+  return m;
+};
+
+/** A shoe in the foot bone's frame (bones have no rest rotation, so it's world axes offset from the ankle). */
+function buildShoe(kind: ShoeId, look: PersonLook, ankle: THREE.Vector3, toe: THREE.Vector3): THREE.Group | null {
+  if (kind === "barefoot") return null;
+  const g = new THREE.Group();
+  const dir = new THREE.Vector2(toe.x - ankle.x, toe.z - ankle.z).normalize();
+  const fem = look.feminine;
+  const L = fem ? 0.245 : 0.275, W = fem ? 0.088 : 0.102;
+  const heelZ = -0.065, mid = heelZ + L / 2;
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, pos: [number, number, number], scale: [number, number, number], rot: [number, number, number] = [0, 0, 0]) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(...pos);
+    m.scale.set(...scale);
+    m.rotation.set(...rot);
+    m.castShadow = true;
+    g.add(m);
+  };
+  const seed = look.shirt.charCodeAt(1) + look.pants.charCodeAt(2);
+  if (kind === "sneakers") {
+    const upper = ["#f2f2ef", "#1b1b1d", "#c2402a", "#2e4a6b", "#e9a50b"][seed % 5];
+    add(shoeGeo.box, shoeMat("#f4f2ec", 0.6), [0, 0.016, mid], [W, 0.032, L]);
+    add(shoeGeo.sphere, shoeMat(upper, 0.55), [0, 0.03, mid + 0.005], [W * 0.5, 0.062, L * 0.5]);
+    add(shoeGeo.box, shoeMat(upper === "#f2f2ef" ? "#c2402a" : "#f4f2ec", 0.5), [0, 0.05, mid], [W * 1.02, 0.012, L * 0.4]);
+  } else if (kind === "formal") {
+    const upper = ["#140d08", "#3a2214", "#140d08"][seed % 3];
+    add(shoeGeo.box, shoeMat("#0e0906", 0.5), [0, 0.011, mid], [W * 0.95, 0.022, L]);
+    add(shoeGeo.box, shoeMat("#0e0906", 0.5), [0, 0.02, heelZ + 0.035], [W * 0.85, 0.04, 0.06]);
+    add(shoeGeo.sphere, shoeMat(upper, 0.22), [0, 0.022, mid + 0.01], [W * 0.47, 0.056, L * 0.5]);
+  } else if (kind === "sandals") {
+    // Charlie wote: a rubber sole and a thong strap; the foot stays bare.
+    const col = ["#1b1b1d", "#2e4a6b", "#c2402a", "#6b3a22"][seed % 4];
+    add(shoeGeo.box, shoeMat(col, 0.8), [0, 0.008, mid], [W * 1.02, 0.016, L * 1.02]);
+    add(shoeGeo.torus, shoeMat(col, 0.7), [0, 0.03, mid + 0.04], [W * 0.46, 0.035, 0.05], [0, 0, 0]);
+  } else if (kind === "heels") {
+    const col = ["#1c1c1e", "#b08d57", "#c2402a", "#6b3a22"][seed % 4];
+    add(shoeGeo.box, shoeMat(col, 0.35), [0, 0.035, heelZ + 0.02], [0.022, 0.07, 0.024]);
+    add(shoeGeo.box, shoeMat(col, 0.35), [0, 0.008, mid + 0.04], [W * 0.92, 0.016, L * 0.62]);
+    add(shoeGeo.sphere, shoeMat(col, 0.3), [0, 0.012, mid + 0.03], [W * 0.46, 0.04, L * 0.38]);
+  } else if (kind === "boots") {
+    const col = ["#3a2214", "#1b1b1d", "#6b4a2a"][seed % 3];
+    add(shoeGeo.box, shoeMat("#120c08", 0.7), [0, 0.016, mid], [W * 1.02, 0.032, L]);
+    add(shoeGeo.sphere, shoeMat(col, 0.6), [0, 0.03, mid + 0.01], [W * 0.52, 0.066, L * 0.5]);
+    add(shoeGeo.cyl, shoeMat(col, 0.6), [0, 0.13, 0], [W * 0.55, 0.2, W * 0.6]);
+  }
+  // Into the foot bone's frame: rotate to the foot's direction, drop to the ground.
+  g.rotation.y = Math.atan2(dir.x, dir.y);
+  g.position.set(0, -ankle.y, 0);
+  return g;
 }

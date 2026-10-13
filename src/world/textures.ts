@@ -581,7 +581,7 @@ export function label(text: string, opts: { bg?: string; fg?: string; icon?: str
 // ---------------------------------------------------------------------------
 // Fabrics
 
-export function fabric(pattern: "plain" | "kente" | "wax" | "stripe", base: string) {
+export function fabric(pattern: "plain" | "kente" | "wax" | "stripe" | "denim", base: string) {
   return memo(`fabric:${pattern}:${base}`, () => {
     const [c, ctx] = canvas(128, 128);
     ctx.fillStyle = base;
@@ -614,8 +614,18 @@ export function fabric(pattern: "plain" | "kente" | "wax" | "stripe", base: stri
         ctx.fill();
       }
     } else if (pattern === "stripe") {
-      ctx.fillStyle = "rgba(255,255,255,0.55)";
-      for (let y = 0; y < 128; y += 20) ctx.fillRect(0, y, 128, 6);
+      // Smock cloth: narrow hand-woven strips sewn side by side, each with fine stripes.
+      for (let x = 0; x < 128; x += 16) {
+        ctx.fillStyle = (x / 16) % 2 ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.25)";
+        for (let i = 2; i < 16; i += 5) ctx.fillRect(x + i, 0, 2, 128);
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(x, 0, 1, 128);
+      }
+    } else if (pattern === "denim") {
+      // Denim twill: fine diagonal lines.
+      ctx.strokeStyle = "rgba(255,255,255,0.12)";
+      ctx.lineWidth = 1.2;
+      for (let i = -128; i < 128; i += 4) { ctx.beginPath(); ctx.moveTo(i, 128); ctx.lineTo(i + 128, 0); ctx.stroke(); }
     }
     grain(ctx, 128, 128, 0.12, 5);
     return toTexture(c);

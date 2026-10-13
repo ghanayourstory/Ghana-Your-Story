@@ -13,6 +13,7 @@ import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
 import { HOME_ACTIVITIES } from "../../shared/homes.ts";
 import { CoursesPanel, DealerPanel, HomeGoods, IntercityPanel, StorePanel, placeIsStore, serviceNote } from "./ghana.tsx";
 import { toGameDate } from "../../shared/calendar.ts";
+import { OUTFITS, OUTFIT_IDS, SHOES, SHOE_IDS, defaultOutfit, type OutfitId, type ShoeId } from "../../shared/clothing.ts";
 import type { World } from "../world/World.ts";
 
 const SVC_ICON: Record<string, string> = { waakye: "🍛", kelewele: "🍌", jollof: "🍗", fufu: "🥣", banku: "🐟", sobolo: "🥤", coffee: "☕", fine_dining: "🍽️", gym: "🏋🏾", jog: "🏃🏾", swim: "🏊🏾", drum_circle: "🥁", club: "🪩", beach_bar: "🍹", clinic: "🩺", pharmacy: "💊", haircut: "💈", church: "⛪", nap: "😴", sleep: "🛏️", course: "📚", coworking: "💻", golf: "⛳", view: "👀" };
@@ -402,6 +403,7 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
           </div>
         );
       })}
+      {!focus && <Wardrobe />}
       {!focus && <HomeGoods />}
       <button className="btn ghost block" style={{ marginTop: 12 }} onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
     </Sheet>
@@ -545,5 +547,40 @@ function OwarePanel({ placeId, open }: { placeId: string; open: boolean }) {
         <button className="btn sm" disabled={busy} onClick={() => act({ type: "oware", step: "leave" })}>{g.over ? "Leave the board" : "Walk away"}</button>
       </div>
     </div>
+  );
+}
+
+const WARDROBE_TOPS = ["#1F7A4D", "#C8452C", "#F2B705", "#2E86AB", "#3A2E6E", "#F7F3E8", "#1A1A1A", "#E35D3A", "#0E7C86", "#B03A62"];
+const WARDROBE_BOTTOMS = ["#2B2B2B", "#1F3A5F", "#E9DCC6", "#4A4036", "#7A2E2E", "#3A4A5A", "#2f4a6e"];
+/** Get dressed: the outfit (the cut), shoes and colours. */
+export function Wardrobe() {
+  const { state, act, busy } = useGame();
+  const cur = (state?.player.look ?? {}) as { outfit?: OutfitId; shoes?: ShoeId; shirt: string; pants: string; pattern?: string; feminine: boolean };
+  const [o, setO] = useState<OutfitId>(cur.outfit ?? defaultOutfit(cur));
+  const [sh, setSh] = useState<ShoeId | undefined>(cur.shoes);
+  const [top, setTop] = useState(cur.shirt);
+  const [bottom, setBottom] = useState(cur.pants);
+  const [pat, setPat] = useState(cur.pattern ?? "plain");
+  if (!state) return null;
+  const shoesNow = sh ?? OUTFITS[o].shoes;
+  return (
+    <>
+      <h3>👔 Get dressed</h3>
+      <div className="chipset">{OUTFIT_IDS.map((id) => <button key={id} className={o === id ? "on" : ""} onClick={() => setO(id)}>{OUTFITS[id].icon} {OUTFITS[id].name}</button>)}</div>
+      <div className="tiny muted" style={{ marginTop: 6 }}>{OUTFITS[o].blurb}</div>
+      <div className="tiny bold" style={{ marginTop: 10 }}>Shoes</div>
+      <div className="chipset" style={{ marginTop: 4 }}>{SHOE_IDS.map((id) => <button key={id} className={shoesNow === id ? "on" : ""} onClick={() => setSh(id)}>{SHOES[id].name}</button>)}</div>
+      <div className="tiny bold" style={{ marginTop: 10 }}>{o === "suit" ? "Tie" : "Top"}</div>
+      <div className="swatches" style={{ marginTop: 4 }}>{WARDROBE_TOPS.map((c) => <button key={c} className={`swatch ${top === c ? "on" : ""}`} style={{ background: c }} onClick={() => setTop(c)} aria-label="Top colour" />)}</div>
+      <div className="tiny bold" style={{ marginTop: 10 }}>{o === "suit" ? "Suit" : o === "kaba" ? "Skirt" : "Trousers / shorts"}</div>
+      <div className="swatches" style={{ marginTop: 4 }}>{WARDROBE_BOTTOMS.map((c) => <button key={c} className={`swatch ${bottom === c ? "on" : ""}`} style={{ background: c }} onClick={() => setBottom(c)} aria-label="Bottom colour" />)}</div>
+      {!OUTFITS[o].pattern && o !== "suit" && (
+        <>
+          <div className="tiny bold" style={{ marginTop: 10 }}>Fabric</div>
+          <div className="chipset" style={{ marginTop: 4 }}>{(["plain", "wax", "kente", "stripe"] as const).map((pp) => <button key={pp} className={pat === pp ? "on" : ""} onClick={() => setPat(pp)}>{pp === "plain" ? "Plain" : pp === "wax" ? "Wax print" : pp === "kente" ? "Kente" : "Stripes"}</button>)}</div>
+        </>
+      )}
+      <button className="btn primary block" style={{ marginTop: 12 }} disabled={busy} onClick={() => act({ type: "wardrobe", look: { outfit: o, shoes: sh ?? OUTFITS[o].shoes, shirt: top, pants: bottom, pattern: pat } })}>Put it on (10 min)</button>
+    </>
   );
 }

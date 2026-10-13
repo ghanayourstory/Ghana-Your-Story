@@ -8,6 +8,7 @@ import { GOODS, LUGGAGE_PER_UNIT, canBuyGood, canBuyHere, canSellHere, carryCapa
 import { DAILY_BONUS, DAILY_GOALS, pickDaily, swapCandidate, type DailyContext, type DailyState } from "../shared/daily.ts";
 import { moodOf } from "../shared/mood.ts";
 import { MISSIONS, type MissionState } from "../shared/missions.ts";
+import { OUTFITS, OUTFIT_IDS, SHOES, SHOE_IDS, defaultOutfit, type OutfitId, type ShoeId } from "../shared/clothing.ts";
 import { aiMove, legalMoves, newOware, playMove, type OwareGame } from "../shared/oware.ts";
 import { ADOPTION_DAYS, ADOPTION_FEE, DAYS_PER_CHILD_YEAR, GROWN_AGE, NAMING_COST, NAMING_DAY, PREGNANCY_DAYS, SCHOOL_AGE, childAge, childMonthly, namingName, sanitizeChildName, suggestedNames } from "../shared/children.ts";
 import { CELEBRATION_BASE, CUSTOMARY_BASE, KNOCKING_COST, KNOCK_TO_CEREMONY_DAYS, PROPOSAL_RING, customFor, partnerHometown } from "../shared/marriage.ts";
@@ -199,6 +200,8 @@ export interface LookInput {
   hairStyle: (typeof HAIR_STYLES)[number];
   pattern: (typeof PATTERNS)[number];
   face?: number[];
+  outfit?: OutfitId;
+  shoes?: ShoeId;
 }
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
@@ -217,7 +220,22 @@ export function sanitizeLook(l: unknown): LookInput {
     face: Array.isArray(o.face) ? o.face.slice(0, 13).map((v) => num(v, -1, 1, 0)) : undefined,
     hairStyle: (HAIR_STYLES as readonly string[]).includes(o.hairStyle as string) ? (o.hairStyle as LookInput["hairStyle"]) : "low",
     pattern: (PATTERNS as readonly string[]).includes(o.pattern as string) ? (o.pattern as LookInput["pattern"]) : "plain",
+    outfit: (OUTFIT_IDS as string[]).includes(o.outfit as string) ? (o.outfit as OutfitId) : undefined,
+    shoes: (SHOE_IDS as string[]).includes(o.shoes as string) ? (o.shoes as ShoeId) : undefined,
   };
+}
+
+/** Get dressed at home: change outfit, shoes and colours (clothes you own; no cost). */
+function actWardrobe(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("not_home", "Your clothes are at home. Change when you're there.");
+  const cur = JSON.parse(p.look) as LookInput;
+  const next = sanitizeLook({ ...cur, ...(typeof a.look === "object" && a.look ? a.look : {}), skin: cur.skin, height: cur.height, build: cur.build, feminine: cur.feminine, face: cur.face });
+  p.look = JSON.stringify(next);
+  ctx.db.run("UPDATE players SET look = ? WHERE id = ?", p.look, p.id);
+  advance(ctx, p, 10, fb, { quiet: true });
+  const o = OUTFITS[next.outfit ?? defaultOutfit(next)];
+  fb.add(`👔 You change into ${o.name.toLowerCase()}${next.shoes ? ` and ${SHOES[next.shoes].name.toLowerCase()}` : ""}.`, [], "info");
+  return null;
 }
 
 export function createPlayer(ctx: Ctx, input: { name: unknown; look: unknown; background: unknown; hometown?: unknown; languages?: unknown; priorities?: unknown; isTest?: boolean }): number {
@@ -1222,6 +1240,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "family_chore": return actFamilyChore(ctx, p, a, fb);
     case "marriage": return actMarriage(ctx, p, a, fb);
     case "household": return actHousehold(ctx, p, a, fb);
+    case "wardrobe": return actWardrobe(ctx, p, a, fb);
     case "oware": return actOware(ctx, p, a, fb);
     case "party": return actParty(ctx, p, a, fb);
     case "cleanup": return actCleanup(ctx, p, a, fb);

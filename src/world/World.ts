@@ -4,6 +4,7 @@ import { powerOff } from "../../shared/power.ts";
 import { familyWhereabouts } from "../../shared/family.ts";
 import { NPC_BY_ID, npcLocation } from "../../shared/people.ts";
 import * as THREE from "three";
+import { outfitForRole } from "../../shared/clothing.ts";
 import { EffectComposer } from "three/examples/jsm/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { GTAOPass } from "three/examples/jsm/postprocessing/GTAOPass.js";
@@ -549,12 +550,23 @@ export class World {
           if (r < 5) {
             const look = randomLook(e.id.length * 977 + ei * 131 + c * 17 + row * 7 + k);
             if (e.dress === "north") {
-              // Smocks (batakari) for the men, wax print and headwraps for the women.
-              if (!look.feminine) { look.pattern = "stripe"; look.shirt = ["#E9DCC6", "#1F3A5F", "#7A2E2E"][r % 3]; }
-              else { look.pattern = "wax"; look.hairStyle = "wrap"; }
+              // Smocks (batakari) for the men, kaba and headwraps for the women.
+              if (!look.feminine) { look.outfit = "smock"; look.shirt = ["#E9DCC6", "#1F3A5F", "#7A2E2E"][r % 3]; }
+              else { look.outfit = "kaba"; look.pattern = "wax"; look.hairStyle = "wrap"; }
               if (funeral && r % 2) look.shirt = "#1a1a1a";
-            } else if (funeral) { look.shirt = r % 2 ? "#141414" : "#8e1b1b"; look.pants = "#141414"; look.pattern = "plain"; }
-            else { look.pattern = r % 2 ? "kente" : "wax"; if (r === 4) { look.shirt = "#f7f3e8"; look.pattern = "plain"; } }
+              look.shoes = "sandals";
+            } else if (funeral) {
+              // Black and red: cloth or a black shirt for men, kaba for women.
+              look.shirt = r % 2 ? "#141414" : "#8e1b1b"; look.pants = "#141414"; look.pattern = "plain";
+              look.outfit = look.feminine ? "kaba" : r === 3 ? "kente" : "shirt";
+              look.shoes = look.feminine ? "sandals" : "formal";
+            } else {
+              // Weddings: suits and kente for the men, kaba and slit for the women.
+              look.pattern = r % 2 ? "kente" : "wax";
+              look.outfit = look.feminine ? "kaba" : r % 3 === 0 ? "kente" : "suit";
+              if (look.outfit === "suit") { look.pants = ["#1a1a1a", "#1f3a5f", "#3a2e24"][r % 3]; }
+              look.shoes = look.feminine ? "heels" : look.outfit === "kente" ? "sandals" : "formal";
+            }
             const rig = buildPerson(look);
             rig.root.position.set(x, 0.16, z);
             rig.root.rotation.y = ch.rotation.y;
@@ -606,7 +618,7 @@ export class World {
       : new THREE.Vector3(d!.homeDoor.x + 1.4, 0.16, d!.homeDoor.z - (Math.sign(d!.homeDoor.z) || 1) * 1.1);
     const faceY = this.inside ? 0 : (Math.sign(d!.homeDoor.z) || 1) > 0 ? Math.PI : 0;
     if (spouseHome && npc) {
-      const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: "wax" }, { key: true });
+      const rig = buildPerson({ ...npc.look, ...outfitForRole(npc.role + " " + npc.name, npc.look.feminine), hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: "wax" }, { key: true });
       rig.root.position.copy(anchor);
       rig.root.rotation.y = faceY;
       group.add(rig.root);

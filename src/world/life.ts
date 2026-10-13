@@ -2,6 +2,7 @@
 // pull in at stops, taxis you can flag down, crowds, vendors and the named
 // characters who follow their daily routines.
 import * as THREE from "three";
+import { outfitForRole } from "../../shared/clothing.ts";
 import { buildRider, buildVehicle, isSmallVehicle, setVehicleLights, spinWheels, type VehicleKind, type VehicleRig } from "./vehicles.ts";
 
 /** What drives down the street, by kind of place. */
@@ -325,7 +326,7 @@ export class CityLife {
       }
       if (!a || a.placeId !== where) {
         if (a) this.group.remove(a.rig.root, a.label);
-        const rig = buildPerson({ ...npc.look, hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: npc.id === "esi" || npc.id === "nii" ? "wax" : npc.id === "selasi" ? "kente" : "plain" }, { key: true });
+        const rig = buildPerson({ ...npc.look, ...outfitForRole(npc.role + " " + npc.name, npc.look.feminine), hairStyle: npc.look.headwear === "headwrap" ? "wrap" : npc.look.headwear === "cap" ? "cap" : npc.look.feminine ? "braids" : "low", pattern: npc.id === "esi" || npc.id === "nii" ? "wax" : npc.id === "selasi" ? "kente" : "plain" }, { key: true });
         const off = (NPCS.indexOf(npc) % 3 - 1) * 1.6;
         const home = door.clone().add(new THREE.Vector3(off + 1.2, 0.16, door.z > 0 ? -0.6 : 0.6));
         rig.root.position.copy(home);

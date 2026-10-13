@@ -1,5 +1,6 @@
 import { SKIN_TONES } from "../world/people.ts";
 import { CITIES } from "../../shared/cities.ts";
+import { OUTFITS as CLOTHES, OUTFIT_IDS, SHOES, SHOE_IDS } from "../../shared/clothing.ts";
 import { LANGUAGES, MAX_LANGUAGES, MAX_PRIORITIES, PRIORITIES, homeLanguage, type Priority } from "../../shared/identity.ts";
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
@@ -31,7 +32,7 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
   const [prios, setPrios] = useState<Priority[]>([]);
   const toggle = <T,>(xs: T[], x: T, max: number) => (xs.includes(x) ? xs.filter((y) => y !== x) : xs.length >= max ? [...xs.slice(1), x] : [...xs, x]);
   const [bg, setBg] = useState("graduate");
-  const [look, setLook] = useState<PersonLook>({ skin: SKINS[3], shirt: OUTFITS[0], pants: PANTS[0], hair: "#111111", feminine: false, height: 1.75, build: 1, hairStyle: "low", pattern: "kente" });
+  const [look, setLook] = useState<PersonLook>({ skin: SKINS[3], shirt: OUTFITS[0], pants: PANTS[0], hair: "#111111", feminine: false, height: 1.75, build: 1, hairStyle: "low", pattern: "plain", outfit: "tee" });
   const canvas = useRef<HTMLCanvasElement>(null);
   const lookRef = useRef(look);
   lookRef.current = look;
@@ -183,10 +184,15 @@ export function CharacterCreate({ onCreate, error, busy }: { onCreate: (d: { nam
                 </div>
                 <div className="field">
                   <b>Outfit</b>
+                  <div className="chipset">{OUTFIT_IDS.map((id) => <button key={id} className={(look.outfit ?? "tee") === id ? "on" : ""} onClick={() => { setView("body"); set({ outfit: id, shoes: undefined }); }}>{CLOTHES[id].icon} {CLOTHES[id].name}</button>)}</div>
+                  <span className="hint">{CLOTHES[look.outfit ?? "tee"].blurb} You can change clothes at home any time.</span>
+                  <span className="hint">Shoes</span>
+                  <div className="chipset">{SHOE_IDS.map((id) => <button key={id} className={(look.shoes ?? CLOTHES[look.outfit ?? "tee"].shoes) === id ? "on" : ""} onClick={() => set({ shoes: id })}>{SHOES[id].name}</button>)}</div>
+                  <span className="hint">Fabric</span>
                   <div className="chipset">{PATTERNS.map((p) => <button key={p.id} className={look.pattern === p.id ? "on" : ""} onClick={() => set({ pattern: p.id })}>{p.label}</button>)}</div>
-                  <span className="hint">Top</span>
+                  <span className="hint">{look.outfit === "suit" ? "Tie" : "Top"}</span>
                   <div className="swatches">{OUTFITS.map((c) => <button key={c} className={`swatch ${look.shirt === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ shirt: c })} aria-label="Top colour" />)}</div>
-                  <span className="hint">Trousers or skirt</span>
+                  <span className="hint">{look.outfit === "suit" ? "Suit" : "Trousers, shorts or skirt"}</span>
                   <div className="swatches">{PANTS.map((c) => <button key={c} className={`swatch ${look.pants === c ? "on" : ""}`} style={{ background: c }} onClick={() => set({ pants: c })} aria-label="Trousers colour" />)}</div>
                 </div>
               </>
