@@ -432,6 +432,34 @@ CREATE TABLE IF NOT EXISTS court_cases (
   decided_min INTEGER
 );
 
+CREATE TABLE IF NOT EXISTS job_applications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  job_id TEXT NOT NULL,
+  status TEXT NOT NULL,
+  created_min INTEGER NOT NULL,
+  interview_min INTEGER,
+  expires_min INTEGER,
+  score REAL,
+  reason TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS shift_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  player_id INTEGER NOT NULL,
+  game_min INTEGER NOT NULL,
+  job_id TEXT NOT NULL,
+  rank INTEGER NOT NULL,
+  pay INTEGER NOT NULL,
+  performance REAL NOT NULL,
+  factors TEXT NOT NULL,
+  task TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS shift_log_player ON shift_log (player_id);
+CREATE TABLE IF NOT EXISTS job_leave (
+  player_id INTEGER PRIMARY KEY,
+  until_day INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS provider_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   status TEXT NOT NULL,
@@ -444,6 +472,13 @@ CREATE TABLE IF NOT EXISTS provider_state (
 /** Columns added after the first release: applied to older saves on load. */
 const ADDED_COLUMNS: [table: string, column: string, def: string][] = [
   ["vehicles", "location", "TEXT"],
+  ["vehicles", "route", "TEXT"],
+  ["vehicles", "fare_level", "INTEGER NOT NULL DEFAULT 0"],
+  ["vehicles", "last_pay", "INTEGER NOT NULL DEFAULT 0"],
+  ["businesses", "books", "TEXT NOT NULL DEFAULT '[]'"],
+  ["businesses", "promo_until", "INTEGER NOT NULL DEFAULT -1"],
+  ["businesses", "promo_boost", "REAL NOT NULL DEFAULT 0"],
+  ["businesses", "promo_kind", "TEXT NOT NULL DEFAULT ''"],
   ["vehicles", "ready_min", "INTEGER NOT NULL DEFAULT 0"],
   ["vehicles", "status", "TEXT NOT NULL DEFAULT 'personal'"],
   ["vehicles", "condition", "REAL NOT NULL DEFAULT 100"],

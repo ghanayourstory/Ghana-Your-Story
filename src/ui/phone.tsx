@@ -6,6 +6,8 @@ import { getCaptions, getReduceMotion, getUiScale, setCaptions, setReduceMotion,
 import { FamilyApp } from "./family.tsx";
 import { AviationApp } from "./aviation.tsx";
 import { CourtApp } from "./court.tsx";
+import { WorkApp } from "./work.tsx";
+import { BizBooks } from "./business.tsx";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useGame } from "../store.tsx";
 import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WEATHER_ICON, clock12, initials, money, usd, useNow } from "./common.tsx";
@@ -88,7 +90,7 @@ export function Phone({ world, initialApp, onClose, onTravel, quality, setQualit
             {app === "home" && <HomeScreen gd={gd} onOpen={(id) => (id === "map" || id === "ride" ? onTravel("phone") : setApp(id as AppId))} badges={badges} />}
             {app === "dream" && <DreamApp />}
             {app === "hustle" && <HustleApp />}
-            {app === "work" && <WorkApp world={world} onClose={onClose} />}
+            {app === "work" && <><AppHead id="work" sub="Your job, finding work, applications, training" /><WorkApp world={world} onClose={onClose} /></>}
             {app === "money" && <MoneyApp />}
             {app === "people" && <PeopleApp minute={minute} />}
             {app === "news" && <NewsApp />}
@@ -237,7 +239,7 @@ function HustleApp() {
       <AppHead id="hustle" sub="Businesses earn every morning. Visit them, or sales slip." />
       {state.businesses.length > 0 && (
         <>
-          <div className="spread"><b>My businesses</b>{totalTill > 0 && <button className="btn green sm" disabled={busy} onClick={() => act({ type: "biz_collect", businessId: "all" })}>Collect {money(totalTill, true)}</button>}</div>
+          <div className="spread"><b>My businesses</b>{totalTill > 0 && <ConfirmButton className="btn green sm" disabled={busy} ask="Move all tills to your bank?" details={{ cost: `${money(totalTill)} from the business tills`, changes: "It lands in your bank (recorded in your statement).", undo: "It's your money to use." }} onConfirm={() => act({ type: "biz_collect", businessId: "all" })}>Cash out all {money(totalTill, true)}</ConfirmButton>}</div>
           {state.businesses.map((b) => {
             const t = BUSINESSES[b.type];
             return (
@@ -256,8 +258,8 @@ function HustleApp() {
                   {b.attendants > 0 && <ConfirmButton className="btn sm ghost" disabled={busy} ask="Let an attendant go?" details={{ cost: `${money(b.attendantWage * 300)} (3 days' pay) from the till`, changes: "Less trade, lower wages.", undo: "You can hire again in person." }} onConfirm={() => act({ type: "biz_staff", businessId: b.id, role: "attendant", change: "fire" })}>− Attendant</ConfirmButton>}
                   {b.manager && <ConfirmButton className="btn sm ghost" disabled={busy} ask="Let the manager go?" details={{ cost: `${money(b.managerWage * 300)} (3 days' pay) from the till`, changes: "You'll need to visit every week again.", undo: "You can hire again in person." }} onConfirm={() => act({ type: "biz_staff", businessId: b.id, role: "manager", change: "fire" })}>− Manager</ConfirmButton>}
                 </div>
+                <BizBooks b={b} />
                 <div className="row" style={{ marginTop: 8 }}>
-                  <button className="btn sm green" disabled={busy || b.till <= 0} onClick={() => act({ type: "biz_collect", businessId: b.id })}>Collect</button>
                   {b.upgradeCost !== null && <ConfirmButton className="btn sm primary" disabled={busy || !!b.upgradingUntil} ask="Upgrade this business?" details={{ cost: money(b.upgradeCost), time: "Takes a few days; the business keeps trading", changes: "More customers and a bigger daily till, with higher running costs.", undo: "No, but the upgrade adds to what the business sells for." }} onConfirm={() => act({ type: "biz_upgrade", businessId: b.id })}>Upgrade · {money(b.upgradeCost, true)}</ConfirmButton>}
                   <ConfirmButton className="btn sm ghost" disabled={busy} ask="Sell this business?" details={{ cost: `You get about ${money(Math.round(b.value * 0.85))}`, changes: "Its till and staff go with it; no more daily takings.", undo: "No. Buying again costs the full price and starts at level 1." }} onConfirm={() => act({ type: "biz_sell", businessId: b.id })}>Sell</ConfirmButton>
                 </div>
@@ -282,55 +284,6 @@ function HustleApp() {
               {!unlockOk && <div className="tiny bad">Needs a trade certificate ({t.requiresUnlock?.replace("cert_", "")})</div>}
             </div>
             <ConfirmButton className="btn primary sm" disabled={busy || !visited || !repOk || !unlockOk} ask={`Buy ${t.name}?`} details={{ where: DISTRICTS[t.district].name, cost: money(t.price * 100), changes: "Staff run it every day and the takings build up in its till. It earns more when you show up and collect in person; neglect it and sales slip.", undo: "Sell it any time for about 85% of its value." }} onConfirm={() => act({ type: "biz_buy", bizType: t.id })}>{money(t.price * 100, true)}</ConfirmButton>
-          </div>
-        );
-      })}
-    </>
-  );
-}
-
-function WorkApp({ world, onClose }: { world: World | null; onClose: () => void }) {
-  const { state, act, busy } = useGame();
-  if (!state) return null;
-  const job = state.player.job;
-  const sk = state.player.skills;
-  return (
-    <>
-      <AppHead id="work" sub="Shifts pay, promotions raise pay 15% each" />
-      {job ? (
-        <div className="card">
-          <div className="tiny muted">Current job</div>
-          <b style={{ fontSize: 18 }}>{job.rankTitle} {JOBS[job.id].title}</b>
-          <div className="tiny muted">{PLACE_BY_ID[JOBS[job.id].placeId].name}, {DISTRICTS[PLACE_BY_ID[JOBS[job.id].placeId].district].name}</div>
-          <div className="kv"><span>Pay per shift</span><b>{money(job.payPerShift)}</b></div>
-          <div className="kv"><span>Shift starts</span><span>{JOBS[job.id].shiftWindow[0]}:00–{JOBS[job.id].shiftWindow[1]}:00{JOBS[job.id].weekdaysOnly ? " (Mon–Fri)" : ""}</span></div>
-          <div className="kv"><span>Paid</span><span>{JOBS[job.id].salaried ? "Monthly on the 28th" : "Cash, every shift"}</span></div>
-          {state.money.payroll > 0 && <div className="kv"><span>Salary earned this month</span><b className="good">{money(state.money.payroll)}</b></div>}
-          {job.nextRankAt && <><div className="tiny muted" style={{ marginTop: 6 }}>Promotion: {job.shifts}/{job.nextRankAt} shifts</div><Bar value={(job.shifts / job.nextRankAt) * 100} color="#7c83ff" /></>}
-          {JOBS[job.id]?.needsVehicle && (
-            <div className="col" style={{ marginTop: 8, gap: 4 }}>
-              <button className="btn primary" disabled={busy || !gigVehicle(state) || state.player.lastGigDay === state.time.day} onClick={() => startGigShift(world, state, act, onClose)}>{state.player.lastGigDay === state.time.day ? "Today's shift done" : `${JOBS[job.id].needsVehicle === "car" ? "🚗" : "🛵"} Start driving (3 trips)`}</button>
-              <div className="tiny muted">Shift hours {JOBS[job.id].shiftWindow[0]}:00–{JOBS[job.id].shiftWindow[1]}:00. Drive to the green beacon, stop to pick up, then the yellow one to drop off. Pay per trip, fuel comes off, tips sometimes.</div>
-            </div>
-          )}
-          <div style={{ marginTop: 8 }}><ConfirmButton className="btn ghost sm" disabled={busy} ask="Quit this job?" details={{ changes: "No more shifts or pay from here; your rank and promotion progress are lost.", undo: "You can apply again if they're hiring, but you start from the bottom." }} onConfirm={() => act({ type: "job_quit" })}>Quit</ConfirmButton></div>
-        </div>
-      ) : <div className="notice warn">No job yet. Walk into a workplace to apply — Kaneshie Market and the trotro station take anyone.</div>}
-      <h3 className="muted small" style={{ marginTop: 14 }}>Your skills</h3>
-      {(["work", "charisma", "fitness", "business"] as const).map((k) => (
-        <div key={k} style={{ marginBottom: 6 }}><div className="spread small"><span style={{ textTransform: "capitalize" }}>{k}</span><span className="num">{Math.floor(sk[k])}</span></div><Bar value={sk[k]} color="#7c83ff" /></div>
-      ))}
-      <h3 className="muted small" style={{ marginTop: 14 }}>Jobs in the city</h3>
-      {Object.values(JOBS).map((j) => {
-        const req = state.player.jobRequirements[j.id] ?? {};
-        const ok = Object.entries(req).every(([k, v]) => ((k === "reputation" ? state.player.reputation : sk[k as keyof typeof sk]) ?? 0) >= (v as number));
-        return (
-          <div className="list-item" key={j.id}>
-            <div className="grow">
-              <b>{j.title}</b> <span className={`pill ${ok ? "green" : ""}`}>{ok ? "You qualify" : "Locked"}</span>
-              <div className="tiny muted">{PLACE_BY_ID[j.placeId].name} · {DISTRICTS[PLACE_BY_ID[j.placeId].district].name}</div>
-              <div className="tiny muted">{money(rankPay(j.pay, 0) * 100)}/shift · {j.hours}h{Object.keys(req).length ? " · needs " + Object.entries(req).map(([k, v]) => `${k} ${v}`).join(", ") : ""}</div>
-            </div>
           </div>
         );
       })}

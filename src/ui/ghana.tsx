@@ -2,6 +2,7 @@
 // farms, home goods and the Vibes social app.
 import { useMemo, useState } from "react";
 import { FlightsPanel } from "./aviation.tsx";
+import { FleetPanel } from "./business.tsx";
 import { useGame } from "../store.tsx";
 import type { World } from "../world/World.ts";
 import { ConfirmButton, EffectsPreview, money } from "./common.tsx";
@@ -388,6 +389,7 @@ export function GarageApp() {
           <ConfirmButton className="btn sm" disabled={busy} ask={`Sell ${ITEMS[i.itemId]?.name ?? "this"}?`} details={{ cost: `You get ${money(Math.round(i.price * 0.4))} (40%)`, changes: "It leaves your home; comfort may drop.", undo: "Only by buying a new one at full price." }} onConfirm={() => act({ type: "item_sell", itemRowId: i.id })}>Sell</ConfirmButton>
         </div>
       ))}
+      <FleetPanel />
     </>
   );
 }

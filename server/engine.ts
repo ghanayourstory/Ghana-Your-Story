@@ -20,7 +20,7 @@ import {
 } from "../shared/calendar.ts";
 import { rand01 } from "../shared/rng.ts";
 import {
-  DISTRICTS, JOBS, MAX_RANK, PLACE_BY_ID, RANK_TITLES, SERVICES, SHIFTS_PER_RANK, TRAVEL_MODES,
+  DISTRICTS, JOBS, MAX_RANK, PLACES, PLACE_BY_ID, RANK_TITLES, SERVICES, SHIFTS_PER_RANK, TRAVEL_MODES,
   districtsIn, isOpenAt, priceFor, rankPay, travelQuote,
   type DistrictId, type EffectKey, type Effects, type TravelMode,
   placesIn,
@@ -38,6 +38,8 @@ import { TOWN_BY_ID } from "../shared/ghana.ts";
 import { HOME_ACTIVITIES, HOME_SPECS, tierForHome } from "../shared/homes.ts";
 import { AIRCRAFT_SPECS, AIRPORTS_GH, AIRPORT_BY_ID, FLIGHT_RULES, ROUTES, ROUTE_BY_ID, cancelRefund, canUse, charterQuoteOf, daylightProblem, disruption, flightFare, flightLeg, weeklyCost, type AircraftSpec } from "../shared/aviation.ts";
 import { ADJOURN_DAYS, APPEAL_DAYS, APPEAL_FEE, CASE_TYPES, CIVIC, COURT_CLOSES, HEARING_HOUR, LAWYER_BY_ID, LEGAL_AID_INCOME_LIMIT, courtFor, type DisputeKind } from "../shared/justice.ts";
+import { FLEET_ROUTES } from "../shared/fleet.ts";
+import { INTERVIEW, SHIFT_TASKS, needsInterview, profileOf, rankOnSwitch, shiftTask } from "../shared/careers.ts";
 import { FINISHES, PIECES, PIECE_INFO, ROOM_PLANS, deliveryFee, fitsRoom, footprint, furnishComfort, furnishItems, furnishedPackage, fullyFurnished, overlaps, placeableRooms, resaleValue, roomRects, type Finishes, type Furnishing, type PlacedPiece } from "../shared/furnish.ts";
 import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
 import {
@@ -729,6 +731,7 @@ export function advance(ctx: Ctx, p: PlayerRow, minutes: number, fb: Feedback, o
 function processTimed(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   const db = ctx.db;
   settleFlights(ctx, p, fb);
+  settleApplications(ctx, p, fb);
   settleCourts(ctx, p, fb);
   const now = p.game_min;
   for (const b of db.all<BuildingRow>("SELECT * FROM buildings WHERE player_id = ? AND status IN ('building','upgrading') AND stage_ends_min <= ?", p.id, now)) {
@@ -810,7 +813,19 @@ interface BusinessRow {
   history: string;
   attendants: number;
   manager: number;
+  books: string;
+  promo_until: number;
+  promo_boost: number;
+  promo_kind: string;
 }
+/** One day of a business's books (minor units). */
+type BookDay = { day: number; revenue: number; goods: number; wages: number; rent: number; utilities: number; upkeep: number; events: { label: string; amount: number }[]; profit: number };
+/** Marketing you can buy for a business (game prices, GH₵; effects are uncertain). */
+export const BIZ_MARKETING = {
+  flyers: { name: "Flyers and a banner", price: 150, days: 3, boost: [0.04, 0.1] as [number, number] },
+  social: { name: "Social media push", price: 400, days: 4, boost: [0.05, 0.15] as [number, number] },
+  radio: { name: "Local radio ads", price: 900, days: 5, boost: [0.08, 0.18] as [number, number] },
+};
 
 function dayWasRainy(day: number) {
   const noon = day * MINUTES_PER_DAY + 12 * 60;
@@ -865,21 +880,40 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
     const neglected = y - b.last_visit_day > NEGLECT_DAYS && !b.manager;
     if (neglected) rev *= 0.8;
     if (b.upgrading_until !== null) rev *= 0.5;
+    // Local conditions (game simulation): market day, power cuts, supply, inspections, marketing.
+    const events: { label: string; amount: number }[] = [];
+    const market = PLACES.find((pl) => pl.district === t.district && pl.kind === "market");
+    if (market && isMarketDay(market.id, y) && !t.outdoor) { events.push({ label: "Market day: more people about", amount: 0 }); rev *= 1.1; }
+    let fuel = 0;
+    if (!t.outdoor && powerOff(t.district, y * MINUTES_PER_DAY + 13 * 60)) {
+      if (b.level >= 3) { fuel = rev * 0.05; events.push({ label: "Power cut: ran on the generator", amount: -Math.round(minor(fuel)) }); }
+      else { events.push({ label: "Power cut: fewer customers in the dark", amount: 0 }); rev *= 0.85; }
+    }
+    if (rand01(`supply:${b.id}:${y}`) < 0.04) { events.push({ label: "Supplier was late: shelves half empty", amount: 0 }); rev *= 0.75; }
+    if (y <= b.promo_until) { const k = 0.6 + rand01(`promo:${b.id}:${y}`) * 0.6; rev *= 1 + b.promo_boost * k; events.push({ label: `Marketing running (${b.promo_kind})`, amount: 0 }); }
+    if (rainy && t.outdoor) events.push({ label: "Rain kept people away", amount: 0 });
+    let inspection = 0;
+    if (rand01(`inspect:${b.id}:${y}`) < 0.03) { inspection = 50 * b.level; events.push({ label: "Assembly sanitation inspection fee (game fee)", amount: -minor(inspection) }); }
     const wages = b.attendants * attendantWage(t) + (b.manager ? managerWage(t) : 0);
-    const costs = levelCosts(t.costs, b.level) + wages;
+    const base = levelCosts(t.costs, b.level);
+    // How the running costs break down (game estimate): stock and materials, rent, utilities, upkeep.
+    const goods = base * 0.5, rent = base * 0.2, utilities = base * 0.15 + fuel, upkeep = base * 0.15;
+    const costs = base + wages + fuel + inspection;
     const profit = Math.round(minor(rev - costs));
     post(db, p.id, [{ account: `biz:${b.id}`, amount: profit }], {
-      kind: "business_day", memo: `${t.name}: ${ydate.label} trading`, gameMin: p.game_min, nowMs, idemKey: `bizday:${b.id}:${y}`,
+      kind: "business_day", memo: `${t.name}: ${ydate.label} trading (sales ${formatMoney(Math.round(minor(rev)))}, costs ${formatMoney(Math.round(minor(costs)))})`, gameMin: p.game_min, nowMs, idemKey: `bizday:${b.id}:${y}`,
     });
     const hist = (JSON.parse(b.history) as number[]).concat(profit).slice(-14);
-    db.run("UPDATE businesses SET total_profit = total_profit + ?, last_day_profit = ?, history = ? WHERE id = ?", profit, profit, JSON.stringify(hist), b.id);
+    const book: BookDay = { day: y, revenue: Math.round(minor(rev)), goods: Math.round(minor(goods)), wages: minor(wages), rent: Math.round(minor(rent)), utilities: Math.round(minor(utilities)), upkeep: Math.round(minor(upkeep)), events, profit };
+    const books = (JSON.parse(b.books || "[]") as BookDay[]).concat(book).slice(-14);
+    db.run("UPDATE businesses SET total_profit = total_profit + ?, last_day_profit = ?, history = ?, books = ? WHERE id = ?", profit, profit, JSON.stringify(hist), JSON.stringify(books), b.id);
     bizTotal += profit;
     if (neglected && rand01(`neglect:${b.id}:${y}`) < 0.3) fb.add(`⚠️ Staff at your ${t.name} say they haven't seen you in a while. Sales are slipping.`, [], "bad");
   }
   if (bizTotal !== 0) fb.add(`🏪 Your businesses made ${formatMoney(bizTotal)} yesterday (in their tills).`, [{ k: "business", d: bizTotal }], bizTotal > 0 ? "good" : "bad");
 
   // Work-and-pay: drivers pay daily (mostly), vehicles wear out.
-  for (const v of db.all<{ id: number; type: string; condition: number }>("SELECT * FROM vehicles WHERE player_id = ? AND status = 'workpay'", p.id)) {
+  for (const v of db.all<{ id: number; type: string; condition: number; route: string | null; fare_level: number }>("SELECT * FROM vehicles WHERE player_id = ? AND status = 'workpay'", p.id)) {
     const def = VEHICLES[v.type];
     const r = rand01(`workpay:${v.id}:${y}`);
     const cond = Math.max(0, v.condition - (0.6 + r * 0.6));
@@ -889,7 +923,12 @@ function processNewDay(ctx: Ctx, p: PlayerRow, day: number, fb: Feedback) {
       fb.add(`🛺 Your ${def.name} driver says the vehicle broke down yesterday. No payment.`, [], "bad");
       continue;
     }
-    const pay = Math.round(minor(def.workPay ?? 0) * (0.55 + 0.45 * cond / 100) * (rainy ? 0.85 : 1));
+    // Route and fare (game simulation of demand): a cheaper fare fills seats, a dearer one empties them.
+    const fl = (v as { fare_level?: number }).fare_level ?? 0;
+    const route = FLEET_ROUTES.find((x) => x.id === (v as { route?: string }).route);
+    const occ = clamp((route?.demand ?? 0.75) * (1 - fl * 0.18), 0.2, 1);
+    const pay = Math.round(minor(def.workPay ?? 0) * (0.55 + 0.45 * cond / 100) * (rainy ? 0.85 : 1) * (occ / 0.75) * (1 + fl * 0.15));
+    db.run("UPDATE vehicles SET last_pay = ? WHERE id = ?", pay, v.id);
     post(db, p.id, [{ account: "bank", amount: pay }], { kind: "workpay", memo: `Work-and-pay: ${def.name}`, gameMin: p.game_min, nowMs, idemKey: `workpay:${v.id}:${y}` });
   }
 
@@ -1450,7 +1489,9 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "travel": return actTravel(ctx, p, a, fb);
     case "job_apply": return actJobApply(ctx, p, a, fb);
     case "job_quit": return actJobQuit(p, fb);
-    case "work": return actWork(ctx, p, fb);
+    case "job_application": return actJobApplication(ctx, p, a, fb);
+    case "job_leave": return actJobLeave(ctx, p, a, fb);
+    case "work": return actWork(ctx, p, fb, a);
     case "talk": return actTalk(ctx, p, a, fb);
     case "date_attend": return actDateAttend(ctx, p, a, fb);
     case "deposit": return actDeposit(ctx, p, a, fb, 1);
@@ -1472,11 +1513,35 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "biz_collect": return actBizCollect(ctx, p, a, fb);
     case "biz_staff": return actBizStaff(ctx, p, a, fb);
     case "biz_sell": return actBizSell(ctx, p, a, fb);
+    case "biz_market": {
+      const b = ownedBiz(ctx, p, a.businessId);
+      const m = BIZ_MARKETING[a.kind as keyof typeof BIZ_MARKETING];
+      if (!m) throw new GameError("bad_kind", "Choose flyers, social media or radio.");
+      if (b.promo_until >= dayOf(p.game_min)) throw new GameError("already", "A campaign is already running.");
+      if (a.expect !== undefined && Number(a.expect) !== minor(m.price)) throw new GameError("price_changed", "The price changed.");
+      const money = chargeStrict(ctx, p, minor(m.price), "marketing", `${m.name}: ${BUSINESSES[b.type].name}`);
+      const boost = (m.boost[0] + m.boost[1]) / 2;
+      ctx.db.run("UPDATE businesses SET promo_until = ?, promo_boost = ?, promo_kind = ? WHERE id = ?", dayOf(p.game_min) + m.days - 1, boost, m.name.toLowerCase(), b.id);
+      fb.add(`📣 ${m.name} for ${m.days} days. Expect roughly ${Math.round(m.boost[0] * 100)}–${Math.round(m.boost[1] * 100)}% more sales; no guarantee.`, money, "info");
+      return null;
+    }
     case "vehicle_buy": return actVehicleBuy(ctx, p, a, fb);
     case "vehicle_sell": return actVehicleSell(ctx, p, a, fb);
     case "vehicle_repair": return actVehicleRepair(ctx, p, a, fb);
     case "vehicle_insure": return actVehicleInsure(ctx, p, a, fb);
     case "vehicle_workpay": return actVehicleWorkPay(ctx, p, a, fb);
+    case "fleet_set": {
+      const v = ownedVehicle(ctx, p, a.vehicleId);
+      if (!VEHICLES[v.type]?.workPay) throw new GameError("not_fleet", "That vehicle doesn't run on work-and-pay.");
+      const route = a.route === undefined ? undefined : FLEET_ROUTES.find((x) => x.id === a.route && x.vehicles.includes(v.type));
+      if (a.route !== undefined && !route) throw new GameError("bad_route", "That route doesn't suit this vehicle.");
+      const fl = a.fareLevel === undefined ? undefined : Math.round(Number(a.fareLevel));
+      if (fl !== undefined && ![-1, 0, 1].includes(fl)) throw new GameError("bad_fare", "Lower, standard or higher.");
+      if (route) ctx.db.run("UPDATE vehicles SET route = ? WHERE id = ?", route.id, v.id);
+      if (fl !== undefined) ctx.db.run("UPDATE vehicles SET fare_level = ? WHERE id = ?", fl, v.id);
+      fb.add(`🚐 ${VEHICLES[v.type].name}: ${route ? `route ${route.name}` : ""}${route && fl !== undefined ? ", " : ""}${fl !== undefined ? `fare ${fl < 0 ? "lower" : fl > 0 ? "higher" : "standard"}` : ""}. Takes effect from tomorrow's driving.`, [], "info");
+      return null;
+    }
     case "shop_buy": return actShopBuy(ctx, p, a, fb);
     case "item_sell": return actItemSell(ctx, p, a, fb);
     case "cook": return actCook(ctx, p, fb);
@@ -1737,11 +1802,104 @@ function actJobApply(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const missing = Object.entries(req).filter(([k, v]) => (p[k as keyof PlayerRow] as number) < (v as number)).map(([k, v]) => `${k} ${v}`);
   if (missing.length) throw new GameError("requirements", `Not yet. You need ${missing.join(", ")}.`);
   jobGate(ctx.db, p, job);
-  const previous = p.job_id ? JOBS[p.job_id].title : null;
+  if (needsInterview(job)) {
+    // Formal and public jobs: an application, then an interview in person.
+    if (ctx.db.get("SELECT 1 FROM job_applications WHERE player_id = ? AND job_id = ? AND status IN ('interview','offered')", p.id, job.id)) throw new GameError("already", "You've already applied here. Check Phone → Work → Applications.");
+    const gd = toGameDate(p.game_min);
+    const day = dayOf(p.game_min) + (gd.hour >= 8 ? 1 : 0);
+    let im = day * MINUTES_PER_DAY + 10 * 60;
+    while (toGameDate(im).isWeekend) im += MINUTES_PER_DAY;
+    const ins = ctx.db.run("INSERT INTO job_applications (player_id, job_id, status, created_min, interview_min) VALUES (?, ?, 'interview', ?, ?)", p.id, job.id, p.game_min, im);
+    advance(ctx, p, 20, fb, { quiet: true });
+    fb.add(`📝 Application in for ${job.title} at ${place.name}. Interview ${toGameDate(im).label} at 10:00, in person. Don't be late.`, [], "info");
+    return { applicationId: Number(ins.lastInsertRowid) };
+  }
+  takeJob(ctx, p, job, fb, `Hired on the spot at ${place.name}.`);
+  return null;
+}
+/** Start a job: within the same sector some seniority carries over. */
+function takeJob(ctx: Ctx, p: PlayerRow, job: (typeof JOBS)[string], fb: Feedback, how: string) {
+  const prev = p.job_id ? JOBS[p.job_id] : null;
+  const rank = rankOnSwitch(prev, p.job_rank, job);
   p.job_id = job.id;
-  p.job_rank = 0;
-  p.job_shifts = 0;
-  applyEffects(p, { reputation: 1, social: 5 }, fb, previous ? `You left ${previous} and started as ${job.title} at ${place.name}.` : `Hired! You're now a ${job.title} at ${place.name}.`);
+  p.job_rank = rank;
+  p.job_shifts = rank * SHIFTS_PER_RANK;
+  p.last_work_day = dayOf(p.game_min);
+  ctx.db.run("UPDATE job_applications SET status = 'withdrawn', reason = 'Took another job' WHERE player_id = ? AND status IN ('interview','offered') AND job_id != ?", p.id, job.id);
+  const t = profileOf(job).ladder[rank];
+  applyEffects(p, { reputation: 1, social: 5 }, fb, `${how} You're now ${t} (${job.title}).${prev ? ` You left ${prev.title}.` : ""}${rank ? " Your experience in the sector counted." : ""}`);
+}
+
+/** Interview, accept, decline or withdraw. */
+function actJobApplication(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  const row = ctx.db.get<{ id: number; job_id: string; status: string; interview_min: number; expires_min: number | null }>("SELECT * FROM job_applications WHERE id = ? AND player_id = ?", Number(a.applicationId), p.id);
+  if (!row) throw new GameError("no_application", "That isn't one of your applications.");
+  const job = JOBS[row.job_id];
+  const place = PLACE_BY_ID[job.placeId];
+  switch (a.op) {
+    case "interview": {
+      if (row.status !== "interview") throw new GameError("bad_state", "There's no interview pending.");
+      requireDistrict(p, place.district, place.name);
+      if (p.game_min < row.interview_min - 120) throw new GameError("too_early", `Your interview is ${toGameDate(row.interview_min).label} at 10:00.`);
+      if (p.game_min > row.interview_min + 120) throw new GameError("too_late", "You missed the interview slot.");
+      const choice = INTERVIEW.choices.find((c) => c.id === a.choice);
+      if (!choice) throw new GameError("bad_choice", "Answer the question.");
+      if (p.game_min < row.interview_min) advance(ctx, p, row.interview_min - p.game_min, fb, { quiet: true });
+      advance(ctx, p, 45, fb, { quiet: true });
+      // Fit: how far above the requirements you are, how you answered, how you present.
+      const req = jobRequirements(p, job.id);
+      const margin = Object.entries(req).reduce((m, [k, v]) => Math.min(m, ((p[k as keyof PlayerRow] as number) - (v as number)) / Math.max(5, v as number)), 1);
+      const late = p.game_min - 45 > row.interview_min + 15;
+      const score = clamp(0.25 + clamp(margin, 0, 1) * 0.3 + choice.score * 0.35 + (p.hygiene > 50 ? 0.08 : -0.08) + (late ? -0.2 : 0), 0, 1);
+      if (score >= 0.55) {
+        ctx.db.run("UPDATE job_applications SET status = 'offered', score = ?, expires_min = ?, reason = ? WHERE id = ?", score, p.game_min + 2 * MINUTES_PER_DAY, choice.note, row.id);
+        fb.add(`🤝 Offer! ${place.name} wants you as ${job.title}. ${choice.note} Accept within 2 days (Phone → Work).`, [], "good");
+      } else {
+        const why = late ? "You arrived late." : choice.score < 0.5 ? "Your answer didn't show them how you work." : p.hygiene <= 50 ? "First impressions: come fresh and neat." : "They chose someone with more experience.";
+        ctx.db.run("UPDATE job_applications SET status = 'rejected', score = ?, reason = ? WHERE id = ?", score, why, row.id);
+        fb.add(`📭 Not this time at ${place.name}. ${why} You can apply again later.`, [], "bad");
+      }
+      return null;
+    }
+    case "accept": {
+      if (row.status !== "offered") throw new GameError("bad_state", "There's no offer to accept.");
+      if (row.expires_min !== null && p.game_min > row.expires_min) throw new GameError("expired", "The offer has expired.");
+      jobGate(ctx.db, p, job);
+      ctx.db.run("UPDATE job_applications SET status = 'accepted' WHERE id = ?", row.id);
+      takeJob(ctx, p, job, fb, `You accepted the offer from ${place.name}.`);
+      return null;
+    }
+    case "decline":
+    case "withdraw": {
+      if (!["interview", "offered"].includes(row.status)) throw new GameError("bad_state", "Nothing to withdraw.");
+      ctx.db.run("UPDATE job_applications SET status = 'withdrawn', reason = ? WHERE id = ?", a.op === "decline" ? "You declined the offer" : "You withdrew", row.id);
+      fb.add(`You ${a.op === "decline" ? "declined the offer" : "withdrew your application"} at ${place.name}.`, [], "info");
+      return null;
+    }
+  }
+  throw new GameError("bad_op", "Unknown application action");
+}
+/** Missed interviews and lapsed offers. */
+function settleApplications(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+  for (const r of ctx.db.all<{ id: number; job_id: string; status: string; interview_min: number; expires_min: number | null }>("SELECT * FROM job_applications WHERE player_id = ? AND status IN ('interview','offered')", p.id)) {
+    if (r.status === "interview" && p.game_min > r.interview_min + 120) {
+      ctx.db.run("UPDATE job_applications SET status = 'expired', reason = 'You missed the interview' WHERE id = ?", r.id);
+      fb.add(`⌛ You missed your interview for ${JOBS[r.job_id].title}. You can apply again.`, [], "bad");
+    } else if (r.status === "offered" && r.expires_min !== null && p.game_min > r.expires_min) {
+      ctx.db.run("UPDATE job_applications SET status = 'expired', reason = 'The offer lapsed' WHERE id = ?", r.id);
+      fb.add(`⌛ The offer for ${JOBS[r.job_id].title} lapsed.`, [], "info");
+    }
+  }
+}
+/** Take a few days off: no shifts, and the job is held for you. */
+function actJobLeave(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (!p.job_id) throw new GameError("no_job", "You don't have a job.");
+  const days = Math.round(Number(a.days));
+  if (!(days >= 1 && days <= 7)) throw new GameError("bad_days", "Between 1 and 7 days.");
+  const until = dayOf(p.game_min) + days;
+  ctx.db.run("INSERT INTO job_leave (player_id, until_day) VALUES (?, ?) ON CONFLICT(player_id) DO UPDATE SET until_day = excluded.until_day", p.id, until);
+  p.last_work_day = until;
+  fb.add(`🌴 Leave agreed: ${days} day${days > 1 ? "s" : ""}. ${JOBS[p.job_id].salaried ? "Salaried: no shift pay accrues while you're off." : "No shifts, no pay; your place is kept."}`, [], "info");
   return null;
 }
 
@@ -1772,9 +1930,11 @@ function actJobQuit(p: PlayerRow, fb: Feedback) {
   return null;
 }
 
-function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
+function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback, a: Action = { type: "work" }) {
   if (!p.job_id) throw new GameError("no_job", "You need a job first. Look for places that are hiring.");
   const job = JOBS[p.job_id];
+  const leave = ctx.db.get<{ until_day: number }>("SELECT until_day FROM job_leave WHERE player_id = ?", p.id);
+  if (leave && leave.until_day > dayOf(p.game_min)) throw new GameError("on_leave", "You're on leave. Enjoy it.");
   const place = requirePlace(p, job.placeId);
   const gd = toGameDate(p.game_min);
   if (job.weekdaysOnly && gd.isWeekend) throw new GameError("closed", `${place.name} doesn't run weekend shifts.`);
@@ -1782,8 +1942,20 @@ function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
   if (job.needsVehicle) throw new GameError("drive_it", "This is gig work: tap \"Start driving\" and do the pick-ups yourself.");
   requireAwake(p, Math.round(job.energyCost * 0.6), "work a shift");
   jobGate(ctx.db, p, job);
-  // Tired, hungry, smelly or miserable people don't do their best work.
-  const performance = clamp(0.75 + p.energy / 400 + p.health / 400 + p.hunger / 800 + (p.hygiene - 50) / 1500 + moodFor(ctx.db, p).score / 100, 0.72, 1.15);
+  // The shift's decision: the one the game set for today (no choosing an easier one).
+  const task = shiftTask(job, p.shifts_total, gd.day);
+  const choice = a.taskId === undefined ? null : task.id === a.taskId ? task.choices.find((c) => c.id === a.choice) : undefined;
+  if (choice === undefined) throw new GameError("stale_task", "That situation has changed. Look again.");
+  // Performance: how you turn up (needs), when you turn up, and how you handle the situation.
+  const factors: { label: string; d: number }[] = [];
+  const needs = clamp(p.energy / 400 + p.health / 400 + p.hunger / 800 + (p.hygiene - 50) / 1500 + moodFor(ctx.db, p).score / 100, -0.1, 0.4) - 0.2;
+  factors.push({ label: needs >= 0 ? "Rested, fed and in a good mood" : "Tired, hungry or low", d: Math.round(needs * 100) / 100 });
+  const lateMin = (gd.hour - job.shiftWindow[0]) * 60 + gd.min;
+  const lateness = lateMin > 90 ? -0.08 : 0;
+  if (lateness) factors.push({ label: `Late: arrived ${Math.floor(lateMin / 60)}h ${lateMin % 60}m after the shift began`, d: lateness });
+  const taskD = choice ? Math.round((choice.score - 0.7) * 0.2 * 100) / 100 : 0;
+  if (choice) factors.push({ label: choice.note, d: taskD });
+  const performance = clamp(0.95 + needs + lateness + taskD, 0.7, 1.15);
   const pay = minor(rankPay(job.pay, p.job_rank) * performance);
   advance(ctx, p, job.hours * 60, fb, { quiet: true });
   let money: Change[] = [];
@@ -1804,8 +1976,16 @@ function actWork(ctx: Ctx, p: PlayerRow, fb: Feedback) {
       : `Worked a ${job.hours}h shift as ${title} and got paid ${formatMoney(pay)} in cash.`,
     job.salaried ? [{ k: "payroll", d: pay }] : money,
   );
-  if (performance < 0.85) fb.add("Your supervisor noticed you were tired and hungry. Pay was docked.", [], "bad");
-  if (p.job_rank < MAX_RANK && p.job_shifts >= SHIFTS_PER_RANK * (p.job_rank + 1)) {
+  // Getting there and working costs a little (transport, uniform upkeep).
+  const wc = profileOf(job).workCost;
+  if (wc > 0) chargeFlexible(ctx, p, minor(wc), "work_costs", `${job.title}: transport and upkeep`);
+  ctx.db.run("INSERT INTO shift_log (player_id, game_min, job_id, rank, pay, performance, factors, task) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", p.id, p.game_min, job.id, p.job_rank, pay, performance, JSON.stringify(factors), choice ? `${task.prompt} → ${choice.label}` : "");
+  fb.add(`📋 Performance ${Math.round(performance * 100)}%: ${factors.map((f) => `${f.label} (${f.d >= 0 ? "+" : ""}${Math.round(f.d * 100)}%)`).join("; ")}.${wc ? ` Work costs ${formatMoney(minor(wc))}.` : ""}`, [], performance >= 0.95 ? "good" : performance < 0.85 ? "bad" : "info");
+  // Promotion: enough shifts at this level and a good recent record.
+  const recent = ctx.db.all<{ performance: number }>("SELECT performance FROM shift_log WHERE player_id = ? AND job_id = ? ORDER BY id DESC LIMIT 5", p.id, job.id);
+  const avg = recent.reduce((s2, x) => s2 + x.performance, 0) / Math.max(1, recent.length);
+  if (p.job_rank < MAX_RANK && p.job_shifts >= SHIFTS_PER_RANK * (p.job_rank + 1) && avg < 0.9) fb.add(`Enough shifts for promotion, but your recent average is ${Math.round(avg * 100)}%: keep it at 90% or more.`, [], "info");
+  if (p.job_rank < MAX_RANK && p.job_shifts >= SHIFTS_PER_RANK * (p.job_rank + 1) && avg >= 0.9) {
     p.job_rank += 1;
     applyEffects(p, { reputation: 3, social: 6 }, fb, `🎉 Promoted to ${RANK_TITLES[p.job_rank]} ${job.title}! Pay is now ${formatMoney(minor(rankPay(job.pay, p.job_rank)))} per shift.`);
   }
@@ -3581,6 +3761,14 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
     },
     time: { ...gd, weather: weatherAt(p.game_min) },
     aviation: aviationView(db, p),
+    career: {
+      applications: db.all<{ id: number; job_id: string; status: string; created_min: number; interview_min: number | null; expires_min: number | null; reason: string }>("SELECT * FROM job_applications WHERE player_id = ? ORDER BY id DESC LIMIT 12", p.id)
+        .map((x) => ({ id: x.id, jobId: x.job_id, status: x.status, createdMin: x.created_min, interviewMin: x.interview_min, expiresMin: x.expires_min, reason: x.reason })),
+      shifts: db.all<{ game_min: number; job_id: string; rank: number; pay: number; performance: number; factors: string; task: string }>("SELECT * FROM shift_log WHERE player_id = ? ORDER BY id DESC LIMIT 10", p.id)
+        .map((x) => ({ min: x.game_min, jobId: x.job_id, rank: x.rank, pay: x.pay, performance: x.performance, factors: JSON.parse(x.factors) as { label: string; d: number }[], task: x.task })),
+      task: p.job_id ? shiftTask(JOBS[p.job_id], p.shifts_total, dayOf(p.game_min)) : null,
+      leaveUntil: db.get<{ until_day: number }>("SELECT until_day FROM job_leave WHERE player_id = ?", p.id)?.until_day ?? null,
+    },
     court: courtView(db, p),
     money: {
       ...nw,
@@ -3616,9 +3804,10 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       attendantWage: attendantWage(BUSINESSES[b.type]), managerWage: managerWage(BUSINESSES[b.type]),
       upgradeCost: b.level < MAX_BUSINESS_LEVEL ? minor(businessUpgradeCost(BUSINESSES[b.type].price, b.level)) : null,
       value: minor(businessValue(BUSINESSES[b.type].price, b.level)),
+      books: JSON.parse(b.books || "[]") as BookDay[], promoUntil: b.promo_until, promoKind: b.promo_kind,
     })),
     vehicles: db.all<{ id: number; type: string; price: number; bought_min: number; status: string; condition: number }>("SELECT * FROM vehicles WHERE player_id = ?", p.id)
-      .map((v) => ({ id: v.id, type: v.type, price: v.price, boughtMin: v.bought_min, status: v.status, condition: Math.round(v.condition), value: vehicleValue(v, p.game_min), insuredUntil: (v as { insured_until?: number }).insured_until ?? 0, repairCost: minor(repairCost(v.price / 100, v.condition)), insureCost: minor(insuranceCost(v.price / 100)) })),
+      .map((v) => ({ id: v.id, type: v.type, price: v.price, boughtMin: v.bought_min, status: v.status, condition: Math.round(v.condition), value: vehicleValue(v, p.game_min), route: (v as { route?: string | null }).route ?? null, fareLevel: (v as { fare_level?: number }).fare_level ?? 0, lastPay: (v as { last_pay?: number }).last_pay ?? 0, insuredUntil: (v as { insured_until?: number }).insured_until ?? 0, repairCost: minor(repairCost(v.price / 100, v.condition)), insureCost: minor(insuranceCost(v.price / 100)) })),
     items: ownedItems(db, p).map((i) => ({ id: i.id, itemId: i.item_id, price: i.price, boughtMin: i.bought_min })),
     furnishing: (() => { const f = furnishingScore(ownedItems(db, p).map((i) => i.item_id)); return { ...f, base: baseComfort(db, p) }; })(),
     farms: db.all<FarmRow>("SELECT * FROM farms WHERE player_id = ?", p.id).map((f) => ({

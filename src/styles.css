@@ -354,3 +354,12 @@ input[type="range"] { accent-color: var(--gold); }
 .pill.bad { background: rgba(200,69,44,0.15); color: #a3341f; }
 .pill.warn { background: rgba(242,183,5,0.2); color: #8a5d00; }
 .card-item.on { border-color: #1f7a4d; box-shadow: 0 0 0 2px #1f7a4d33; }
+
+/* Work */
+.ladder { margin: 4px 0 6px 18px; padding: 0; font-size: 12.5px; }
+.ladder li { color: var(--muted, #7a6f60); }
+.ladder li.done { color: #1f7a4d; }
+.ladder li.on { color: inherit; font-weight: 800; }
+.choice { border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; padding: 8px 10px; margin: 8px 0; display: grid; gap: 6px; }
+.choice legend { padding: 0 4px; font-weight: 700; }
+.choice:disabled { opacity: 0.6; }

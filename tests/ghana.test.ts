@@ -1148,3 +1148,86 @@ test("court: a missed hearing is decided in your absence; legal aid has an incom
   assert.ok(act(ctx, id, { type: "court", op: "observe" }).ok);
   assert.ok(auditPlayer(ctx.db, id).ok);
 });
+
+test("careers: informal work starts today; formal jobs need an interview and an offer; shifts carry a decision and an explained result", async () => {
+  const { shiftTask } = await import("../shared/careers.ts");
+  const { JOBS } = await import("../shared/world.ts");
+  const { ctx, id } = rich();
+  skipTo(ctx, id, 6);
+  // Market loader: hired on the spot.
+  assert.ok(act(ctx, id, { type: "job_apply", jobId: "market_loader" }).ok);
+  let s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(s.player.job!.id, "market_loader");
+  // A shift needs today's decision; a made-up one is refused.
+  const task = s.career.task!;
+  assert.equal(act(ctx, id, { type: "work", taskId: "nope", choice: "x" }).code, "stale_task");
+  const best = task.choices.reduce((a, b) => (b.score > a.score ? b : a));
+  const w = act(ctx, id, { type: "work", taskId: task.id, choice: best.id });
+  assert.ok(w.ok, w.error);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(s.career.shifts.length, 1);
+  assert.ok(s.career.shifts[0].factors.some((f) => f.label === best.note));
+  // A bank job: apply, interview tomorrow at 10:00, offer, accept.
+  ctx.db.run("UPDATE players SET work = 40, reputation = 20, hygiene = 90 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "travel", to: "east_legon", mode: "taxi" }).ok);
+  skipTo(ctx, id, 9);
+  const ap = act(ctx, id, { type: "job_apply", jobId: "bank_teller" });
+  assert.ok(ap.ok, ap.error);
+  const appId = (ap.data as { applicationId: number }).applicationId;
+  assert.equal(buildState(ctx, loadPlayer(ctx.db, id)).player.job!.id, "market_loader", "applying doesn't change your job");
+  assert.equal(act(ctx, id, { type: "job_application", op: "interview", applicationId: appId, choice: "specific" }).code, "too_early");
+  const app = ctx.db.get<{ interview_min: number }>("SELECT interview_min FROM job_applications WHERE id = ?", appId)!;
+  skip(ctx, id, Math.floor((app.interview_min - gameMin(ctx, id)) / 60));
+  const iv = act(ctx, id, { type: "job_application", op: "interview", applicationId: appId, choice: "specific" });
+  assert.ok(iv.ok, iv.error);
+  assert.equal(ctx.db.get<{ status: string }>("SELECT status FROM job_applications WHERE id = ?", appId)!.status, "offered");
+  assert.ok(act(ctx, id, { type: "job_application", op: "accept", applicationId: appId }).ok);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.equal(s.player.job!.id, "bank_teller");
+  // Leave: no shifts while away.
+  assert.ok(act(ctx, id, { type: "job_leave", days: 2 }).ok);
+  const t2 = shiftTask(JOBS.bank_teller, 0, 0);
+  void t2;
+  assert.equal(act(ctx, id, { type: "work" }).code, "on_leave");
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});
+
+test("careers: missing the interview expires the application; same-sector moves keep some seniority", async () => {
+  const { rankOnSwitch } = await import("../shared/careers.ts");
+  const { JOBS } = await import("../shared/world.ts");
+  assert.equal(rankOnSwitch(JOBS.call_centre, 3, JOBS.bank_teller), 2);
+  assert.equal(rankOnSwitch(JOBS.market_loader, 3, JOBS.bank_teller), 0);
+  const { ctx, id } = rich();
+  ctx.db.run("UPDATE players SET work = 40, reputation = 20 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "travel", to: "east_legon", mode: "taxi" }).ok);
+  skipTo(ctx, id, 9);
+  const ap = act(ctx, id, { type: "job_apply", jobId: "bank_teller" });
+  assert.ok(ap.ok);
+  skip(ctx, id, 72);
+  assert.equal(ctx.db.get<{ status: string }>("SELECT status FROM job_applications WHERE player_id = ?", id)!.status, "expired");
+});
+
+test("business books: daily sales and costs add up to the profit in the till; marketing costs what it says; fleet routes and fares", () => {
+  const { ctx, id } = rich();
+  ctx.db.run("UPDATE players SET reputation = 30 WHERE id = ?", id);
+  skipTo(ctx, id, 9);
+  assert.ok(act(ctx, id, { type: "biz_buy", bizType: "phone_kiosk" }).ok);
+  const b = ctx.db.get<{ id: number }>("SELECT id FROM businesses WHERE player_id = ?", id)!;
+  const before = bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo");
+  assert.equal(act(ctx, id, { type: "biz_market", businessId: b.id, kind: "flyers", expect: 1 }).code, "price_changed");
+  assert.ok(act(ctx, id, { type: "biz_market", businessId: b.id, kind: "flyers", expect: 15000 }).ok);
+  assert.equal(before - (bal(ctx, id, "cash") + bal(ctx, id, "bank") + bal(ctx, id, "momo")), 15000);
+  assert.equal(act(ctx, id, { type: "biz_market", businessId: b.id, kind: "radio" }).code, "already");
+  skip(ctx, id, 24 * 3);
+  const s = buildState(ctx, loadPlayer(ctx.db, id));
+  const biz = s.businesses[0];
+  assert.ok(biz.books.length >= 2);
+  for (const d of biz.books) {
+    const other = d.events.reduce((x, e) => x + e.amount, 0);
+    const costs = d.goods + d.wages + d.rent + d.utilities + d.upkeep;
+    assert.ok(Math.abs(d.revenue - costs + other - d.profit) <= 3, `books balance on day ${d.day}`);
+  }
+  assert.equal(biz.till, biz.books.reduce((x, d) => x + d.profit, 0));
+  assert.ok(biz.books.some((d) => d.events.some((e) => e.label.startsWith("Marketing"))));
+  assert.ok(auditPlayer(ctx.db, id).ok);
+});

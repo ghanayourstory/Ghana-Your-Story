@@ -12,6 +12,8 @@ import { DISTRICTS, districtsIn, JOBS, PLACE_BY_ID, SERVICES, TRAVEL_MODES, isOp
 import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
 import { HOME_ACTIVITIES } from "../../shared/homes.ts";
 import { AirportDesk } from "./aviation.tsx";
+import { ShiftCard } from "./work.tsx";
+import { needsInterview } from "../../shared/careers.ts";
 import { CourtApp } from "./court.tsx";
 import { PIECES, ROOM_PLANS, furnishItems } from "../../shared/furnish.ts";
 import { CoursesPanel, DealerPanel, HomeGoods, IntercityPanel, StorePanel, placeIsStore, serviceNote } from "./ghana.tsx";
@@ -59,6 +61,7 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
       {state.player.events.filter((e) => e.placeId === p.id).map((e) => <EventCard key={e.id} ev={e} hour={gd.hour} />)}
       <OwarePanel placeId={p.id} open={open} />
       <TradePanel placeId={p.id} hour={gd.hour + gd.min / 60} open={open} />
+      {state.player.job && JOBS[state.player.job.id]?.placeId === p.id && !JOBS[state.player.job.id].needsVehicle && <ShiftCard />}
       {p.kind === "airport" && <AirportDesk />}
       {p.kind === "court" && <div style={{ marginTop: 10 }}><CourtApp /></div>}
 
@@ -151,9 +154,9 @@ export function PlaceSheet({ placeId, world, onClose, onTalk, onTravel, onPhone 
             {mine ? (
               j.needsVehicle
                 ? <button className="btn primary sm" disabled={!inWindow || busy || state.player.lastGigDay === state.time.day} onClick={() => startGigShift(world, state, act, onClose)}>{state.player.lastGigDay === state.time.day ? "Done today" : inWindow ? "Start driving" : "Off shift"}</button>
-                : <button className="btn primary sm" disabled={!inWindow || !open || busy} onClick={() => act({ type: "work" })}>{inWindow ? "Work shift" : "Off shift"}</button>
+                : <span className="pill green">Your job</span>
             ) : (
-              <ConfirmButton className="btn sm" disabled={missing.length > 0 || busy} ask={`Take the job: ${j.title}?`} details={{ where: p.name, time: `${j.hours}h shifts starting ${j.shiftWindow[0]}:00–${j.shiftWindow[1]}:00${j.weekdaysOnly ? ", weekdays" : ""}`, cost: `Pays about ${money(j.pay * 100)} a shift${j.salaried ? ", paid monthly on the 28th" : ""}`, changes: `You work here: show up in shift hours. It uses about ${j.energyCost} energy a shift and builds your skills.${state.player.job ? " It replaces your current job." : ""}`, undo: "Quit any time from Phone → Work." }} onConfirm={() => act({ type: "job_apply", jobId: j.id })}>Apply</ConfirmButton>
+              <ConfirmButton className="btn sm" disabled={missing.length > 0 || busy} ask={needsInterview(j) ? `Apply for ${j.title}?` : `Start today as ${j.title}?`} details={{ where: p.name, time: `${j.hours}h shifts starting ${j.shiftWindow[0]}:00–${j.shiftWindow[1]}:00${j.weekdaysOnly ? ", weekdays" : ""}`, cost: `Pays about ${money(j.pay * 100)} a shift${j.salaried ? ", paid monthly on the 28th" : ""}`, changes: `You work here: show up in shift hours. It uses about ${j.energyCost} energy a shift and builds your skills.${state.player.job ? " It replaces your current job." : ""}`, undo: "Quit any time from Phone → Work." }} onConfirm={() => act({ type: "job_apply", jobId: j.id })}>{needsInterview(j) ? "Apply (interview)" : "Start today"}</ConfirmButton>
             )}
           </div>
         );
