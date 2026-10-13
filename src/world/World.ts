@@ -63,6 +63,31 @@ export interface WorldCallbacks {
   onCaption?: (text: string) => void;
   /** Furnishing: Enter places, Escape cancels. */
   onEditKey?: (key: "place" | "cancel") => void;
+  /** Turn-by-turn directions while driving somewhere (null when there's no route). */
+  onNav?: (n: NavStatus | null) => void;
+}
+
+export interface NavStatus {
+  name: string;
+  turn: "straight" | "left" | "right" | "uturn" | "arrive";
+  text: string;
+  /** Metres to the next turn (or to the destination). */
+  dist: number;
+  /** Metres left in total. */
+  total: number;
+  auto: boolean;
+  arrived: boolean;
+}
+
+interface Nav {
+  placeId: string;
+  name: string;
+  /** Road centreline points from where you started to the stop by the door. */
+  pts: THREE.Vector3[];
+  idx: number;
+  auto: boolean;
+  arrived: boolean;
+  last: string;
 }
 
 /** You, at the wheel of your own car. */
@@ -85,6 +110,8 @@ interface Driving {
   exam?: Exam;
   /** Ride-app or delivery shift in progress. */
   gig?: Gig;
+  /** Turn-by-turn route to a place. */
+  nav?: Nav;
 }
 
 interface Gig {
@@ -1428,6 +1455,7 @@ export class World {
     const d = this.drive;
     if (!d || !this.player) return;
     this.releasePolice();
+    if (d.nav) this.cb.onNav?.(null);
     this.drive = null;
     if (this.life) this.life.playerCarLength = 0;
     const g = d.rig.group;
@@ -1446,6 +1474,179 @@ export class World {
     this.cb.onDrive?.(null);
   }
 
+  // ---------------------------------------------------------------------------
+  // GAS / BRAKE pedals and turn-by-turn directions.
+
+  /** On-screen pedals (touch): hold GAS to go, BRAKE to slow down and then reverse. */
+  setPedal(kind: "gas" | "brake", down: boolean) {
+    this.pedals[kind] = down;
+    if (down && this.drive?.nav) this.setNavAuto(false);
+  }
+  private pedals = { gas: false, brake: false };
+
+  /** Plan a route along the roads to a place in this area and start giving directions. */
+  navTo(placeId: string): boolean {
+    const d = this.drive, dist = this.district;
+    const door = placeId === "home" ? dist?.homeDoor : placeId === "plot" ? dist?.plotSpot : dist?.placeDoors.get(placeId);
+    if (!d || !dist || !door || d.exam || d.gig) return false;
+    const P = d.rig.group.position;
+    const onCross = (p: THREE.Vector3) => Math.abs(p.x) < CROSS_HALF + 4 && Math.abs(p.z) > ROAD_HALF + 1;
+    const sgn = (v: number) => (v >= 0 ? 1 : -1);
+    // Where to stop: at the kerb in front of the door.
+    const T = onCross(door) ? new THREE.Vector3(sgn(door.x) * (CROSS_HALF - 1.5), 0, door.z) : new THREE.Vector3(door.x, 0, sgn(door.z) * (ROAD_HALF - 1.7));
+    const pts: THREE.Vector3[] = [];
+    const carCross = onCross(P);
+    pts.push(carCross ? new THREE.Vector3(0, 0, P.z) : new THREE.Vector3(P.x, 0, 0));
+    const tCross = onCross(door);
+    if (carCross && tCross && sgn(P.z) === sgn(door.z)) pts.push(new THREE.Vector3(0, 0, T.z));
+    else if (carCross || tCross) {
+      pts.push(new THREE.Vector3(0, 0, 0));
+      pts.push(tCross ? new THREE.Vector3(0, 0, T.z) : new THREE.Vector3(T.x, 0, 0));
+    } else pts.push(new THREE.Vector3(T.x, 0, 0));
+    pts.push(T);
+    const name = placeId === "home" ? "Home" : placeId === "plot" ? "Your plot" : PLACE_BY_ID[placeId]?.name ?? "There";
+    d.nav = { placeId, name, pts, idx: 0, auto: false, arrived: false, last: "" };
+    this.reportNav(d, true);
+    return true;
+  }
+  setNavAuto(on: boolean) {
+    const n = this.drive?.nav;
+    if (!n || n.arrived) return;
+    n.auto = on;
+    this.reportNav(this.drive!, true);
+  }
+  /** Skip the drive: the car turns up parked by the door. */
+  navSkip() {
+    const d = this.drive, n = d?.nav;
+    if (!d || !n || d.police) return;
+    const T = n.pts[n.pts.length - 1], prev = n.pts[n.pts.length - 2];
+    d.heading = Math.atan2(T.x - prev.x, T.z - prev.z);
+    if (Math.hypot(T.x - prev.x, T.z - prev.z) < 1) d.heading = Math.atan2(-T.x, -T.z) + Math.PI / 2;
+    d.rig.group.position.set(T.x, d.rig.group.position.y, T.z);
+    d.rig.group.rotation.y = d.heading;
+    d.speed = 0;
+    this.pos.set(T.x, 0, T.z);
+    n.idx = n.pts.length - 1;
+    this.navArrive(d);
+  }
+  navCancel() {
+    if (!this.drive?.nav) return;
+    this.drive.nav = undefined;
+    this.cb.onNav?.(null);
+  }
+  private navArrive(d: Driving) {
+    const n = d.nav!;
+    n.arrived = true;
+    n.auto = false;
+    this.caption(`📍 You've arrived: ${n.name}`);
+    this.reportNav(d, true);
+  }
+  /** Distance along the route from the car, the next turn, and which way it goes. */
+  private navInfo(d: Driving): NavStatus {
+    const n = d.nav!;
+    const P = d.rig.group.position;
+    if (n.arrived) return { name: n.name, turn: "arrive", text: `You've arrived at ${n.name}`, dist: 0, total: 0, auto: false, arrived: true };
+    const T = n.pts[n.pts.length - 1];
+    let total = 0, toTurn = -1, turn: NavStatus["turn"] = "arrive";
+    let from = new THREE.Vector3(P.x, 0, P.z);
+    for (let i = n.idx + 1; i < n.pts.length; i++) {
+      const p = n.pts[i];
+      total += from.distanceTo(p);
+      from = p;
+      if (toTurn < 0 && i < n.pts.length - 2) {
+        const a = p.clone().sub(n.pts[i - 1]).normalize(), b = n.pts[i + 1].clone().sub(p).normalize();
+        if (a.lengthSq() > 0 && b.lengthSq() > 0 && Math.abs(a.dot(b)) < 0.7) {
+          toTurn = total;
+          // Facing a, a point to the right is along (-a.z, a.x).
+          turn = -a.z * b.x + a.x * b.z > 0 ? "right" : "left";
+        }
+      }
+    }
+    // Facing the wrong way along the current leg: turn around first.
+    const seg = n.pts[Math.min(n.idx + 1, n.pts.length - 1)].clone().sub(n.pts[n.idx]);
+    if (seg.lengthSq() < 1) seg.copy(T).sub(P);
+    seg.y = 0;
+    const fwd = new THREE.Vector3(Math.sin(d.heading), 0, Math.cos(d.heading));
+    if (seg.lengthSq() > 1 && fwd.dot(seg.normalize()) < -0.4) return { name: n.name, turn: "uturn", text: "Make a U-turn when it's safe", dist: 0, total, auto: n.auto, arrived: false };
+    const road = (t: NavStatus["turn"]) => {
+      const dd = this.district ? DISTRICTS[this.district.id].roads : null;
+      if (!dd) return "";
+      const next = n.pts[Math.min(n.pts.length - 1, n.idx + 2)];
+      return Math.abs(next.x) < CROSS_HALF + 1 && t !== "arrive" ? ` onto ${dd.cross}` : ` onto ${dd.main}`;
+    };
+    if (toTurn >= 0 && toTurn < total - 2) return { name: n.name, turn, text: `Turn ${turn}${road(turn)}`, dist: toTurn, total, auto: n.auto, arrived: false };
+    const side = -fwd.z * (T.x - P.x) + fwd.x * (T.z - P.z) > 0 ? "right" : "left";
+    return { name: n.name, turn: total < 60 ? "arrive" : "straight", text: total < 60 ? `${n.name} is on your ${side}` : `Continue straight to ${n.name}`, dist: total, total, auto: n.auto, arrived: false };
+  }
+  private reportNav(d: Driving, force = false) {
+    const info = this.navInfo(d);
+    const key = `${info.turn}|${info.text}|${Math.round(info.dist / 10)}|${info.auto}|${info.arrived}`;
+    if (!force && key === d.nav!.last) return;
+    d.nav!.last = key;
+    this.cb.onNav?.(info);
+  }
+  /** Follow the route: progress along it, and (on Auto) steer and drive in the right-hand lane. */
+  private updateNav(d: Driving): { throttle: number; steer: number } | null {
+    const n = d.nav!;
+    const g = d.rig.group, P = g.position;
+    // Move on to the next leg once you're past the corner.
+    while (n.idx < n.pts.length - 2) {
+      const a = n.pts[n.idx], b = n.pts[n.idx + 1];
+      const ab = b.clone().sub(a), len = ab.length();
+      if (len < 0.5) { n.idx++; continue; }
+      const t = P.clone().setY(0).sub(a).dot(ab) / (len * len);
+      if (t > 1 || P.distanceTo(b.clone().setY(P.y)) < 6) n.idx++;
+      else break;
+    }
+    const T = n.pts[n.pts.length - 1];
+    if (!n.arrived && Math.hypot(P.x - T.x, P.z - T.z) < (n.auto ? 2.5 : 7) && Math.abs(d.speed) < (n.auto ? 2 : 8)) this.navArrive(d);
+    this.reportNav(d);
+    if (!n.auto || n.arrived) return null;
+    // Aim at a point a little way ahead, kept in the right-hand lane of the current leg.
+    const look = 6 + Math.abs(d.speed) * 0.6;
+    let aim = T.clone();
+    for (let i = n.idx; i < n.pts.length - 1; i++) {
+      const a = n.pts[i], b = n.pts[i + 1];
+      const ab = b.clone().sub(a), len = ab.length();
+      if (len < 0.5) continue;
+      const dir = ab.clone().divideScalar(len);
+      const t = THREE.MathUtils.clamp(P.clone().setY(0).sub(a).dot(dir), 0, len);
+      if (i === n.idx && t + look < len) {
+        aim = a.clone().addScaledVector(dir, t + look);
+        if (i + 1 < n.pts.length - 1) aim.add(new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(Math.abs(dir.x) > 0.5 ? 2.8 : 2.2)); // right-hand lane
+        break;
+      }
+      if (i > n.idx) {
+        aim = a.clone().addScaledVector(dir, Math.min(len, look * 0.6));
+        if (i + 1 < n.pts.length - 1) aim.add(new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(Math.abs(dir.x) > 0.5 ? 2.8 : 2.2));
+        break;
+      }
+    }
+    const want = Math.atan2(aim.x - P.x, aim.z - P.z);
+    let diff = want - d.heading;
+    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
+    const info = this.navInfo(d);
+    const left = Math.hypot(P.x - T.x, P.z - T.z);
+    let target = 12;
+    if (info.turn === "left" || info.turn === "right") target = info.dist < 30 ? 5 : 12;
+    if (Math.abs(diff) > 0.8) target = 4;
+    target = Math.min(target, Math.max(1.2, left * 0.45));
+    // Keep a safe gap to whatever is in the way we're steering (not just straight ahead: a U-turn leaves the queue).
+    const fwd = new THREE.Vector3(Math.sin(want), 0, Math.cos(want));
+    for (const v of [...(this.life?.solidVehicles() ?? []), ...this.parkedCars.map((p) => p.rig)]) {
+      const rel = v.group.position.clone().sub(P).setY(0);
+      const ahead = rel.dot(fwd), side = Math.abs(rel.x * fwd.z - rel.z * fwd.x);
+      if (ahead > 0 && side < (d.rig.width + v.width) / 2) target = Math.min(target, Math.max(0, (ahead - d.rig.length / 2 - v.length / 2 - 2) * 0.6));
+    }
+    for (const o of this.life?.peoplePositions() ?? []) {
+      const rel = new THREE.Vector3(o.x - P.x, 0, o.z - P.z);
+      const ahead = rel.dot(fwd), side = Math.abs(rel.x * fwd.z - rel.z * fwd.x);
+      if (ahead > 0 && ahead < 12 && side < d.rig.width / 2 + 0.6) target = Math.min(target, Math.max(0, (ahead - d.rig.length / 2 - 1.5) * 0.5));
+    }
+    const throttle = THREE.MathUtils.clamp((target - d.speed) * 0.5, d.speed > 0.2 ? -1 : 0, 1);
+    return { throttle, steer: THREE.MathUtils.clamp(diff * 2.4, -1, 1) };
+  }
+
   private updateDrive(dt: number) {
     const d = this.drive!;
     let throttle = 0, steer = 0;
@@ -1456,6 +1657,12 @@ export class World {
       if (this.keys.has("d") || this.keys.has("arrowright")) steer -= 1;
       throttle += this.joy.y;
       steer -= this.joy.x;
+      if (this.pedals.gas) throttle += 1;
+      if (this.pedals.brake) throttle -= 1;
+      // Any hand on the wheel takes over from Auto.
+      if (d.nav?.auto && (throttle !== 0 || steer !== 0)) this.setNavAuto(false);
+      const auto = d.nav ? this.updateNav(d) : null;
+      if (auto) { throttle = auto.throttle; steer = auto.steer; }
     }
     throttle = THREE.MathUtils.clamp(throttle, -1, 1);
     steer = THREE.MathUtils.clamp(steer, -1, 1);

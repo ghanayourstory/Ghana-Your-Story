@@ -3,6 +3,19 @@
 // its own paint colour. Kinds without a model fall back to the procedural ones.
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+
+/** Smooth-shade the low-poly panels (keeping sharp creases) once per shared geometry. */
+const smoothed = new WeakMap<THREE.BufferGeometry, THREE.BufferGeometry>();
+function smooth(g: THREE.BufferGeometry) {
+  let out = smoothed.get(g);
+  if (!out) {
+    out = g.attributes.position.count < 60000 ? toCreasedNormals(g, Math.PI / 6) : g;
+    smoothed.set(g, out);
+    smoothed.set(out, out);
+  }
+  return out;
+}
 
 interface ModelDef {
   file: string;
@@ -37,14 +50,10 @@ const DEFS: Record<string, ModelDef> = {
 const KIND_MODELS: Record<string, string[]> = {
   taxi: ["ghana_taxi"],
   police: ["police"],
-  sedan: ["saloon_car", "century", "saloon_car"],
-  compact: ["saloon_car", "century"],
-  accordo: ["century"],
-  saloon: ["century"],
-  phantom: ["century"],
-  suv: ["landcruiser"],
-  v8: ["landcruiser"],
-  pickup: ["landcruiser"],
+  // "@proc" means the sculpted procedural body: newer cars mixed in with the old imports.
+  sedan: ["saloon_car", "century", "@proc", "@proc", "@proc"],
+  compact: ["saloon_car", "@proc", "@proc"],
+  // SUVs, the V8 and pickups use the sculpted modern bodies; the classic FJ40 still turns up as an old suv now and then.
   supercar: ["countach", "corvette", "porsche"],
 };
 
@@ -111,8 +120,10 @@ export function loadCarModels(): Promise<boolean> {
         if (!m.isMesh) return;
         m.castShadow = true;
         m.receiveShadow = true;
+        m.geometry = smooth(m.geometry);
         const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((x) => x.clone()) as THREE.MeshStandardMaterial[];
         for (const mat of mats) {
+          mat.flatShading = false;
           if (def.hide?.test(mat.name)) hidden.push(m);
           if (/glass|window/i.test(mat.name)) { mat.transparent = true; mat.opacity = Math.min(mat.opacity, 0.55); mat.roughness = 0.05; }
           if (def.paint.test(mat.name)) {
@@ -164,10 +175,11 @@ const paintCache = new Map<string, THREE.Material>();
 
 /** A clone of a real model for this kind, with its own paint. */
 export function realCar(kind: string, seed: number): { group: THREE.Group; length: number; width: number; height: number } | null {
-  const ids = (KIND_MODELS[kind] ?? []).filter((id) => loaded.has(id));
-  if (!ids.length) return null;
+  const ids = (KIND_MODELS[kind] ?? []).filter((id) => id === "@proc" || loaded.has(id));
+  if (!ids.some((id) => id !== "@proc")) return null;
   const h = Math.imul(seed ^ 0x9e3779b9, 2654435761) >>> 0;
   const id = ids[h % ids.length];
+  if (id === "@proc") return null;
   const m = loaded.get(id)!;
   const group = m.scene.clone(true);
   const colors = kind === "v8" ? ["#111111", "#151515", "#f2f2ee"] : kind === "phantom" ? ["#141414", "#2a2340"] : m.def.colors;

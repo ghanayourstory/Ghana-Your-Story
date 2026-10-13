@@ -182,7 +182,8 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     savLeaf: std({ color: "#5f7a35", roughness: 0.9 }),
     plantainLeaf: std({ color: "#6f9e3c", roughness: 0.8, side: THREE.DoubleSide }),
     curb: std({ map: T.concrete("#d9d4c8", 3), roughness: 0.8 }),
-    curbPaint: std({ color: "#f2c200", roughness: 0.7 }),
+    curbWhite: std({ map: T.concrete("#f1efe9", 5), roughness: 0.75 }),
+    curbPaint: std({ color: "#17181a", roughness: 0.7 }),
     gutter: std({ color: "#2a2724", roughness: 1 }),
     drainWater: std({ color: "#3b3a2a", roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.92 }),
     algae: std({ color: "#3e4a2a", roughness: 1 }),
@@ -340,9 +341,9 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       const x0 = half < 0 ? -EXTENT_X - 20 : CROSS_HALF + 0.8;
       const x1 = half < 0 ? -CROSS_HALF - 0.8 : EXTENT_X + 20;
       const len = x1 - x0, cx = (x0 + x1) / 2;
-      box(M.curb, cx, 0.12, side * (ROAD_HALF + 0.12), len, 0.24, 0.24);
-      // Black-and-yellow painted curb stones.
-      if (!savanna) for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.245, side * (ROAD_HALF + 0.12), 1, 0.01, 0.25);
+      box(savanna ? M.curb : M.curbWhite, cx, 0.12, side * (ROAD_HALF + 0.12), len, 0.24, 0.24);
+      // Black-and-white painted kerb stones, painted over the top and the road face.
+      if (!savanna) for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.122, side * (ROAD_HALF + 0.12), 1, 0.248, 0.252);
       // A real Accra open drain: rough concrete U-channel, murky water, silt,
       // algae stains along the waterline and the inevitable sachets and bottles.
       const gz = side * (ROAD_HALF + 0.55);
@@ -382,7 +383,8 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       const z1 = half < 0 ? -WALK_OUT - 0.2 : EXTENT_Z + 20;
       const len = z1 - z0, cz = (z0 + z1) / 2;
       batch.add(tiledPlane(3, len, 3), M.walk, [side * (CROSS_HALF + 1.6), 0.16, cz], [-Math.PI / 2, 0, 0]);
-      box(M.curb, side * (CROSS_HALF + 0.1), 0.12, cz, 0.2, 0.24, len);
+      box(savanna ? M.curb : M.curbWhite, side * (CROSS_HALF + 0.1), 0.12, cz, 0.2, 0.24, len);
+      if (!savanna) for (let z = z0 + 0.5; z < z1; z += 2) box(M.curbPaint, side * (CROSS_HALF + 0.1), 0.122, z, 0.21, 0.248, 1);
     }
   }
 
@@ -433,7 +435,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   reserve(home.side, home.x - 7, home.x + 7);
   reserve(plot.side, plot.x - 9, plot.x + 9);
 
-  const labelSprite = (text: string, icon: string, y: number, x: number, z: number, bg = "rgba(20,18,30,0.8)") => {
+  const labelSprite = (text: string, icon: string, y: number, x: number, z: number, bg?: string) => {
     const tex = T.label(text, { icon, bg });
     const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, depthTest: true, transparent: true }));
     const aspect = (tex.image as HTMLCanvasElement).width / (tex.image as HTMLCanvasElement).height;
@@ -626,6 +628,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     const glassy = style === "corporate" || (style === "suburban" && h > 10) || (p.kind === "bank" && h > 12);
     const m = glassy ? facadeMat("#ffffff", "glass") : facadeMat(p.color, upscale ? "modern" : savanna ? "small" : "louvre");
     batch.add(facadeBox(w, h, depth), m, [cx, h / 2, cz]);
+    if (!glassy && !savanna) relief(upscale ? "modern" : "louvre", cx, cz, w, h, depth, faceDir);
     // Parapet / roof.
     if (savanna && !glassy) {
       mudParapet(cx, cz, w, depth, h, p.color);
@@ -669,6 +672,38 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   // -------------------------------------------------------------------------
   // Building parts
 
+  /**
+   * Real depth on a painted facade: sills, lintels and jambs where the texture draws
+   * its windows (one bay every 3 m, as in facade()), floor ledges, the odd split-AC
+   * unit hung under a window and a rainwater downpipe. Upper floors only: the ground
+   * floor has shopfronts and doors over it.
+   */
+  function relief(kind: "louvre" | "modern", cx: number, cz: number, w: number, h: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const [ww, bot, top] = kind === "modern" ? [1.76, 0.75, 2.27] : [1.22, 0.96, 2.27];
+    const bays = Math.floor(w / 3);
+    const ledge = M.concrete;
+    for (let fy = 3; fy + 2.4 <= h; fy += 3) {
+      box(ledge, cx, fy, front + faceDir * 0.05, w + 0.08, 0.14, 0.1);
+      for (let k = 0; k < bays; k++) {
+        const x = faceDir > 0 ? cx - w / 2 + (k + 0.5) * 3 : cx + w / 2 - (k + 0.5) * 3;
+        box(ledge, x, fy + bot - 0.06, front + faceDir * 0.09, ww + 0.28, 0.07, 0.18);
+        box(ledge, x, fy + top + 0.07, front + faceDir * 0.04, ww + 0.2, 0.1, 0.08);
+        for (const sx of [-1, 1]) box(M.white, x + sx * (ww / 2 + 0.03), fy + (bot + top) / 2, front + faceDir * 0.03, 0.06, top - bot, 0.06);
+        if (rnd() < 0.22) {
+          // A split-AC condenser on brackets below the window, with its fan grille.
+          const ax = x + (rnd() - 0.5) * 0.4, ay = fy + bot - 0.45, az = front + faceDir * 0.2;
+          box(M.white, ax, ay, az, 0.8, 0.55, 0.3);
+          batch.add(G.cyl, M.darkMetal, [ax + 0.12, ay, az + faceDir * 0.152], [Math.PI / 2, 0, 0], [0.19, 0.01, 0.19]);
+          box(M.darkMetal, ax, ay - 0.3, front + faceDir * 0.16, 0.7, 0.04, 0.3);
+        }
+      }
+    }
+    if (h > 3.5) {
+      const px = cx + (faceDir > 0 ? 1 : -1) * (w / 2 - 0.2);
+      batch.add(G.cyl8, M.darkMetal, [px, h / 2, front + faceDir * 0.08], [0, 0, 0], [0.05, h, 0.05]);
+    }
+  }
   function parapet(cx: number, cz: number, w: number, depth: number, h: number) {
     box(M.concrete, cx, h + 0.3, cz - depth / 2 + 0.1, w, 0.6, 0.2);
     box(M.concrete, cx, h + 0.3, cz + depth / 2 - 0.1, w, 0.6, 0.2);
@@ -1497,6 +1532,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     const momo = rnd() < 0.1;
     const color = momo ? "#F2C200" : wallColor();
     batch.add(facadeBox(ww, h, depth), facadeMat(color, "louvre"), [x, h / 2, cz]);
+    relief("louvre", x, cz, ww, h, depth, -side);
     box(colorMat(shade(color, 0.6), 0.9), x, 0.45, front - side * 0.03, ww + 0.04, 0.9, 0.04);
     if (rnd() < 0.85) roofPitched(x, cz, ww, depth, h, rnd() < 0.85, 0.3, facadeMat(color, "louvre"));
     else {
@@ -1562,6 +1598,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       return;
     }
     batch.add(facadeBox(w - 0.6, h, depth), facadeMat(color, glassy ? "glass" : style === "corporate" ? "modern" : "louvre"), [x, h / 2, cz]);
+    if (!glassy) relief(style === "corporate" ? "modern" : "louvre", x, cz, w - 0.6, h, depth, -side);
     if (!glassy && (style === "coastal" || (storeys <= 2 && rnd() < 0.45))) roofPitched(x, cz, w - 0.6, depth, h, rnd() < 0.7);
     else {
       parapet(x, cz, w - 0.6, depth, h);

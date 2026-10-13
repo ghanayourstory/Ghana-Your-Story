@@ -36,10 +36,11 @@ export function MapSheet({ world, onClose, onTravel }: { world: World | null; on
   const places = useMemo(() => (m?.places ?? []).map((p) => ({ ...p, dist: Math.hypot(p.x - m!.x, p.z - m!.z) })).sort((a, b) => a.dist - b.dist), [m]);
   const kinds = [...new Set(places.map((p) => p.kind))];
   const shown = places.filter((p) => filter === "all" || p.kind === filter);
+  const drv = world?.driving ?? false;
   const walk = (id: string) => {
     if (!world) return;
     if (world.inside) world.exitHome();
-    if (world.walkToPlace(id)) onClose();
+    if (world.driving ? world.navTo(id) : world.walkToPlace(id)) onClose();
   };
   if (!m) return <Sheet title="🗺️ Map" onClose={onClose}><div className="muted">Loading the map…</div></Sheet>;
   const z0 = -EXTENT_Z + 20, z1 = m.coastal ? m.coastal + 14 : EXTENT_Z - 20;
@@ -47,7 +48,7 @@ export function MapSheet({ world, onClose, onTravel }: { world: World | null; on
   const selP = places.find((p) => p.id === sel);
   const walkZ = (WALK_IN + WALK_OUT) / 2;
   return (
-    <Sheet title={`🗺️ ${d.name}`} sub={`${d.roads.main} & ${d.roads.cross} · ${CITIES[d.city]?.name ?? d.city}. Tap a place to walk there.`} onClose={onClose} wide>
+    <Sheet title={`🗺️ ${d.name}`} sub={`${d.roads.main} & ${d.roads.cross} · ${CITIES[d.city]?.name ?? d.city}. Tap a place to ${drv ? "get directions" : "walk there"}.`} onClose={onClose} wide>
       <div className="tabs" style={{ marginTop: 10 }}>
         <button className="on">📍 This area</button>
         <button onClick={() => onTravel("city")}>🏙️ Around {CITIES[d.city]?.name ?? "town"}</button>
@@ -102,14 +103,14 @@ export function MapSheet({ world, onClose, onTravel }: { world: World | null; on
             <div className="bold">{selP.name}</div>
             <div className="tiny muted">{PLACE_BY_ID[selP.id]?.blurb ?? ""} · {Math.round(selP.dist)} m · about {Math.max(1, Math.round(selP.dist / 80))} min on foot</div>
           </div>
-          <button className="btn primary sm" onClick={() => walk(selP.id)}>🚶 Walk here</button>
+          <button className="btn primary sm" onClick={() => walk(selP.id)}>{drv ? "🚗 Drive here" : "🚶 Walk here"}</button>
         </div>
       )}
       {sel === "home" && m.home && (
         <div className="svc" style={{ marginTop: 8 }}>
           <span className="goal-icon">🏠</span>
           <div className="grow"><div className="bold">Home</div><div className="tiny muted">{Math.round(Math.hypot(m.home.x - m.x, m.home.z - m.z))} m</div></div>
-          <button className="btn primary sm" onClick={() => walk("home")}>🚶 Walk home</button>
+          <button className="btn primary sm" onClick={() => walk("home")}>{drv ? "🚗 Drive home" : "🚶 Walk home"}</button>
         </div>
       )}
       <div className="chipset" style={{ marginTop: 10 }}>
@@ -124,7 +125,7 @@ export function MapSheet({ world, onClose, onTravel }: { world: World | null; on
             <div className="bold">{p.name}</div>
             <div className="tiny muted">{Math.round(p.dist)} m{!p.known ? " · not visited yet" : ""}</div>
           </div>
-          <button className="btn sm" onClick={(e) => { e.stopPropagation(); walk(p.id); }}>Walk</button>
+          <button className="btn sm" onClick={(e) => { e.stopPropagation(); walk(p.id); }}>{drv ? "Drive" : "Walk"}</button>
         </div>
       ))}
     </Sheet>

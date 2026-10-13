@@ -12,7 +12,8 @@ import { TodaySheet } from "./ui/today.tsx";
 import { getCaptions } from "./ui/a11y.ts";
 import { FamilyApp } from "./ui/family.tsx";
 import { Sheet } from "./ui/common.tsx";
-import { World, type ExamStatus, type GigStatus, type Nearby, type Quality } from "./world/World.ts";
+import { World, type ExamStatus, type GigStatus, type NavStatus, type Nearby, type Quality } from "./world/World.ts";
+import { DriveHud } from "./ui/drivehud.tsx";
 import { loadHumans } from "./world/humans.ts";
 import { loadCarModels } from "./world/carmodels.ts";
 import type { GameState } from "../server/engine.ts";
@@ -112,6 +113,10 @@ function Game() {
   const [gig, setGig] = useState<GigStatus | null>(null);
   const [captionsList, setCaptionsList] = useState<{ id: number; text: string }[]>([]);
   const [driving, setDriving] = useState<{ name: string; kmh: number } | null>(null);
+  const [nav, setNav] = useState<NavStatus | null>(null);
+  useEffect(() => {
+    document.body.classList.toggle("is-driving", !!driving);
+  }, [driving]);
   const [doing, setDoing] = useState<{ label: string; icon: string; p: number } | null>(null);
   const [road, setRoad] = useState("");
   const [district, setDistrict] = useState<DistrictId>(state!.player.district);
@@ -137,6 +142,7 @@ function Game() {
       onSpot: (id) => (id === "exit" ? w.exitHome() : setPanel({ kind: "bed", focus: id })),
       onActivity: setDoing,
       onDrive: setDriving,
+      onNav: setNav,
       onPolice: setPolice,
       onExam: setExam,
       onGig: setGig,
@@ -354,12 +360,7 @@ function Game() {
           </div>
         </div>
       )}
-      {driving && !ride && (
-        <div className="speedo">
-          <b className="num">{driving.kmh}</b><small>km/h</small>
-          <div className="tiny muted">{driving.name} · W/S drive, A/D steer, Shift to speed up</div>
-        </div>
-      )}
+      {driving && !ride && !panel && <DriveHud world={world} driving={driving} nav={nav} onWhere={() => setPanel({ kind: "map" })} />}
       {ride && (
         <div className="ride-banner">
           <span className="ride-icon">{ride.icon}</span>
@@ -385,6 +386,8 @@ function Game() {
             <h2 style={{ margin: "10px 0 4px" }}>Live it, don't just click it 🏠🚗</h2>
             <p className="muted small" style={{ marginTop: 0 }}>Your home is now a place you live in, and rides actually drive you there.</p>
             <div className="col small">
+              <div>🚘 <b>Better-looking cars and streets:</b> rounded modern bodies with proper grilles, headlamps, fog lamps, taillights and Ghana number plates front and back; a real Hiace-style trotro; black-and-white kerbs; window sills, ledges and AC units on the buildings; green-and-gold place labels.</div>
+              <div>🧭 <b>Directions when you drive:</b> tap "Where to?" (or the map) and pick a place. Turn-by-turn directions, <b>Auto</b> to let the car drive itself in the right-hand lane (it waits behind traffic and people), <b>Skip</b> to arrive. Big <b>GAS</b> and <b>BRAKE</b> pedals for touch screens.</div>
               <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
               <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
               <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>

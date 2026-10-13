@@ -565,11 +565,17 @@ export function label(text: string, opts: { bg?: string; fg?: string; icon?: str
     const w = Math.ceil(mctx.measureText(full).width) + 48;
     m.remove();
     const [c, ctx] = canvas(w, 72);
-    ctx.fillStyle = opts.bg ?? "rgba(20,18,30,0.78)";
+    // Default: deep green with a gold rim, easy to read against sky and plaster.
+    ctx.fillStyle = opts.bg ?? "rgba(15,77,50,0.93)";
     const r = 30;
     ctx.beginPath();
-    ctx.roundRect(2, 2, w - 4, 68, r);
+    ctx.roundRect(3, 3, w - 6, 66, r);
     ctx.fill();
+    if (!opts.bg) {
+      ctx.strokeStyle = "#f2b705";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
     ctx.font = "700 44px Figtree, system-ui, sans-serif";
     ctx.fillStyle = opts.fg ?? "#fff";
     ctx.textBaseline = "middle";
