@@ -562,6 +562,8 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     if (p.id === "sunyani_cenotaph") return cenotaph(p, cx, cz, w, depth, faceDir);
     if (p.id === "nima_pitch") return pitch(p, cx, cz, w, depth, faceDir);
     if (p.kind === "church") return church(p, cx, cz, w, depth, h, faceDir);
+    if (p.id === "okomfo_sword") return swordSite(p, cx, cz, w, depth, faceDir);
+    if (p.kind === "shrine") return shrine(p, cx, cz, w, depth, faceDir);
     if (p.id === "bonwire_palace") return asantePalace(p, cx, cz, w, depth, faceDir);
     if (p.id === "osu_castle" || p.id === "cape_castle_place" || p.id === "james_fort" || p.id === "elmina_castle_place") {
       // Whitewashed fort: curtain walls with crenellations and corner bastions.
@@ -765,6 +767,63 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     batch.add(G.ico, colorMat("#c9a227", 0.35, 0.6), [cx + 3, 4.5, pz + faceDir * 3], [0, 0, 0], [0.18, 0.18, 0.18]);
     box(signMat(p.sign ?? p.name.toUpperCase(), "#9a4a2a", "#f2ece0"), cx, 2.75, front + faceDir * 0.2, 4.2, 0.55, 0.06);
     collide(cx, pz, 8, 4.5, 4);
+  }
+
+  /**
+   * A traditional shrine, seen from outside as a visitor would: a low walled yard,
+   * a great tree with white cloth tied round its trunk, a small whitewashed shrine
+   * house, clay pots by the entrance and white flags. Nothing of the inner rites.
+   */
+  function shrine(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const W = Math.max(w, 7), D = Math.max(depth, 6);
+    const lime = colorMat("#f4f1e8", 0.95), clay = colorMat("#8a4a2a", 0.9), cloth = colorMat("#fbfaf6", 0.85);
+    batch.add(tiledPlane(W, D, 3), std({ map: T.laterite(), roughness: 1 }), [cx, 0.04, cz], [-Math.PI / 2, 0, 0]);
+    // Low wall with a gap for the entrance.
+    for (const sx of [-1, 1]) box(lime, cx + sx * (W / 4 + 0.6), 0.55, front, W / 2 - 1.2, 1.1, 0.25);
+    box(lime, cx, 0.55, cz - faceDir * (D / 2), W, 1.1, 0.25);
+    for (const sx of [-1, 1]) box(lime, cx + sx * (W / 2), 0.55, cz, 0.25, 1.1, D);
+    // The sacred tree with white cloth tied round the trunk.
+    const tx = cx - W / 4, tz = cz - faceDir * (D / 6);
+    neem(tx, tz, 1.25);
+    batch.add(G.cyl, cloth, [tx, 1.3, tz], [0, 0, 0], [0.27, 0.5, 0.27]);
+    batch.add(G.cyl, cloth, [tx, 2.0, tz], [0, 0, 0], [0.25, 0.25, 0.25]);
+    // Small whitewashed shrine house under a low roof.
+    const hx = cx + W / 5, hz = cz - faceDir * (D / 5);
+    box(lime, hx, 1.1, hz, 2.4, 2.2, 2);
+    box(colorMat("#2a1e16", 0.9), hx, 0.85, hz + faceDir * 1.01, 0.8, 1.6, 0.04);
+    batch.add(new THREE.ConeGeometry(1, 1, 4), M.thatch, [hx, 2.75, hz], [0, Math.PI / 4, 0], [2.1, 1.2, 1.8]);
+    // Clay pots and a stool by the entrance, white flags on poles.
+    for (let i = 0; i < 3; i++) batch.add(G.ico, clay, [cx - 0.9 + i * 0.9, 0.3, front - faceDir * 0.8], [0, 0, 0], [0.28, 0.3, 0.28]);
+    for (const sx of [-1, 1]) {
+      batch.add(G.cyl8, M.wood, [cx + sx * 1.6, 1.6, front - faceDir * 0.3], [0, 0, 0], [0.04, 3.2, 0.04]);
+      batch.add(G.plane, cloth, [cx + sx * 1.6 + 0.4, 2.9, front - faceDir * 0.3], [0, 0, 0], [0.8, 0.5, 1]);
+    }
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#f4f1e8", "#3a2a1f", "PLEASE ASK BEFORE ENTERING"), cx + W / 2 - 1.6, 1.3, front + faceDir * 0.3, 2.6, 0.8, 0.05);
+    box(M.wood, cx + W / 2 - 1.6, 0.5, front + faceDir * 0.3, 0.08, 1.0, 0.08);
+    collide(hx, hz, 2.4, 2, 2.6);
+    for (const sx of [-1, 1]) collide(cx + sx * (W / 4 + 0.6), front, W / 2 - 1.2, 0.25, 1.1);
+  }
+
+  /** The Okomfo Anokye sword: the hilt rising from a stone setting under a canopy, behind a rail. */
+  function swordSite(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    batch.add(tiledPlane(w, depth, 3), M.pavers, [cx, 0.05, cz], [-Math.PI / 2, 0, 0]);
+    batch.add(new THREE.CylinderGeometry(1.2, 1.4, 0.6, 20), M.concrete, [cx, 0.3, cz], [0, 0, 0]);
+    batch.add(new THREE.CylinderGeometry(0.7, 0.8, 0.3, 16), colorMat("#6b5a48", 0.9), [cx, 0.75, cz], [0, 0, 0]);
+    // The hilt: grip, guard and pommel, rusted dark.
+    const iron = colorMat("#3a2f28", 0.6, 0.5);
+    box(iron, cx, 1.15, cz, 0.06, 0.5, 0.04);
+    box(iron, cx, 1.42, cz, 0.36, 0.05, 0.05);
+    box(iron, cx, 1.65, cz, 0.08, 0.42, 0.06);
+    batch.add(G.ico, iron, [cx, 1.9, cz], [0, 0, 0], [0.07, 0.07, 0.07]);
+    // Canopy and a low rail to keep people back.
+    for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) box(M.white, cx + dx * 2, 1.5, cz + dz * 2, 0.18, 3, 0.18);
+    batch.add(new THREE.ConeGeometry(1, 1, 4), colorMat("#8a3b26", 0.7), [cx, 3.5, cz], [0, Math.PI / 4, 0], [3.4, 1.2, 3.4]);
+    for (const [dx, dz, ww, dd] of [[0, -1.6, 3.2, 0.05], [0, 1.6, 3.2, 0.05], [-1.6, 0, 0.05, 3.2], [1.6, 0, 0.05, 3.2]] as const) box(M.darkMetal, cx + dx, 0.75, cz + dz, ww, 0.05, dd);
+    box(signMat("OKOMFO ANOKYE SWORD", "#111111", "#C9A227", "PLEASE DO NOT TOUCH"), cx, 1.2, front - faceDir * 0.6, 3.2, 0.8, 0.06);
+    box(M.metal, cx, 0.5, front - faceDir * 0.6, 0.08, 1, 0.08);
+    collide(cx, cz, 3.4, 3.4, 3.5);
   }
 
   /** Jamestown Lighthouse: a tall red-and-white banded tower with a gallery and lantern, beside the keeper's house. */
