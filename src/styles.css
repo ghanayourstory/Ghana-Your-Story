@@ -166,12 +166,12 @@ b, strong { font-weight: 700; }
    world stays visible around it), a bottom panel on a small screen. */
 .phone-wrap { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-end; justify-content: flex-end; padding: 16px 84px 16px 16px; background: transparent; pointer-events: none; animation: fade .2s ease; }
 .phone-wrap > * { pointer-events: auto; }
-.phone { position: relative; width: min(360px, calc(100vw - 24px)); height: min(660px, calc(100dvh - 32px)); background: #15100b; border-radius: 42px; padding: 9px; box-shadow: 0 26px 70px rgba(0,0,0,0.5), inset 0 0 0 2px #3a2e22, inset 0 0 0 5px #0a0705; display: flex; flex-direction: column; overflow: hidden; animation: up .28s ease; }
+.phone { position: relative; width: min(312px, calc(100vw - 24px)); height: min(620px, calc(100dvh - 32px)); background: #15100b; border-radius: 42px; padding: 9px; box-shadow: 0 26px 70px rgba(0,0,0,0.5), inset 0 0 0 2px #3a2e22, inset 0 0 0 5px #0a0705; display: flex; flex-direction: column; overflow: hidden; animation: up .28s ease; }
 .screen { position: relative; flex: 1; border-radius: 34px; overflow: hidden; display: flex; flex-direction: column; background: var(--paper); color: var(--ink); }
 @media (max-width: 600px) {
-  .phone-wrap { padding: 0; justify-content: center; background: rgba(28, 20, 13, 0.25); pointer-events: auto; }
-  .phone { width: 100vw; height: min(78dvh, 640px); border-radius: 26px 26px 0 0; padding: 6px 6px 0; box-shadow: 0 -10px 40px rgba(0,0,0,0.4); }
-  .screen { border-radius: 21px 21px 0 0; }
+  .phone-wrap { padding: 0 0 max(10px, env(safe-area-inset-bottom)); justify-content: center; background: rgba(28, 20, 13, 0.25); pointer-events: auto; }
+  .phone { width: min(300px, 86vw); height: min(76dvh, 600px); border-radius: 30px; padding: 6px; box-shadow: 0 10px 40px rgba(0,0,0,0.45); }
+  .screen { border-radius: 25px; }
   .notch { display: none; }
 }
 .status-bar { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 12px 26px 4px; font-size: 13.5px; font-weight: 800; }
@@ -182,16 +182,16 @@ b, strong { font-weight: 700; }
 .battery { width: 24px; height: 12px; border: 1.5px solid var(--ink); border-radius: 3px; padding: 1px; position: relative; }
 .battery::after { content: ""; position: absolute; right: -4px; top: 3px; width: 2px; height: 4px; background: var(--ink); border-radius: 1px; }
 .battery i { display: block; height: 100%; border-radius: 1px; }
-.notch { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 110px; height: 28px; background: #000; border-radius: 20px; z-index: 3; }
-.phone-body { position: relative; flex: 1; overflow-y: auto; padding: 8px 18px 18px; scrollbar-width: none; }
+.notch { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: 92px; height: 24px; background: #000; border-radius: 20px; z-index: 3; }
+.phone-body { position: relative; flex: 1; overflow-y: auto; padding: 8px 14px 16px; scrollbar-width: none; }
 .phone-body::-webkit-scrollbar { display: none; }
-.big-clock { font-size: 52px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; margin-top: 18px; color: var(--ink); }
+.big-clock { font-size: 46px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; margin-top: 18px; color: var(--ink); }
 .widgets { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
 .widget { background: #fff; border: 1px solid var(--line); border-radius: 20px; padding: 12px 13px; box-shadow: 0 2px 8px rgba(60, 40, 15, 0.06); }
 .widget.wide { grid-column: span 2; }
-.apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px 8px; margin-top: 20px; }
-.app { display: flex; flex-direction: column; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 700; color: var(--ink-2); position: relative; }
-.app .icon { width: 56px; height: 56px; border-radius: 17px; display: grid; place-items: center; font-size: 29px; box-shadow: inset 0 -4px 0 rgba(0,0,0,0.14), 0 6px 14px rgba(60, 40, 15, 0.22); }
+.apps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 4px; margin-top: 18px; }
+.app { display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 700; color: var(--ink-2); position: relative; }
+.app .icon { width: 50px; height: 50px; border-radius: 15px; display: grid; place-items: center; font-size: 29px; box-shadow: inset 0 -4px 0 rgba(0,0,0,0.14), 0 6px 14px rgba(60, 40, 15, 0.22); }
 .app .badge { top: -5px; right: 4px; }
 .phone-nav { position: relative; display: flex; justify-content: space-around; padding: 8px 0 14px; border-top: 1px solid var(--line); background: var(--paper-2); }
 .phone-nav button { display: flex; flex-direction: column; align-items: center; font-size: 12px; font-weight: 700; gap: 2px; color: var(--ink-2); padding: 4px 18px; }
