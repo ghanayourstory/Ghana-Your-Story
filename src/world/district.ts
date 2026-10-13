@@ -1,4 +1,4 @@
-// Builds a whole neighbourhood: roads, gutters, pavements, buildings with
+// Builds a whole neighbourhood: roads, pavements, buildings with
 // louvre windows and painted signs, poles and sagging wires, trees, stalls,
 // the beach and the sea. Each district gets its own mood from shared data.
 import * as THREE from "three";
@@ -27,7 +27,7 @@ export interface Collider {
   /** Height in metres (the camera only avoids things taller than itself). */
   h: number;
   /** Gutters block walking but can be jumped over. */
-  kind?: "solid" | "gutter";
+  kind?: "solid";
 }
 
 export interface Interactable {
@@ -184,17 +184,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     curb: std({ map: T.concrete("#d9d4c8", 3), roughness: 0.8 }),
     curbWhite: std({ map: T.concrete("#f1efe9", 5), roughness: 0.75 }),
     curbPaint: std({ color: "#17181a", roughness: 0.7 }),
-    gutter: std({ color: "#2a2724", roughness: 1 }),
-    drainWater: std({ color: "#3b3a2a", roughness: 0.15, metalness: 0.2, transparent: true, opacity: 0.92 }),
-    algae: std({ color: "#3e4a2a", roughness: 1 }),
-    silt: std({ color: "#4a4032", roughness: 1 }),
-    sachet: std({ color: "#e8eef0", roughness: 0.3, transparent: true, opacity: 0.85 }),
-    bottleBlue: std({ color: "#5a8fb8", roughness: 0.2, transparent: true, opacity: 0.8 }),
-    bottleGreen: std({ color: "#3a7a4a", roughness: 0.2, transparent: true, opacity: 0.8 }),
-    bottleClear: std({ color: "#dfe8ea", roughness: 0.1, transparent: true, opacity: 0.7 }),
-    blackBag: std({ color: "#141414", roughness: 0.4 }),
     signalYellow: std({ color: "#f2c200", roughness: 0.6 }),
-    gutterWall: std({ map: T.concrete("#7d776d", 5), roughness: 1 }),
     concrete: std({ map: T.concrete("#b5aea3", 41) }),
     white: std({ color: "#f3f1ea", roughness: 0.6 }),
     yellowLine: std({ color: "#e8b923", roughness: 0.6 }),
@@ -279,7 +269,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   const collide = (x: number, z: number, w: number, dd: number, h = 2.5) => colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - dd / 2, maxZ: z + dd / 2, h });
 
   // -------------------------------------------------------------------------
-  // Ground, roads, gutters, pavements
+  // Ground, roads, pavements
 
   // On the coast the land stops at the waterline so the sea shows through.
   const gz0 = -EXTENT_Z - 20, gz1 = coastal ? ROAD_HALF + 4 : EXTENT_Z + 20;
@@ -328,7 +318,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     }
   }
 
-  // Open gutters, curbs and pavements along the main road.
+  // Curbs and pavements along the main road.
   for (const side of [-1, 1] as const) {
     if (coastal && side === 1) {
       // Beach side: a low sea wall and promenade instead of shops.
@@ -344,35 +334,10 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       box(savanna ? M.curb : M.curbWhite, cx, 0.12, side * (ROAD_HALF + 0.12), len, 0.24, 0.24);
       // Black-and-white painted kerb stones, painted over the top and the road face.
       if (!savanna) for (let x = x0 + 0.5; x < x1; x += 2) box(M.curbPaint, x, 0.122, side * (ROAD_HALF + 0.12), 1, 0.248, 0.252);
-      // A real Accra open drain: rough concrete U-channel, murky water, silt,
-      // algae stains along the waterline and the inevitable sachets and bottles.
-      const gz = side * (ROAD_HALF + 0.55);
-      batch.add(G.plane, M.gutter, [cx, -0.72, gz], [-Math.PI / 2, 0, 0], [len, 0.62, 1]);
-      box(M.gutterWall, cx, -0.28, side * (ROAD_HALF + 0.22), len, 0.9, 0.06);
-      box(M.gutterWall, cx, -0.28, side * (ROAD_HALF + 0.88), len, 0.95, 0.12);
-      box(M.algae, cx, -0.52, side * (ROAD_HALF + 0.255), len, 0.18, 0.012);
-      box(M.algae, cx, -0.52, side * (ROAD_HALF + 0.82), len, 0.18, 0.012);
-      batch.add(G.plane, M.drainWater, [cx, -0.6, gz], [-Math.PI / 2, 0, 0], [len, 0.6, 1]);
-      for (let x = x0 + 1; x < x1 - 1; x += 0.8 + rnd() * 2.4) {
-        const r = rnd();
-        const lz = gz + (rnd() - 0.5) * 0.4;
-        if (r < 0.45) batch.add(G.box, M.sachet, [x, -0.58, lz], [0, rnd() * 3, 0.1], [0.16, 0.03, 0.1]); // "pure water" sachet
-        else if (r < 0.65) batch.add(G.cyl8, [M.bottleBlue, M.bottleGreen, M.bottleClear][Math.floor(rnd() * 3)], [x, -0.57, lz], [0, 0, Math.PI / 2], [0.04, 0.24, 0.04]);
-        else if (r < 0.8) batch.add(G.ico, M.silt, [x, -0.63, lz], [0, 0, 0], [0.2 + rnd() * 0.3, 0.06, 0.18]);
-        else if (r < 0.88) batch.add(G.box, M.blackBag, [x, -0.55, lz], [0, rnd() * 3, 0], [0.28, 0.12, 0.2]);
-      }
-      // Concrete slabs bridging the gutter; between them it's an open drain you jump across.
-      const slabs: number[] = [];
-      for (let x = x0 + 4; x < x1 - 2; x += 9 + rnd() * 8) {
-        box(M.concrete, x, 0.15, side * (ROAD_HALF + 0.55), 1.6, 0.12, 0.85);
-        slabs.push(x);
-      }
-      let gx = x0;
-      for (const sx of [...slabs, x1 + 0.8]) {
-        if (sx - 0.8 > gx) colliders.push({ minX: gx, maxX: sx - 0.8, minZ: Math.min(side * (ROAD_HALF + 0.25), side * (ROAD_HALF + 0.85)), maxZ: Math.max(side * (ROAD_HALF + 0.25), side * (ROAD_HALF + 0.85)), h: 0, kind: "gutter" });
-        gx = sx + 0.8;
-      }
-      batch.add(tiledPlane(len, WALK_OUT - WALK_IN, 3), M.walk, [cx, 0.16, side * ((WALK_IN + WALK_OUT) / 2)], [-Math.PI / 2, 0, 0]);
+      // Pavement runs straight from the kerb to the building line.
+      const p0 = ROAD_HALF + 0.24;
+      batch.add(tiledPlane(len, WALK_OUT - p0, 3), M.walk, [cx, 0.16, side * ((p0 + WALK_OUT) / 2)], [-Math.PI / 2, 0, 0]);
+      box(M.concrete, cx, 0.075, side * ((p0 + WALK_OUT) / 2), len, 0.15, WALK_OUT - p0);
       box(M.curb, cx, 0.08, side * (WALK_OUT + 0.08), len, 0.16, 0.16);
     }
   }

@@ -53,3 +53,10 @@ Development uses a fictional mock league. To use a licensed provider, set `MATCH
 ## Attribution
 
 sql.js (MIT) powers the offline demo. Region boundaries: geoBoundaries gbOpen (Runfola et al. 2020), derived from OpenStreetMap, CC BY-SA 2.0. Vehicle and phone names in the game are fictional. Real car models: see `public/vehicles/CREDITS.md` (CC BY 4.0, Sketchfab authors credited; optimised by the AsciiCity project). All art, textures, dialogue and characters are original. Real place names are used for public landmarks only; businesses are fictional.
+
+## Credits
+
+- Walk and run animation: motion capture from the CMU Graphics Lab Motion Capture Database
+  (mocap.cs.cmu.edu), BVH conversion by B. Hahne (cgspeed.com). "The data used in this project
+  was obtained from mocap.cs.cmu.edu. The database was created with funding from NSF EIA-0196217."
+  Retargeted by `scripts/bake-gait.mjs` (walk 07_01, run 09_02).

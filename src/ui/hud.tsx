@@ -259,7 +259,6 @@ export function Joystick({ world }: { world: World | null }) {
         <i ref={knob} />
       </div>
       <button className={`run-btn ${run ? "on" : ""}`} onClick={() => setRun(!run)} aria-label="Run">🏃🏾</button>
-      <button className="run-btn jump-btn" onClick={() => world?.jump()} aria-label="Jump">⤒</button>
     </>
   );
 }

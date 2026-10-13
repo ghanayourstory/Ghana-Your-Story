@@ -4,6 +4,7 @@
 import * as THREE from "three";
 import { mergeVertices } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { fabric } from "./textures.ts";
+import { GAIT, type GaitClip } from "./gait-data.ts";
 import type { PersonLook } from "./people.ts";
 import { OUTFITS, defaultOutfit, type ShoeId } from "../../shared/clothing.ts";
 
@@ -131,7 +132,7 @@ function fabricTex(pattern: string, color: string) {
   return t;
 }
 
-function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; crotch?: [number, number, number]; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
+function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; thighs: boolean; shins: boolean; feet: boolean; sleeveX: number; crotch?: [number, number, number]; toga?: [number, number, number]; longSleeve?: { tex: THREE.Texture; elbowX: number; wristX: number } }, neck: [number, number, number] = [99, 99, 0]) {
   // Physical material with a soft sheen reads more like skin than plain plastic.
   const m = new THREE.MeshPhysicalMaterial({ color: "#ffffff", roughness: 0.78, metalness: 0, sheen: 0.15, sheenRoughness: 0.9, sheenColor: new THREE.Color(look.skin).lerp(new THREE.Color("#ffb08a"), 0.5) });
   // Stylised: a touch lighter and warmer than the swatch so faces read in shade.
@@ -160,6 +161,7 @@ function personMaterial(look: PersonLook, skirt: boolean, hide: { top: boolean; 
     uHideFeet: { value: hide.feet ? 1 : 0 },
     uNeckY: { value: neck[1] },
     uCrotch: { value: new THREE.Vector3(...(hide.crotch ?? [-9, -9, 0])) },
+    uToga: { value: new THREE.Vector3(...(hide.toga ?? [99, 99, 1])) },
     uNeckZ: { value: neck[2] },
   };
   m.onBeforeCompile = (shader) => {
@@ -179,7 +181,7 @@ varying vec3 vObjPos;
 uniform float uFem; uniform float uRows;
 uniform vec3 uSkin; uniform sampler2D uShirtTex; uniform sampler2D uPantsTex; uniform vec3 uShoe; uniform vec3 uHair; uniform vec3 uLips;
 uniform float uShortHair; uniform float uSkirt; uniform float uHideTop; uniform float uHideThighs; uniform float uHideShins; uniform float uHideFeet; uniform float uNeckY; uniform float uNeckZ; uniform float uSleeveX;
-uniform vec3 uCrotch;
+uniform vec3 uCrotch; uniform vec3 uToga;
 uniform float uLongSleeve; uniform sampler2D uSleeveTex; uniform float uElbowX; uniform float uWristX;
 float hHash(vec3 p) { return fract(sin(dot(p, vec3(12.9898, 78.233, 37.719))) * 43758.5453); }
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
@@ -204,7 +206,8 @@ float skinH;`,
 float rg = floor(vRegion + 0.5);
 // Skin under garments is hidden so it never pokes through the cloth.
 float neckLine = uNeckY - 0.085 + 3.0 * vObjPos.x * vObjPos.x - max(0.0, uNeckZ - vObjPos.z) * 0.3;
-if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < neckLine - 0.012 && abs(vObjPos.x) < uSleeveX - 0.01) || (uHideThighs > 0.5 && rg == 3.0) || (uHideShins > 0.5 && rg == 6.0) || (uHideFeet > 0.5 && rg == 4.0)) discard;
+float togaLine = mix(uToga.x, uToga.y, smoothstep(-uToga.z, uToga.z * 0.7, vObjPos.x));
+if ((uHideTop > 0.5 && (rg == 1.0 || rg == 2.0) && vObjPos.y < min(neckLine - 0.012, togaLine - 0.012) && abs(vObjPos.x) < uSleeveX - 0.01) || (uHideThighs > 0.5 && rg == 3.0) || (uHideShins > 0.5 && rg == 6.0) || (uHideFeet > 0.5 && rg == 4.0)) discard;
 // Between the legs under trousers or a skirt: nothing of the body should show.
 if (vObjPos.y < uCrotch.x && vObjPos.y > uCrotch.y && abs(vObjPos.x) < uCrotch.z) discard;
 vec3 c = uSkin;
@@ -246,13 +249,13 @@ diffuseColor.rgb = c;`,
       .replace("#include <roughnessmap_fragment>", "#include <roughnessmap_fragment>\nroughnessFactor = rough;")
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, skinH, 0.00012);");
   };
-  m.customProgramCacheKey = () => "sika-human-5";
+  m.customProgramCacheKey = () => "sika-human-6";
   return m;
 }
 
 /** Cloth with a triplanar-projected pattern: no UV seams, pattern scale in real centimetres. */
 /** Garment details drawn on the top: 0 none, 1 suit jacket (lapels, shirt, tie, buttons), 2 collared shirt, 3 jersey trim. */
-interface TopStyle { sleeveX: number; style: number; inner: string; tie: string }
+interface TopStyle { sleeveX: number; style: number; inner: string; tie: string; toga?: [number, number, number] }
 function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99, top: TopStyle = { sleeveX: 99, style: 0, inner: "#ffffff", tie: "#000000" }) {
   const m = new THREE.MeshStandardMaterial({ roughness: top.style === 1 ? 0.7 : 0.92, side: THREE.DoubleSide });
   m.onBeforeCompile = (shader) => {
@@ -264,11 +267,12 @@ function fabricMaterial(tex: THREE.Texture, neckY = 99, neckZ = 0, hemY = -99, t
     shader.uniforms.uStyle = { value: top.style };
     shader.uniforms.uInner = { value: new THREE.Color(top.inner) };
     shader.uniforms.uTie = { value: new THREE.Color(top.tie) };
+    shader.uniforms.uToga = { value: new THREE.Vector3(...(top.toga ?? [99, 99, 1])) };
     shader.vertexShader = shader.vertexShader
       .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;")
       .replace("#include <begin_vertex>", "#include <begin_vertex>\nvRest = position;\nvRestN = normal;");
     shader.fragmentShader = shader.fragmentShader
-      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nuniform float uSleeveX;\nuniform float uStyle;\nuniform vec3 uInner;\nuniform vec3 uTie;\nfloat foldH;\n" + `
+      .replace("#include <common>", "#include <common>\nvarying vec3 vRest;\nvarying vec3 vRestN;\nuniform sampler2D uFabric;\nuniform float uNeckY;\nuniform float uNeckZ;\nuniform float uHemY;\nuniform float uSleeveX;\nuniform float uStyle;\nuniform vec3 uInner;\nuniform vec3 uTie;\nuniform vec3 uToga;\nfloat foldH;\n" + `
 float vHash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
 float vNoise(vec3 x) {
   vec3 i = floor(x); vec3 f = fract(x); f = f * f * (3.0 - 2.0 * f);
@@ -288,6 +292,8 @@ vec3 bumpNormal(vec3 n, float h, float scale) {
         `#include <color_fragment>
 // A clean round neckline instead of the mesh's jagged edge.
 if (vRest.y > uNeckY - 0.085 + 3.0 * vRest.x * vRest.x - max(0.0, uNeckZ - vRest.z) * 0.3) discard;
+// Kente worn the traditional way: over the left shoulder, the right shoulder and chest bare.
+if (vRest.y > mix(uToga.x, uToga.y, smoothstep(-uToga.z, uToga.z * 0.7, vRest.x))) discard;
 // A straight hem instead of the mesh edge.
 if (vRest.y < uHemY && abs(vRest.x) < 0.3) discard;
 // Sleeve length: cut the arm off where the sleeve ends.
@@ -327,7 +333,7 @@ diffuseColor.rgb = fab;`,
       )
       .replace("#include <normal_fragment_maps>", "#include <normal_fragment_maps>\nnormal = bumpNormal(normal, foldH, 0.006);");
   };
-  m.customProgramCacheKey = () => "sika-fabric-4";
+  m.customProgramCacheKey = () => "sika-fabric-5";
   return m;
 }
 
@@ -345,6 +351,9 @@ export interface HumanRig {
   legAdduct: number;
   body: THREE.Group;
   walkBlend?: number;
+  /** Seconds alive (idle breathing and glances). */
+  clock?: number;
+  gender: "male" | "female";
   phase: number;
   speed: number;
   talk: number;
@@ -388,6 +397,8 @@ export function buildHuman(look: PersonLook): HumanRig | null {
   const pattern = outfit.pattern ?? (outfit.id === "suit" ? "plain" : look.pattern ?? "plain");
   // Suits: jacket and trousers share the dark colour; the shirt is white and the tie takes the top colour.
   const jacketColor = outfit.id === "suit" ? look.pants : look.shirt;
+  // Kente: the cloth line runs from under the right arm up over the left shoulder.
+  const toga: [number, number, number] | undefined = outfit.id === "kente" && neckHead ? [neckHead[1] - 0.25, neckHead[1] + 0.06, arm.shoulder[0]] : undefined;
   const mesh = new THREE.SkinnedMesh(t.geometry, personMaterial(look, lower !== "trousers" && lower !== "shorts", {
     top: true,
     thighs: true,
@@ -395,6 +406,7 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     feet: closedShoes,
     sleeveX,
     crotch: [a.hips.waistY - 0.06, a.hips.kneeY, a.hips.hipHalfWidth * 0.45],
+    toga,
     longSleeve: outfit.sleeves === "long" ? { tex: fabricTex(pattern, jacketColor), elbowX: arm.elbow[0], wristX: arm.wrist[0] } : undefined,
   }, neckHead));
   mesh.add(bones[0]);
@@ -415,19 +427,56 @@ export function buildHuman(look: PersonLook): HumanRig | null {
     garments.push(g);
   };
   const h = a.hips;
-  // Rigid cloth around the hips and legs (skirts, smock flare, jacket tails, kente): a lathe that moves with the pelvis.
+  // Cloth around the hips and legs (skirts, smock flare, jacket tails, kente): a lathe skinned to the
+  // legs, so each side swings with the leg under it and the cloth between them follows both.
+  const boneIx = (n: string) => a.bones.findIndex((b) => b.name === n);
+  const [ROOT, SPINE, THL, THR, SHL, SHR] = ["root", "spine05", "upperleg01.L", "upperleg01.R", "lowerleg01.L", "lowerleg01.R"].map(boneIx);
+  const legX = a.bones[THL].head[0];
   const lathe = (tex: THREE.Texture, prof: [number, number][], repeat: [number, number], rough = 0.9) => {
     const t2 = tex.clone();
     t2.repeat.set(...repeat);
     t2.needsUpdate = true;
-    const geo2 = new THREE.LatheGeometry(prof.map(([rr, y]) => new THREE.Vector2(rr, y)), 32);
-    const m2 = new THREE.Mesh(geo2, new THREE.MeshStandardMaterial({ map: t2, roughness: rough, side: THREE.DoubleSide }));
-    m2.scale.set(1, 1, 0.82);
+    // Finer rings down the length (every ~4 cm) so the cloth bends smoothly at the knee.
+    const fine: THREE.Vector2[] = [];
+    for (let k = 0; k < prof.length - 1; k++) {
+      const [r0, y0] = prof[k], [r1, y1] = prof[k + 1];
+      const steps = Math.max(1, Math.ceil(Math.abs(y1 - y0) / 0.04));
+      for (let j = 0; j < steps; j++) fine.push(new THREE.Vector2(r0 + ((r1 - r0) * j) / steps, y0 + ((y1 - y0) * j) / steps));
+    }
+    fine.push(new THREE.Vector2(...prof[prof.length - 1]));
+    const geo2 = new THREE.LatheGeometry(fine, 40);
+    geo2.scale(1, 1, 0.82);
+    const pos = geo2.attributes.position as THREE.BufferAttribute;
+    const n = pos.count;
+    const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+    const waist = h.waistY, knee = h.kneeY;
+    for (let i = 0; i < n; i++) {
+      const x = pos.getX(i), y = pos.getY(i);
+      // Which leg: by side, blended across the middle so the front and back follow both.
+      const wl = THREE.MathUtils.clamp(0.5 + (x * Math.sign(legX)) / (Math.abs(legX) * 2.4), 0, 1), wr = 1 - wl;
+      if (y >= knee) {
+        // Hips to knee: from the body at the waist to the thighs further down.
+        const t = Math.pow(THREE.MathUtils.clamp((waist + 0.02 - y) / (waist + 0.02 - knee), 0, 1), 0.8);
+        const body0 = 1 - t;
+        si.set([y > waist + 0.05 ? SPINE : ROOT, THL, THR, ROOT], i * 4);
+        sw.set([body0, t * wl, t * wr, 0], i * 4);
+      } else {
+        // Below the knee: hand over from thigh to shin.
+        const u = THREE.MathUtils.smoothstep(knee - y, 0, 0.18);
+        si.set([THL, THR, SHL, SHR], i * 4);
+        sw.set([(1 - u) * wl, (1 - u) * wr, u * wl, u * wr], i * 4);
+      }
+    }
+    geo2.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(si, 4));
+    geo2.setAttribute("skinWeight", new THREE.Float32BufferAttribute(sw, 4));
+    const m2 = new THREE.SkinnedMesh(geo2, new THREE.MeshStandardMaterial({ map: t2, roughness: rough, side: THREE.DoubleSide }));
+    m2.bind(skeleton, mesh.bindMatrix);
     m2.castShadow = true;
+    m2.frustumCulled = false;
     body.add(m2);
   };
   const hipR = h.hipHalfWidth;
-  const topStyle = { sleeveX, style: outfit.jacket ? 1 : outfit.collar ? 2 : outfit.id === "jersey" ? 3 : 0, inner: "#f4f2ec", tie: look.shirt };
+  const topStyle = { sleeveX, style: outfit.jacket ? 1 : outfit.collar ? 2 : outfit.id === "jersey" ? 3 : 0, inner: "#f4f2ec", tie: look.shirt, toga };
   const topMat = fabricMaterial(fabricTex(pattern, jacketColor), neckHead?.[1], neckHead?.[2], h.waistY - (outfit.jacket ? 0.16 : 0.1), topStyle);
   dress(t.shells.top, topMat);
   if (outfit.jacket) lathe(fabricTex("plain", jacketColor), [[hipR * 0.92, h.waistY + 0.02], [hipR * 1.04, h.waistY - 0.1], [hipR * 1.08, h.waistY - 0.2]], [6, 2], 0.7);
@@ -498,7 +547,7 @@ export function buildHuman(look: PersonLook): HumanRig | null {
   // The A-pose forearms point forward; this brings them down to hang naturally.
   const forearmFix = Math.atan2(a.arm.wrist[2] - a.arm.elbow[2], a.arm.elbow[1] - a.arm.wrist[1]) - 0.18;
   const legAdduct = Math.atan2(a.leg.foot[0] - a.leg.hip[0], a.leg.hip[1] - a.leg.foot[1]) - 0.035;
-  return { root, mesh, body, bones: byName, rest, armDrop, forearmFix, legAdduct, phase: Math.random() * 10, speed: 0, talk: 0, carry: look.carry === "tray", real: true };
+  return { root, mesh, body, bones: byName, rest, armDrop, forearmFix, legAdduct, gender: look.feminine ? "female" : "male", phase: Math.random() * 10, speed: 0, talk: 0, carry: look.carry === "tray", real: true };
 }
 
 const hairMats = new Map<string, THREE.Material>();
@@ -618,118 +667,99 @@ function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: n
 }
 
 // ---------------------------------------------------------------------------
-// Gait. Joint angles follow normative human gait curves (degrees over one
-// stride, 0 = right heel strike), sampled periodically with Catmull-Rom.
+// Gait: real motion capture. The walk and run cycles come from the CMU Graphics
+// Lab Motion Capture Database, retargeted onto these skeletons by
+// scripts/bake-gait.mjs. Playback speed follows how fast you're going, so the
+// feet stay planted; walk blends into run with speed, and both ease into a
+// living idle (breathing, weight shift, looking about) when you stop.
 
-type Curve = [number, number][];
-const WALK = {
-  hip: [[0, 28], [0.1, 24], [0.3, 6], [0.5, -10], [0.6, -6], [0.75, 18], [0.88, 30]] as Curve,
-  knee: [[0, 4], [0.14, 18], [0.38, 5], [0.55, 18], [0.7, 60], [0.82, 38], [0.95, 4]] as Curve,
-  ankle: [[0, 0], [0.07, -6], [0.4, 10], [0.6, -18], [0.68, -8], [0.8, 2], [0.95, 0]] as Curve,
-};
-const RUN = {
-  hip: [[0, 38], [0.15, 22], [0.35, -12], [0.45, -18], [0.6, 10], [0.8, 48], [0.92, 44]] as Curve,
-  knee: [[0, 18], [0.12, 40], [0.3, 22], [0.45, 30], [0.65, 105], [0.82, 80], [0.95, 25]] as Curve,
-  ankle: [[0, 4], [0.12, 14], [0.32, -20], [0.42, -24], [0.6, -4], [0.85, 4], [0.95, 4]] as Curve,
-};
-
-function sample(c: Curve, t: number): number {
-  t = ((t % 1) + 1) % 1;
-  const n = c.length;
-  let i = n - 1;
-  for (let k = 0; k < n; k++) if (c[k][0] > t) { i = k - 1; break; }
-  if (i < 0) i = n - 1;
-  const p1 = c[i], p2 = c[(i + 1) % n];
-  const p0 = c[(i - 1 + n) % n], p3 = c[(i + 2) % n];
-  const t1 = p1[0], t2 = p2[0] <= t1 ? p2[0] + 1 : p2[0];
-  const tt = t < t1 ? t + 1 : t;
-  const u = (tt - t1) / (t2 - t1);
-  const u2 = u * u, u3 = u2 * u;
-  return 0.5 * (2 * p1[1] + (-p0[1] + p2[1]) * u + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * u2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * u3);
+const qWalk = new THREE.Quaternion(), qRun = new THREE.Quaternion(), qTmp = new THREE.Quaternion();
+function sampleClip(c: GaitClip, bone: string, t: number, out: THREE.Quaternion) {
+  const arr = c.bones[bone];
+  const n = arr.length / 4;
+  const f = (((t % 1) + 1) % 1) * n;
+  const i0 = Math.floor(f) % n, i1 = (i0 + 1) % n;
+  out.fromArray(arr, i0 * 4);
+  qTmp.fromArray(arr, i1 * 4);
+  return out.slerp(qTmp, f - Math.floor(f));
 }
-
-const D = Math.PI / 180;
+function sampleRoot(c: GaitClip, t: number): [number, number] {
+  const n = c.root.length / 2;
+  const f = (((t % 1) + 1) % 1) * n;
+  const i0 = Math.floor(f) % n, i1 = (i0 + 1) % n, u = f - Math.floor(f);
+  return [c.root[i0 * 2] * (1 - u) + c.root[i1 * 2] * u, c.root[i0 * 2 + 1] * (1 - u) + c.root[i1 * 2 + 1] * u];
+}
 
 /** Bone-driven walk/run/idle. speed in m/s. */
 export function animateHuman(r: HumanRig, dt: number, speed: number) {
-  r.speed += (speed - r.speed) * Math.min(1, dt * 10);
+  r.speed += (speed - r.speed) * Math.min(1, dt * 8);
+  r.clock = (r.clock ?? 0) + dt;
   const v = r.speed;
   const B = r.bones;
   const set = (name: string, x: number, y = 0, z = 0) => B[name]?.rotation.set(x, y, z);
   const drop = r.armDrop;
+  const gait = GAIT[r.gender];
   const moving = v > 0.12;
-  // Stride frequency rises with speed (cadence ~105 steps/min at 1.3 m/s).
-  // NPCs walk at ~1.3 m/s; you walk briskly at ~2.7 m/s and run at ~6 m/s.
-  const run = THREE.MathUtils.smoothstep(v, 3.4, 5.2);
-  const freq = moving ? THREE.MathUtils.lerp(0.55 + 0.26 * v, 1.2 + 0.11 * v, run) : 0;
-  const amt = THREE.MathUtils.smoothstep(v, 0.12, 1.1); // blend in from standing
-  r.phase = (r.phase + dt * (freq || 0.35)) % 1000;
+  if (moving) r.walkBlend = Math.min(1, (r.walkBlend ?? 0) + dt * 5);
+  else r.walkBlend = Math.max(0, (r.walkBlend ?? 0) - dt * 4);
+  const wb = r.walkBlend * THREE.MathUtils.smoothstep(v, 0.05, 0.6);
+  // Walk → run between a brisk walk and a jog.
+  const run = THREE.MathUtils.smoothstep(v, 2.4, 3.8);
+  // Cycles per second: the clip's own cadence, sped up for longer, faster strides (cadence rises
+  // more slowly than speed, as in real people; the stride covers the rest).
+  const ws = gait.walk.stride / gait.walk.duration, rs = gait.run.stride / gait.run.duration;
+  const vv = Math.max(v, 0.4);
+  const rate = THREE.MathUtils.lerp(Math.pow(vv / ws, 0.7) / gait.walk.duration, Math.pow(vv / rs, 0.55) / gait.run.duration, run);
+  if (moving) r.phase = (r.phase + dt * rate) % 1000;
   const t = r.phase % 1;
-  if (moving) r.walkBlend = Math.min(1, (r.walkBlend ?? 0) + dt * 4);
-  else r.walkBlend = Math.max(0, (r.walkBlend ?? 0) - dt * 3);
-  const wb = r.walkBlend * amt;
-  const stride = THREE.MathUtils.clamp(v / Math.max(0.5, freq) / 1.4, 0.4, 1.9); // scale angles to stride length
-  const g = (curve: "hip" | "knee" | "ankle", tt: number) => THREE.MathUtils.lerp(sample(WALK[curve], tt), sample(RUN[curve], tt), run);
-  const legs = (side: "L" | "R", off: number) => {
-    const tt = t + off;
-    const hip = g("hip", tt) * (curve01(stride));
-    const knee = g("knee", tt);
-    const ankle = g("ankle", tt);
-    const ad = side === "L" ? -r.legAdduct : r.legAdduct;
-    set(`upperleg01.${side}`, -hip * D * wb, 0, ad);
-    set(`lowerleg01.${side}`, knee * D * wb, 0, 0);
-    set(`foot.${side}`, -ankle * D * wb, 0, -ad);
-  };
-  legs("R", 0);
-  legs("L", 0.5);
-  // Pelvis: rotates towards the forward leg and drops on the swing side.
-  const ph = t * Math.PI * 2;
-  const pelvisYaw = Math.cos(ph) * 5 * D * wb * (1 + run * 0.6);
-  const pelvisRoll = Math.sin(ph * 2) * 3.5 * D * wb * (1 - run * 0.5);
-  set("root", 0, pelvisYaw, pelvisRoll);
-  // Trunk counter-rotates and leans into the motion; head stays level.
-  const lean = (3 + run * 9) * D * wb;
-  set("spine05", 0, -pelvisYaw * 0.6, -pelvisRoll * 0.8);
-  set("spine03", lean * 0.6, -pelvisYaw * 0.9, 0);
-  set("spine01", lean * 0.4, -pelvisYaw * 0.4, 0);
-  // Arms swing opposite the legs; elbows bend more when running.
-  const swing = (14 + 22 * run) * D * wb * curve01(stride);
-  const elbowBase = (18 + 62 * run) * D;
-  const armL = Math.cos(ph) * swing; // left arm forward with right leg
-  if (!r.carry) {
-    set("upperarm01.L", -armL, 0, -drop);
-    set("upperarm01.R", armL, 0, drop);
-    set("lowerarm01.L", r.forearmFix - (elbowBase + Math.max(0, armL) * 0.8) * wb - 0.08 * (1 - wb));
-    set("lowerarm01.R", r.forearmFix - (elbowBase + Math.max(0, -armL) * 0.8) * wb - 0.08 * (1 - wb));
-  }
-  // Centre of mass: two rises per stride (highest mid-stance), sideways over the stance foot.
-  const bob = Math.cos((t - 0.3) * Math.PI * 4) * (0.018 + 0.03 * run) * wb - 0.01 * wb;
-  const sway = Math.sin(ph) * 0.018 * wb * (1 - run * 0.7);
-  r.body.position.set(sway, bob, 0);
-  set("neck02", -lean * 0.7, pelvisYaw * 0.8, 0);
 
-  // Idle: breathing, weight shift and an occasional look around.
+  // Idle pose first: feet under the hips, arms relaxed at the sides.
+  for (const sd of ["L", "R"] as const) {
+    const ad = sd === "L" ? -r.legAdduct : r.legAdduct;
+    set(`upperleg01.${sd}`, 0, 0, ad);
+    set(`lowerleg01.${sd}`, 0);
+    set(`foot.${sd}`, 0, 0, -ad);
+    set(`clavicle.${sd}`, 0);
+  }
+  set("upperarm01.L", 0, 0, -drop);
+  set("upperarm01.R", 0, 0, drop);
+  set("lowerarm01.L", r.forearmFix - 0.1);
+  set("lowerarm01.R", r.forearmFix - 0.1);
+  for (const n of ["root", "spine05", "spine03", "spine01", "neck01", "neck02", "neck03", "head"]) set(n, 0);
+  r.body.position.set(0, 0, 0);
   const idle = 1 - wb;
   if (idle > 0.01) {
-    const time = r.phase / 0.35;
+    const time = r.clock;
     const br = Math.sin(time * 1.6);
-    const shift = Math.sin(time * 0.25);
-    B["spine03"].rotation.x += (0.012 + br * 0.008) * idle;
-    B["root"].rotation.z += shift * 0.025 * idle;
-    B["upperleg01.L"].rotation.z += shift * 0.02 * idle;
-    B["upperleg01.R"].rotation.z += shift * 0.02 * idle;
-    B["lowerleg01.L"].rotation.x += Math.max(0, shift) * 0.08 * idle;
-    B["lowerleg01.R"].rotation.x += Math.max(0, -shift) * 0.08 * idle;
-    B["neck02"].rotation.y += Math.sin(time * 0.31) * Math.sin(time * 0.13) * 0.35 * idle;
-    r.body.position.x += shift * 0.012 * idle;
-    if (!r.carry) {
-      const tk = r.talk > 0 ? Math.sin(time * 3) * 0.3 : 0;
-      B["upperarm01.L"].rotation.x += br * 0.02 * idle;
-      if (r.talk > 0) {
-        set("upperarm01.R", -0.5 - tk, 0, drop - 0.2);
-        set("lowerarm01.R", r.forearmFix - 1.2 + tk * 0.4);
-      }
+    const shift = Math.sin(time * 0.25 + r.phase);
+    B["spine03"].rotation.x += 0.012 + br * 0.008;
+    B["root"].rotation.z += shift * 0.025;
+    B["upperleg01.L"].rotation.z += shift * 0.02;
+    B["upperleg01.R"].rotation.z += shift * 0.02;
+    B["lowerleg01.L"].rotation.x += Math.max(0, shift) * 0.08;
+    B["lowerleg01.R"].rotation.x += Math.max(0, -shift) * 0.08;
+    B["neck02"].rotation.y += Math.sin(time * 0.31) * Math.sin(time * 0.13) * 0.35;
+    B["upperarm01.L"].rotation.x += br * 0.02;
+    r.body.position.x += shift * 0.012;
+  }
+  // Then the motion-captured walk and run, blended in as you get going.
+  if (wb > 0.001) {
+    for (const name in gait.walk.bones) {
+      const bone = B[name];
+      // The head stays level (people look where they're going), so the neck isn't taken from the capture.
+      if (!bone || name === "neck01" || name === "neck03" || name === "head") continue;
+      sampleClip(gait.walk, name, t, qWalk);
+      if (run > 0) qWalk.slerp(sampleClip(gait.run, name, t, qRun), run);
+      bone.quaternion.slerp(qWalk, wb);
     }
+    const [wx, wy] = sampleRoot(gait.walk, t), [rx, ry] = sampleRoot(gait.run, t);
+    r.body.position.x = THREE.MathUtils.lerp(r.body.position.x, THREE.MathUtils.lerp(wx, rx, run), wb);
+    r.body.position.y = THREE.MathUtils.lerp(0, THREE.MathUtils.lerp(wy, ry, run), wb);
+  }
+  if (!r.carry && r.talk > 0 && idle > 0.5) {
+    const tk = Math.sin(r.clock * 3) * 0.3;
+    set("upperarm01.R", -0.5 - tk, 0, drop - 0.2);
+    set("lowerarm01.R", r.forearmFix - 1.2 + tk * 0.4);
   }
   if (r.carry) {
     // One hand steadies the head tray.
@@ -737,11 +767,6 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
     set("lowerarm01.R", r.forearmFix - 0.4, 0, 0);
   }
   if (r.talk > 0) r.talk -= dt;
-}
-
-/** Hip swing amplitude scales gently with stride length. */
-function curve01(stride: number) {
-  return 0.55 + 0.45 * stride;
 }
 
 /** Attach something to the top of a person's head (vendors' trays). */

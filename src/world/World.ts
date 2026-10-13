@@ -216,11 +216,6 @@ export class World {
   private minuteAt = performance.now();
   private weather: Weather = "sunny";
   private rings: THREE.Mesh[] = [];
-  private jumpY = 0;
-  /** Horizontal velocity locked in for a hop, so a jump carries you across a drain. */
-  private hopVel: THREE.Vector3 | null = null;
-  private jumpYPrev = 0;
-  private vy = 0;
   private boom = 13;
   private siteBox: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
   /** A fixed pool of street-light point lights that follows the player (cheap on phones). */
@@ -1690,7 +1685,6 @@ export class World {
       const c = g.position.clone().addScaledVector(fwd, off);
       const was = c.clone();
       for (const col of this.district?.colliders ?? []) {
-        if (col.kind === "gutter") continue;
         this.pushOutBox(c, r, col.minX, col.maxX, col.minZ, col.maxZ);
       }
       for (const v of [...(this.life?.solidVehicles() ?? []), ...this.parkedCars.map((p) => p.rig)]) {
@@ -2113,10 +2107,6 @@ export class World {
         return;
       }
       this.keys.add(e.key.toLowerCase());
-      if (e.key === " ") {
-        e.preventDefault();
-        this.jump();
-      }
       this.audio.start();
     };
     const up = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
@@ -2187,7 +2177,6 @@ export class World {
   private collides(p: THREE.Vector3, r: number) {
     if (this.inside) return false;
     for (const c of this.district?.colliders ?? []) {
-      if (c.kind === "gutter") continue;
       if (p.x + r > c.minX && p.x - r < c.maxX && p.z + r > c.minZ && p.z - r < c.maxZ) return true;
     }
     return false;
@@ -2201,27 +2190,6 @@ export class World {
     return false;
   }
 
-  private crouch = 0;
-  private landT = 0;
-  jump() {
-    if (this.inside || this.jumpY > 0.02 || this.crouch > 0 || this.frozen || this.drive || this.ride) return;
-    // A short crouch first, then take-off (~0.65 m high, ~0.6 s in the air).
-    this.crouch = 0.09;
-    this.jumpY = 0.001;
-    this.vy = 0;
-    // A jump while moving is a stride across: at least 2.4 m/s, enough to clear a 0.6 m drain from a walk.
-    const sp = Math.hypot(this.vel.x, this.vel.z);
-    if (sp > 0.3) this.hopVel = new THREE.Vector3(this.vel.x, 0, this.vel.z).multiplyScalar(Math.max(sp, 3) / sp);
-  }
-
-  /** Is there an open drain just ahead in this direction? */
-  private gutterAhead(dir: THREE.Vector3): boolean {
-    const px = this.pos.x + dir.x * 0.6, pz = this.pos.z + dir.z * 0.6;
-    for (const c of this.district?.colliders ?? []) {
-      if (c.kind === "gutter" && px > c.minX && px < c.maxX && pz > c.minZ - 0.05 && pz < c.maxZ + 0.05) return true;
-    }
-    return false;
-  }
 
   private pushOutBox(p: THREE.Vector3, r: number, minX: number, maxX: number, minZ: number, maxZ: number) {
     if (p.x + r <= minX || p.x - r >= maxX || p.z + r <= minZ || p.z - r >= maxZ) return;
@@ -2241,11 +2209,7 @@ export class World {
       for (const c of this.interior.storeys?.levels[this.level]?.colliders ?? this.interior.colliders) this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
       return;
     }
-    const airborne = this.jumpY > 0.05 || !!this.hopVel;
-    for (const c of this.district?.colliders ?? []) {
-      if (c.kind === "gutter" && airborne) continue; // jumping clears the drain
-      this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
-    }
+    for (const c of this.district?.colliders ?? []) this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
     // Vehicles (moving and parked): oriented boxes.
     for (const v of [...(this.life?.solidVehicles() ?? []), ...this.parkedCars.map((c) => c.rig)]) {
       const g = v.group;
@@ -2379,79 +2343,31 @@ export class World {
     const running = this.run || this.keys.has("shift") || mag > 0.95 && (this.joy.x !== 0 || this.joy.y !== 0) && Math.hypot(this.joy.x, this.joy.y) > 0.98;
     const energy = this.state?.player.stats.energy ?? 50;
     // Game pace on a full-size city: a brisk walk and a proper run (people around you still stroll).
-    const maxSpeed = (running ? 6.2 : 2.7) * (energy < 10 ? 0.7 : 1) * (this.inside ? 0.75 : 1);
+    const maxSpeed = (running ? 5.6 : 2.2) * (energy < 10 ? 0.7 : 1) * (this.inside ? 0.75 : 1);
     if (mag > 0.05) {
       const fwd = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw));
       const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
       const dir = autoDir ?? fwd.multiplyScalar(iz).add(right.multiplyScalar(ix)).normalize();
       // Snappy: reach full speed in about a fifth of a second; less grip in the air.
-      const grip = this.jumpY > 0.02 ? 3 : 14;
+      const grip = 14;
       this.vel.lerp(dir.multiplyScalar(maxSpeed * mag), Math.min(1, dt * grip));
       const targetYaw = Math.atan2(dir.x, dir.z);
       let dy = targetYaw - this.yaw;
       dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
       this.yaw += dy * Math.min(1, dt * 18);
     } else {
-      this.vel.multiplyScalar(Math.max(0, 1 - dt * (this.jumpY > 0.02 ? 1 : 16)));
-    }
-    // Walking into an open drain: hop across it, the way everyone does.
-    if (!this.inside && !this.hopVel && this.jumpY === 0 && !this.drive && !this.ride) {
-      const sp = Math.hypot(this.vel.x, this.vel.z);
-      if (sp > 0.5 && this.gutterAhead(new THREE.Vector3(this.vel.x / sp, 0, this.vel.z / sp))) this.jump();
+      this.vel.multiplyScalar(Math.max(0, 1 - dt * 16));
     }
     const before = this.pos.clone();
-    this.pos.addScaledVector(this.hopVel ?? this.vel, dt);
+    this.pos.addScaledVector(this.vel, dt);
     this.resolve(this.pos, 0.32);
     this.climb(before);
-    // Jumping: a quick crouch, a game-weight arc (stronger gravity than real life so it feels snappy), a soft landing.
-    if (this.crouch > 0) {
-      this.crouch -= dt;
-      if (this.crouch <= 0) { this.crouch = 0; this.vy = 5.6; }
-    } else {
-      const wasAir = this.jumpY > 0;
-      this.vy -= (this.vy > 0 ? 17 : 24) * dt;
-      this.jumpY = Math.max(0, this.jumpY + this.vy * dt);
-      if (this.jumpY === 0) {
-        if (wasAir) this.landT = 0.16;
-        this.vy = 0;
-        this.hopVel = null;
-      }
-    }
-    this.landT = Math.max(0, this.landT - dt);
     const gy = this.groundY(this.pos);
     if (this.player) {
-      this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y - this.jumpYPrev, gy, Math.min(1, dt * 14)) + this.jumpY, this.pos.z);
-      this.jumpYPrev = this.jumpY;
+      this.player.root.position.set(this.pos.x, THREE.MathUtils.lerp(this.player.root.position.y, gy, Math.min(1, dt * 14)), this.pos.z);
       this.player.root.rotation.y = this.yaw;
-      animatePerson(this.player, dt, this.jumpY > 0 || this.crouch > 0 || this.doing ? 0 : this.vel.length());
+      animatePerson(this.player, dt, this.doing ? 0 : this.vel.length());
       if (this.doing) this.updateDoing(dt, t);
-      if ("real" in this.player && !this.doing) {
-        const b = this.player.bones;
-        const D = Math.PI / 180;
-        if (this.crouch > 0 || this.landT > 0) {
-          // Bend the knees: wind up before take-off, absorb the landing.
-          const k = this.crouch > 0 ? 1 - this.crouch / 0.09 : this.landT / 0.16;
-          for (const sd of ["L", "R"]) {
-            b[`upperleg01.${sd}`].rotation.x = -38 * D * k;
-            b[`lowerleg01.${sd}`].rotation.x = 70 * D * k;
-            b[`foot.${sd}`].rotation.x = -30 * D * k;
-          }
-          b["spine03"].rotation.x = 14 * D * k;
-          this.player.body.position.y = -0.14 * k;
-        } else if (this.jumpY > 0.02) {
-          // In the air: knees tucked, arms up and out for balance; one leg leads when moving.
-          const up = this.vy > 0 ? 1 : 0.6;
-          const moving = Math.hypot(this.vel.x, this.vel.z) > 0.5 || !!this.hopVel;
-          b["upperleg01.L"].rotation.x = (moving ? -70 : -45) * D;
-          b["lowerleg01.L"].rotation.x = (moving ? 40 : 85) * D;
-          b["upperleg01.R"].rotation.x = (moving ? 10 : -45) * D;
-          b["lowerleg01.R"].rotation.x = (moving ? 75 : 85) * D;
-          b["upperarm01.L"].rotation.set(-50 * D * up, 0, -this.player.armDrop - 30 * D);
-          b["upperarm01.R"].rotation.set(-50 * D * up, 0, this.player.armDrop + 30 * D);
-          b["spine03"].rotation.x = 8 * D;
-          this.player.body.position.y = 0;
-        }
-      }
     }
 
     // Camera.
