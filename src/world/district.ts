@@ -8,7 +8,7 @@ import { DISTRICTS, PLACES, placesIn, type DistrictId, type DistrictStyle, type 
 import { mulberry32 } from "../../shared/rng.ts";
 import type { HomeTier } from "../../shared/homes.ts";
 import { createOcean } from "./ocean.ts";
-import { buildAircraft } from "./vehicles.ts";
+import { buildAircraft, buildVehicle } from "./vehicles.ts";
 import type { Genre, SoundSpot } from "./audio.ts";
 
 export const ROAD_HALF = 6;
@@ -498,7 +498,9 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       interactables.push({ id: p.id, kind: "stop", placeId: p.id, pos: ip, radius: 2.6, label: p.name });
       placeDoors.set(p.id, ip);
       labelSprite(p.name, ICON.transport, 3.6, x, z);
-      reserve(side, x - 3, x + 3);
+      const big = /lorry|station|park/i.test(p.name) && !savanna && !(coastal && side > 0);
+      if (big && isFree(side, x - 7, x + 7)) { lorryPark(p, x, side); reserve(side, x - 7, x + 7); }
+      else reserve(side, x - 3, x + 3);
       continue;
     }
     let cx: number, cz: number, side: number;
@@ -595,6 +597,8 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       collide(cx, cz, w * 0.8, depth * 0.6, h);
       return;
     }
+    if (p.id === "kejetia_market") return kejetia(p, cx, cz, w, depth, h, faceDir);
+    if (p.id === "manhyia") return manhyiaPalace(p, cx, cz, w, depth, h, faceDir);
     if (p.id === "kaneshie_market") {
       // Multi-storey market block with arcades and stalls in front.
       const m = facadeMat(p.color, "louvre");
@@ -671,6 +675,96 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
 
   // -------------------------------------------------------------------------
   // Building parts
+
+  /**
+   * A lorry park behind the shelter: a concrete yard, two long corrugated sheds,
+   * trotros parked nose-in waiting to fill, the station master's booth and a
+   * welded arch over the gate with the station's name.
+   */
+  function lorryPark(p: Place, x: number, side: number) {
+    const z0 = side * BUILD_LINE, depth = 16, zc = side * (BUILD_LINE + depth / 2);
+    batch.add(tiledPlane(14, depth, 4), M.concrete, [x, 0.03, zc], [-Math.PI / 2, 0, 0]);
+    for (const sx of [-1, 1]) box(M.metal, x + sx * 6.9, 1.9, z0 + side * 0.2, 0.18, 3.8, 0.18);
+    box(M.metal, x, 3.8, z0 + side * 0.2, 14, 0.2, 0.2);
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#1F7A4D", "#F2B705"), x, 4.35, z0 + side * 0.2 - side * 0.12, 9, 0.9, 0.08);
+    // Sheds along the back and one side, with benches in their shade.
+    for (const [sx, sz, sw, sd] of [[x, zc + side * 5.5, 13, 4], [x - 5.2, zc - side * 1.5, 3.5, 9]] as const) {
+      for (const dx of [-1, 1]) for (const dz of [-1, 1]) box(M.metal, sx + dx * (sw / 2 - 0.2), 1.5, sz + dz * (sd / 2 - 0.2), 0.1, 3, 0.1);
+      box(M.roofRust, sx, 3.05, sz, sw + 0.4, 0.08, sd + 0.4);
+      box(M.wood, sx, 0.45, sz, sw * 0.8, 0.08, 0.5);
+    }
+    box(colorMat("#E9B872"), x + 5.4, 1.2, zc + side * 3, 2.2, 2.4, 2);
+    box(signMat("STATION MASTER", "#F2B705", "#111"), x + 5.4, 2.0, zc + side * 3 - side * 1.02, 1.8, 0.35, 0.04);
+    collide(x + 5.4, zc + side * 3, 2.2, 2, 2.6);
+    // Trotros waiting to load, nose to the sheds.
+    for (let i = 0; i < 4; i++) {
+      const v = buildVehicle("trotro", Math.floor(x * 31 + i * 97) >>> 0);
+      v.group.position.set(x - 1.6 + i * 2.35, 0, zc + side * 0.6);
+      v.group.rotation.y = side > 0 ? 0 : Math.PI;
+      v.group.traverse((o) => { o.castShadow = true; });
+      group.add(v.group);
+      collide(x - 1.6 + i * 2.35, zc + side * 0.6, v.width, v.length, 2.4);
+    }
+  }
+
+  /** Kejetia Market (the 2017 redevelopment): a vast, layered block with deep sunshade fins, terracotta bands and a broad entrance. */
+  function kejetia(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const H = Math.max(h, 12);
+    batch.add(facadeBox(w, H, depth), facadeMat("#e9e6df", "modern"), [cx, H / 2, cz]);
+    const terra = colorMat("#b5532f", 0.85), white = M.white;
+    for (let y = 3.2; y < H; y += 3.2) box(terra, cx, y, front + faceDir * 0.25, w + 0.6, 0.35, 0.5);
+    for (let i = -w / 2 + 1; i <= w / 2 - 1; i += 1.4) box(white, cx + i, H / 2 + 1.6, front + faceDir * 0.35, 0.18, H - 3.2, 0.6);
+    box(white, cx, H + 0.5, cz, w + 1.2, 1, depth + 1.2);
+    box(terra, cx, H + 1.15, cz, w + 1.4, 0.3, depth + 1.4);
+    // Entrance hall: a glazed recess under a deep canopy.
+    box(M.glass, cx, 1.6, front + faceDir * 0.05, Math.min(10, w * 0.4), 3.0, 0.08);
+    box(white, cx, 3.3, front + faceDir * 2, Math.min(14, w * 0.6), 0.25, 4);
+    for (const sx of [-1, 1]) box(white, cx + sx * Math.min(6.8, w * 0.29), 1.6, front + faceDir * 3.8, 0.4, 3.2, 0.4);
+    box(signMat(p.sign ?? "KEJETIA MARKET", "#b5532f", "#ffffff"), cx, 4.4, front + faceDir * 0.42, Math.min(16, w * 0.62), 1.6, 0.1);
+    for (let i = 0; i < 5; i++) stall(cx - w / 2 + 3 + i * ((w - 6) / 4), front + faceDir * 6.2, true);
+    collide(cx, cz, w, depth, H);
+  }
+
+  /**
+   * Manhyia Palace: the old two-storey palace (now the museum) behind a white wall
+   * and gold-topped gate piers, with arches below, a balcony above and a hipped roof.
+   */
+  function manhyiaPalace(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const bw = Math.min(w - 2, 14), bd = Math.min(depth - 4, 7), bz = cz - faceDir * 1.5, bf = bz + faceDir * (bd / 2);
+    const cream = colorMat("#f1e6cf", 0.8), trim = colorMat("#fbf7ee", 0.7), gold = colorMat("#c9a227", 0.35, 0.6), roof = colorMat("#8a3b26", 0.7);
+    // Lawn and forecourt.
+    batch.add(tiledPlane(w, depth, 3), std({ map: T.grass(true), roughness: 1 }), [cx, 0.04, cz], [-Math.PI / 2, 0, 0]);
+    box(M.concrete, cx, 0.06, (bf + front) / 2, 3, 0.04, Math.abs(front - bf));
+    // Two storeys with a ground-floor arcade and a first-floor balcony.
+    box(cream, cx, 3.4, bz, bw, 6.8, bd);
+    for (let i = 0; i < 7; i++) {
+      const ax = cx - bw / 2 + 1 + i * ((bw - 2) / 6);
+      box(trim, ax, 1.5, bf + faceDir * 1.2, 0.45, 3, 0.45);
+      box(colorMat("#3a2a1f", 0.8), ax + (bw - 2) / 12, 1.4, bf + faceDir * 0.02, 1.0, 2.2, 0.05);
+      box(colorMat("#3a2a1f", 0.8), ax + (bw - 2) / 12, 4.9, bf + faceDir * 0.02, 0.8, 1.6, 0.05);
+    }
+    box(cream, cx, 3.15, bf + faceDir * 1.2, bw, 0.3, 2.6);
+    box(M.white, cx, 3.85, bf + faceDir * 2.45, bw, 0.08, 0.06);
+    for (let i = 0; i <= 28; i++) box(M.white, cx - bw / 2 + (i * bw) / 28, 3.6, bf + faceDir * 2.45, 0.06, 0.5, 0.06);
+    batch.add(new THREE.ConeGeometry(1, 1, 4), roof, [cx, 7.7, bz], [0, Math.PI / 4, 0], [bw * 0.76, 1.9, bd * 0.9]);
+    // Boundary wall and gate piers topped in gold.
+    for (const sx of [-1, 1]) {
+      // Low wall with black railings, so the arcade shows over it.
+      box(M.white, cx + sx * (w / 4 + 1), 0.45, front, w / 2 - 2, 0.9, 0.3);
+      box(M.darkMetal, cx + sx * (w / 4 + 1), 1.75, front, w / 2 - 2, 0.06, 0.06);
+      for (let i = 0; i < (w / 2 - 2) / 0.25; i++) box(M.darkMetal, cx + sx * 3 + sx * i * 0.25, 1.3, front, 0.03, 0.9, 0.03);
+      box(M.white, cx + sx * 2, 1.4, front, 0.7, 2.8, 0.7);
+      batch.add(G.ico, gold, [cx + sx * 2, 3.05, front], [0, 0, 0], [0.32, 0.32, 0.32]);
+    }
+    // Flag of gold, green and black stripes.
+    batch.add(G.cyl8, M.darkMetal, [cx + bw / 2 - 1, 9, bz], [0, 0, 0], [0.05, 6, 0.05]);
+    for (const [c, y] of [["#C9A227", 11.6], ["#1F7A4D", 11.2], ["#111111", 10.8]] as const) batch.add(G.plane, colorMat(c, 0.8), [cx + bw / 2 - 0.4, y, bz], [0, 0, 0], [1.2, 0.4, 1]);
+    box(signMat("MANHYIA PALACE MUSEUM", "#111111", "#C9A227"), cx, 2.4, front + faceDir * 0.2, 4.6, 0.6, 0.06);
+    collide(cx, bz, bw, bd, 8);
+    for (const sx of [-1, 1]) collide(cx + sx * (w / 4 + 1), front, w / 2 - 2, 0.3, 2);
+  }
 
   /**
    * Real depth on a painted facade: sills, lintels and jambs where the texture draws
@@ -1837,7 +1931,8 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       if (Math.abs(x) < CROSS_HALF + 4) continue;
       if (poleXs.some((px) => Math.abs(px - x) < 2.5) || nearDoor(x, side)) continue;
       const z = side * (WALK_OUT - 1.1);
-      const r = rnd();
+      // Kumasi is the Garden City: noticeably more shade trees along its pavements.
+      const r = rnd() - (d.city === "kumasi" ? 0.2 : 0);
       if (r < 0.28) (d.style === "coastal" || d.style === "luxury" || (d.style === "urban" && rnd() < 0.5) ? palm : neem)(x, z, 1);
       else if (r < 0.42 && !upscale) kiosk(x, z - side * -0.2, side);
       else if (r < 0.62 && (d.style === "market" || d.style === "urban" || d.style === "coastal")) stall(x, side * (WALK_IN + 1.1), rnd() < 0.7);
