@@ -462,12 +462,15 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       if (!row.length) continue;
       const limit = sd === plot.side ? plot.x - 10 : sd === home.side && home.x > 0 ? home.x - 8 : EXTENT_X - 6;
       const start = Math.max(row[0].pos[0] - row[0].size[0] / 2, sd === home.side && home.x < 0 ? home.x + 8 : -EXTENT_X + 4);
+      // Leave room for the lorry station (and its yard) on this side too.
+      const stations = placesIn(id).filter((p) => p.kind === "transport" && Math.sign(p.pos[1]) === sd).map((p) => p.pos[0]);
       const pack = (scale: number, gap: number) => {
         const out: [string, number, number][] = [];
         let cur = start;
         for (const p of row) {
           const w = Math.max(6, Math.round(p.size[0] * scale));
           if (cur < JX && cur + w > -JX) cur = JX;
+          for (const sx of stations) if (cur < sx + 7.5 && cur + w > sx - 7.5) cur = Math.max(cur, sx + 7.5);
           out.push([p.id, cur + w / 2, w]);
           cur += w + gap;
         }
@@ -553,7 +556,12 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       collide(cx + 6, cz, 3, 3);
       return;
     }
-    if (p.id === "osu_castle" || p.id === "cape_castle_place") {
+    if (p.id === "jamestown_lighthouse") return lighthouse(p, cx, cz, w, depth, faceDir);
+    if (p.id === "market_circle") return marketCircle(p, cx, cz, w, depth, faceDir);
+    if (p.id === "jackson_park") return townPark(p, cx, cz, w, depth, faceDir);
+    if (p.id === "sunyani_cenotaph") return cenotaph(p, cx, cz, w, depth, faceDir);
+    if (p.id === "nima_pitch") return pitch(p, cx, cz, w, depth, faceDir);
+    if (p.id === "osu_castle" || p.id === "cape_castle_place" || p.id === "james_fort") {
       // Whitewashed fort: curtain walls with crenellations and corner bastions.
       const m = M.plaster;
       box(m, cx, h / 2, cz, w, h, depth);
@@ -567,7 +575,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       batch.add(G.plane, colorMat("#C8452C", 0.8), [cx + w / 2 - 0.4, h + 5.4, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#F2B705", 0.8), [cx + w / 2 - 0.4, h + 5.0, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#1F7A4D", 0.8), [cx + w / 2 - 0.4, h + 4.6, cz], [0, 0, 0], [1.1, 0.4, 1]);
-      const [castleName, castleSub] = p.id === "osu_castle" ? ["OSU CASTLE", "FORT CHRISTIANSBORG • 1661"] : ["CAPE COAST CASTLE", "WORLD HERITAGE SITE • 1653"];
+      const [castleName, castleSub] = p.id === "osu_castle" ? ["OSU CASTLE", "FORT CHRISTIANSBORG • 1661"] : p.id === "james_fort" ? ["JAMES FORT", "BUILT 1673"] : ["CAPE COAST CASTLE", "WORLD HERITAGE SITE • 1653"];
       box(signMat(castleName, "#F4F1E6", "#3a2a1f", castleSub), cx, 3.9, front + faceDir * 0.06, 6, 1.1, 0.08);
       collide(cx, cz, w + 3, depth, h * 1.3);
       return;
@@ -675,6 +683,98 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
 
   // -------------------------------------------------------------------------
   // Building parts
+
+  /** Jamestown Lighthouse: a tall red-and-white banded tower with a gallery and lantern, beside the keeper's house. */
+  function lighthouse(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const tx = cx + w / 4, H = 26;
+    const red = colorMat("#c8322c", 0.6), white = M.white;
+    for (let i = 0; i < 8; i++) {
+      const y0 = (i * H) / 8, r0 = 2.2 - (i / 8) * 0.9, r1 = 2.2 - ((i + 1) / 8) * 0.9;
+      batch.add(new THREE.CylinderGeometry(r1, r0, H / 8, 20), i % 2 ? white : red, [tx, y0 + H / 16, cz], [0, 0, 0]);
+    }
+    batch.add(new THREE.CylinderGeometry(1.8, 1.8, 0.25, 20), M.darkMetal, [tx, H + 0.1, cz], [0, 0, 0]);
+    for (let a = 0; a < 16; a++) box(M.darkMetal, tx + Math.cos((a / 16) * Math.PI * 2) * 1.7, H + 0.6, cz + Math.sin((a / 16) * Math.PI * 2) * 1.7, 0.05, 0.8, 0.05);
+    batch.add(new THREE.CylinderGeometry(0.9, 0.9, 1.6, 12), M.glass, [tx, H + 1.1, cz], [0, 0, 0]);
+    batch.add(new THREE.ConeGeometry(1.05, 1.1, 12), red, [tx, H + 2.45, cz], [0, 0, 0]);
+    for (let i = 1; i < 6; i++) box(colorMat("#2a2a2a"), tx, (i * H) / 6, cz + faceDir * (2.25 - (i / 6) * 0.9), 0.5, 0.8, 0.05);
+    box(colorMat("#3a2a1f", 0.7), tx, 1.1, cz + faceDir * 2.21, 1.0, 2.2, 0.06);
+    // Keeper's house and a compound wall.
+    batch.add(facadeBox(w / 2 - 1, 3.4, depth - 3), facadeMat("#f1ece2", "louvre"), [cx - w / 4, 1.7, cz]);
+    roofPitched(cx - w / 4, cz, w / 2 - 1, depth - 3, 3.4, true);
+    box(M.white, cx, 0.6, front, w, 1.2, 0.25);
+    box(signMat("JAMESTOWN LIGHTHOUSE", "#c8322c", "#ffffff"), cx, 1.5, front + faceDir * 0.15, 5, 0.6, 0.06);
+    collide(tx, cz, 4.4, 4.4, H + 3);
+    collide(cx - w / 4, cz, w / 2 - 1, depth - 3, 3.6);
+  }
+
+  /** Takoradi Market Circle: the round market hall under a ring roof, stalls round the outside. */
+  function marketCircle(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const R = Math.min(w, depth * 1.4) / 2 - 0.5, rz = cz;
+    const wall = colorMat("#e9e1cf", 0.85), band = colorMat("#2E86AB", 0.7);
+    batch.add(new THREE.CylinderGeometry(R, R, 4.2, 40, 1, true), wall, [cx, 2.1, rz], [0, 0, 0]);
+    batch.add(new THREE.CylinderGeometry(R + 0.05, R + 0.05, 0.5, 40, 1, true), band, [cx, 3.2, rz], [0, 0, 0]);
+    batch.add(new THREE.CylinderGeometry(R * 0.35, R + 1.4, 2.4, 40, 1, true), M.roofRust, [cx, 5.4, rz], [0, 0, 0]);
+    batch.add(new THREE.CylinderGeometry(R * 0.36, R * 0.36, 1.4, 24), wall, [cx, 6.9, rz], [0, 0, 0]);
+    batch.add(new THREE.ConeGeometry(R * 0.42, 1.2, 24), M.roofRust, [cx, 8.2, rz], [0, 0, 0]);
+    // Arched openings all round.
+    for (let a = 0; a < 18; a++) {
+      const ang = (a / 18) * Math.PI * 2;
+      box(colorMat("#2a241f", 0.9), cx + Math.sin(ang) * (R + 0.02), 1.3, rz + Math.cos(ang) * (R + 0.02), 1.3, 2.4, 0.06, ang);
+    }
+    box(signMat("MARKET CIRCLE", "#2E86AB", "#ffffff"), cx, 4.9, rz + faceDir * (R + 1.2), 5.5, 0.9, 0.08);
+    for (let i = 0; i < 4; i++) stall(cx - R + 1 + i * ((2 * R - 2) / 3), front + faceDir * 2.5, true);
+    collide(cx, rz, R * 1.7, R * 1.7, 9);
+  }
+
+  /** A town park (Jackson Park, Koforidua): lawn, paths, shade trees, benches and a bandstand. */
+  function townPark(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    batch.add(tiledPlane(w, depth, 3), std({ map: T.grass(true), roughness: 1 }), [cx, 0.05, cz], [-Math.PI / 2, 0, 0]);
+    box(M.concrete, cx, 0.07, cz, 2, 0.04, depth);
+    box(M.concrete, cx, 0.07, cz, w, 0.04, 2);
+    for (const [dx, dz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) neem(cx + dx * w * 0.3, cz + dz * depth * 0.3, 1.1);
+    // Bandstand: a round platform, columns and a pointed roof.
+    batch.add(new THREE.CylinderGeometry(2.4, 2.6, 0.5, 16), M.concrete, [cx, 0.25, cz], [0, 0, 0]);
+    for (let a = 0; a < 8; a++) box(M.white, cx + Math.cos((a / 8) * Math.PI * 2) * 2.1, 1.8, cz + Math.sin((a / 8) * Math.PI * 2) * 2.1, 0.18, 2.6, 0.18);
+    batch.add(new THREE.ConeGeometry(3, 1.6, 8), colorMat("#1F7A4D", 0.6), [cx, 3.9, cz], [0, Math.PI / 8, 0]);
+    for (const sx of [-1, 1]) box(M.wood, cx + sx * 4.5, 0.45, front - faceDir * 1.5, 1.8, 0.1, 0.45);
+    box(M.white, cx - w / 4 - 1, 0.4, front, w / 2 - 2, 0.8, 0.2);
+    box(M.white, cx + w / 4 + 1, 0.4, front, w / 2 - 2, 0.8, 0.2);
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#1F7A4D", "#ffffff"), cx, 1.4, front + faceDir * 0.1, 4, 0.6, 0.06);
+    collide(cx, cz, 5, 5, 4);
+  }
+
+  /** A war memorial cenotaph on a stepped plinth in a paved square. */
+  function cenotaph(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    batch.add(tiledPlane(w, depth, 3), M.pavers, [cx, 0.05, cz], [-Math.PI / 2, 0, 0]);
+    for (let i = 0; i < 3; i++) box(M.concrete, cx, 0.2 + i * 0.4, cz, 6 - i * 1.4, 0.4, 6 - i * 1.4);
+    box(M.white, cx, 3.6, cz, 1.4, 4.4, 1.4);
+    batch.add(new THREE.ConeGeometry(1, 1, 4), M.white, [cx, 6.3, cz], [0, Math.PI / 4, 0], [1, 1.0, 1]);
+    box(colorMat("#2a2a2a"), cx, 2.8, cz + faceDir * 0.71, 1.0, 1.2, 0.03);
+    for (const [c, dx] of [["#C8452C", -0.4], ["#F2B705", 0], ["#1F7A4D", 0.4]] as const) box(colorMat(c), cx + dx, 0.15, front - faceDir * 1.5, 0.4, 0.1, 0.8);
+    for (const sx of [-1, 1]) neem(cx + sx * (w / 2 - 2), cz, 0.9);
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#f4f1e6", "#2a2a2a"), cx, 1.0, front + faceDir * 0.05, 4, 0.5, 0.06);
+    collide(cx, cz, 6, 6, 7);
+  }
+
+  /** A dusty neighbourhood football pitch with goalposts and a low wall. */
+  function pitch(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    // Astroturf where the name says so, otherwise bare red earth.
+    const turf = /astro/i.test(p.name) ? std({ map: T.grass(true), color: "#9fd27a", roughness: 0.9 }) : std({ map: T.laterite(), roughness: 1 });
+    batch.add(tiledPlane(w, depth, 4), turf, [cx, 0.05, cz], [-Math.PI / 2, 0, 0]);
+    box(M.white, cx, 0.07, cz, 0.12, 0.01, depth - 1);
+    for (const sx of [-1, 1]) {
+      const gx = cx + sx * (w / 2 - 1.2);
+      for (const dz of [-1, 1]) box(M.white, gx, 1.1, cz + dz * 1.8, 0.1, 2.2, 0.1);
+      box(M.white, gx, 2.2, cz, 0.1, 0.1, 3.7);
+    }
+    box(M.plaster, cx, 0.6, cz - faceDir * (depth / 2), w, 1.2, 0.25);
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#1F7A4D", "#ffffff"), cx, 1.0, front + faceDir * 0.05, 4.2, 0.5, 0.06);
+  }
 
   /**
    * A lorry park behind the shelter: a concrete yard, two long corrugated sheds,
