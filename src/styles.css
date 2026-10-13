@@ -102,8 +102,8 @@ b, strong { font-weight: 700; }
 .weather-dot { font-size: 18px; }
 
 .minimap { position: fixed; top: max(12px, env(safe-area-inset-top)); left: 12px; z-index: 20; }
-.minimap canvas { width: 86px; height: 86px; border-radius: 50%; border: 3px solid var(--paper); box-shadow: var(--shadow); display: block; background: #2a2b2f; }
-@media (max-width: 600px) { .minimap canvas { width: 68px; height: 68px; } .minimap .where b { font-size: 13px; } }
+.minimap canvas { width: 118px; height: 118px; border-radius: 50%; border: 3px solid var(--paper); box-shadow: var(--shadow); display: block; background: #2a2b2f; }
+@media (max-width: 600px) { .minimap canvas { width: 84px; height: 84px; } .minimap .where b { font-size: 13px; } }
 .minimap .where { margin-top: 6px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.9), 0 0 10px rgba(0,0,0,.6); max-width: 170px; }
 .minimap .where small { display: block; font-size: 12px; color: #fff3dc; font-weight: 600; }
 .minimap .where b { display: block; font-family: var(--display); font-size: 16px; font-weight: 800; }
@@ -318,3 +318,6 @@ input[type="range"] { accent-color: var(--gold); }
 .confirm-line { padding: 9px 11px; border-radius: 12px; background: #fff; border: 1px solid var(--line); font-size: 14px; }
 .captions { position: fixed; left: 50%; transform: translateX(-50%); bottom: 150px; z-index: 22; display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; zoom: var(--ui-scale); }
 .captions div { background: rgba(20, 14, 8, 0.85); color: #fff; padding: 5px 11px; border-radius: 9px; font-size: 14.5px; font-weight: 600; }
+
+.localmap { height: auto; max-height: 52vh; touch-action: manipulation; }
+.chip.on { background: var(--ink, #1d1a14); color: #fff; }

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { GameProvider, useGame } from "./store.tsx";
 import { getToken, pickBackend, setToken, type Backend } from "./net/backend.ts";
 import { CharacterCreate } from "./ui/CharacterCreate.tsx";
+import { MapSheet } from "./ui/map.tsx";
 import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
 import { Phone, readMix } from "./ui/phone.tsx";
@@ -88,6 +89,7 @@ function Splash() {
 type Panel =
   | { kind: "place"; id: string }
   | { kind: "talk"; id: string }
+  | { kind: "map" }
   | { kind: "travel"; ctx: "stop" | "taxi" | "phone"; scope?: "city" | "ghana" }
   | { kind: "phone"; app?: string }
   | { kind: "event" }
@@ -231,7 +233,7 @@ function Game() {
       if ((e.target as HTMLElement)?.tagName === "INPUT") return;
       if (e.key === "Escape") setPanel(null);
       if (e.key === "p" || e.key === "P") setPanel((p) => (p?.kind === "phone" ? null : { kind: "phone" }));
-      if (e.key === "m" || e.key === "M") setPanel({ kind: "travel", ctx: "phone" });
+      if (e.key === "m" || e.key === "M") setPanel({ kind: "map" });
       if (e.key === "h" || e.key === "H") homeKey.current();
     };
     window.addEventListener("keydown", k);
@@ -293,7 +295,7 @@ function Game() {
   const open = (what: string) => {
     if (what === "home") return void goHome();
     if (what === "today") return setPanel({ kind: "today" });
-    if (what === "map") return setPanel({ kind: "travel", ctx: "phone" });
+    if (what === "map") return setPanel({ kind: "map" });
     if (what === "event") return setPanel({ kind: "event" });
     if (what === "phone") return setPanel({ kind: "phone" });
     return setPanel({ kind: "phone", app: what });
@@ -305,7 +307,7 @@ function Game() {
     <>
       <canvas ref={canvas} className="world" tabIndex={0} />
       <Hud world={world} onOpen={open} />
-      <Minimap world={world} road={road} district={district} />
+      <Minimap world={world} road={road} district={district} onOpen={() => setPanel({ kind: "map" })} />
       <Rail onOpen={open} badges={{ phone: (state?.event ? 1 : 0) + (state?.businesses.filter((b) => b.till > 0).length ? 1 : 0), people: pendingDates }} world={world} muted={muted} setMuted={setMuted} />
       {!panel && !ride && !doing && <ActionBar nearby={nearby} onUse={use} />}
       {!panel && !ride && <Joystick world={world} />}
@@ -366,6 +368,7 @@ function Game() {
       <Toasts />
       {panel?.kind === "place" && <PlaceSheet placeId={panel.id} world={world} onClose={() => setPanel(null)} onTalk={(id) => setPanel({ kind: "talk", id })} onTravel={() => setPanel({ kind: "travel", ctx: "stop" })} onPhone={(app) => setPanel({ kind: "phone", app })} />}
       {panel?.kind === "talk" && <TalkSheet npcId={panel.id} world={world} onClose={() => setPanel(null)} />}
+      {panel?.kind === "map" && <MapSheet world={world} onClose={() => setPanel(null)} onTravel={(scope) => setPanel({ kind: "travel", ctx: "phone", scope })} />}
       {panel?.kind === "travel" && <TravelSheet context={panel.ctx} initialScope={panel.scope} world={world} onClose={() => setPanel(null)} />}
       {panel?.kind === "phone" && <Phone world={world} initialApp={panel.app} onClose={() => setPanel(null)} onTravel={() => setPanel({ kind: "travel", ctx: "phone" })} quality={quality} setQuality={setQuality} />}
       {panel?.kind === "event" && <EventModal onClose={() => setPanel(null)} />}

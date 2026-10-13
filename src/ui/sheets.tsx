@@ -11,6 +11,7 @@ import { projectKm } from "../../shared/geo.ts";
 import { DISTRICTS, districtsIn, JOBS, PLACE_BY_ID, SERVICES, TRAVEL_MODES, isOpenAt, priceFor, rankPay, travelQuote, type DistrictId, type TravelMode } from "../../shared/world.ts";
 import { NPC_BY_ID, NPCS, npcLocation, tierFor } from "../../shared/people.ts";
 import { HOME_ACTIVITIES } from "../../shared/homes.ts";
+import { PIECES, ROOM_PLANS, furnishItems } from "../../shared/furnish.ts";
 import { CoursesPanel, DealerPanel, HomeGoods, IntercityPanel, StorePanel, placeIsStore, serviceNote } from "./ghana.tsx";
 import { toGameDate } from "../../shared/calendar.ts";
 import { OUTFITS, OUTFIT_IDS, SHOES, SHOE_IDS, defaultOutfit, type OutfitId, type ShoeId } from "../../shared/clothing.ts";
@@ -365,7 +366,7 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
   if (!state) return null;
   const comfort = state.player.home.comfort;
   const spec = state.player.home.spec;
-  const items = state.items.map((i) => i.itemId);
+  const items = [...state.items.map((i) => i.itemId), ...furnishItems(state.player.home.furnish ?? {})];
   const list = HOME_ACTIVITIES.filter((a) => (focus && FOCUS[focus] ? FOCUS[focus].includes(a.id) : true));
   const showSleep = !focus || focus === "bed";
   // Close the sheet and let your character walk over and do it.
@@ -403,6 +404,7 @@ export function HomeSheet({ onClose, world, focus }: { onClose: () => void; worl
           </div>
         );
       })}
+      {!focus && state.player.home.furnish && <FurnishPanel />}
       {!focus && <Wardrobe />}
       {!focus && <HomeGoods />}
       <button className="btn ghost block" style={{ marginTop: 12 }} onClick={() => { world?.exitHome(); onClose(); }}>Go outside</button>
@@ -581,6 +583,60 @@ export function Wardrobe() {
         </>
       )}
       <button className="btn primary block" style={{ marginTop: 12 }} disabled={busy} onClick={() => act({ type: "wardrobe", look: { outfit: o, shoes: sh ?? OUTFITS[o].shoes, shirt: top, pants: bottom, pattern: pat } })}>Put it on (10 min)</button>
+    </>
+  );
+}
+
+/** Furnish your own house room by room: buy, swap, sell, rearrange. */
+export function FurnishPanel() {
+  const { state, act, busy } = useGame();
+  const [room, setRoom] = useState<string | null>(null);
+  if (!state) return null;
+  const f = state.player.home.furnish ?? {};
+  const rooms = ROOM_PLANS[state.player.home.spec.tier] ?? [];
+  const owned = state.player.home.kind === "owned";
+  const plan = rooms.find((r) => r.id === room) ?? null;
+  const count = (id: string) => (f[id] ?? []).filter((x) => x !== "_flip").length;
+  return (
+    <>
+      <h3>🛋️ Furnish</h3>
+      {!owned && <div className="tiny muted" style={{ marginBottom: 6 }}>The landlord furnished this place. Buy your own house to furnish it your way.</div>}
+      {owned && !plan && (
+        <>
+          <div className="tiny muted" style={{ marginBottom: 6 }}>Pick a room. What you buy is delivered and set up there; walk in and see it. Kitchen and bathrooms come fitted.</div>
+          <div className="chipset">
+            {rooms.map((r) => (
+              <button key={r.id} className="chip" onClick={() => setRoom(r.id)}>
+                {r.kind === "bedroom" ? "🛏️" : r.kind === "dining" ? "🍽️" : r.kind === "study" ? "📚" : "🛋️"} {r.name} · {count(r.id) ? `${count(r.id)} pieces` : "empty"}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+      {owned && plan && (
+        <>
+          <div className="row" style={{ gap: 6, marginBottom: 6, alignItems: "center" }}>
+            <button className="btn sm ghost" onClick={() => setRoom(null)}>← Rooms</button>
+            <b className="grow">{plan.name}</b>
+            <button className="btn sm" disabled={busy || !count(plan.id)} onClick={() => act({ type: "furnish", op: "rearrange", room: plan.id })}>↔ Rearrange</button>
+          </div>
+          {Object.values(PIECES).filter((pc) => pc.rooms.includes(plan.kind)).map((pc) => {
+            const here = (f[plan.id] ?? []).includes(pc.id);
+            const swaps = !here && (f[plan.id] ?? []).find((x) => PIECES[x]?.slot === pc.slot);
+            return (
+              <div className="svc" key={pc.id}>
+                <div className="grow">
+                  <div className="bold">{pc.name}{here && <span className="pill gold" style={{ marginLeft: 6 }}>in the room</span>}</div>
+                  <div className="tiny muted">{pc.blurb}{swaps ? ` · replaces your ${PIECES[swaps].name.toLowerCase()} (sold at 40%)` : ""}</div>
+                </div>
+                {here
+                  ? <button className="btn sm ghost" disabled={busy} onClick={() => act({ type: "furnish", op: "sell", room: plan.id, piece: pc.id })}>Sell</button>
+                  : <button className="btn sm primary" disabled={busy} onClick={() => act({ type: "furnish", op: "buy", room: plan.id, piece: pc.id })}>{money(pc.price * 100, true)}</button>}
+              </div>
+            );
+          })}
+        </>
+      )}
     </>
   );
 }

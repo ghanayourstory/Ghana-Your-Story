@@ -213,6 +213,11 @@ export class World {
   private reported = new Set<string>();
   private nearby: Nearby | null = null;
   private interior: Interior | null = null;
+  /** Inside a two-storey home: which floor you're on and how high your feet are. */
+  private level = 0;
+  private floorY = 0;
+  private homeItems: string[] = [];
+  private furnishKey = "";
   private homeTierBuilt: HomeSpec["tier"] | "" = "";
   inside = false;
   private raf = 0;
@@ -337,6 +342,9 @@ export class World {
     }
     this.state = s;
     this.setClock(s.time.minute);
+    // New furniture delivered while you're home: rebuild the rooms around you.
+    const fk = JSON.stringify(s.player.home.furnish ?? null);
+    if (this.inside && this.interior && fk !== this.furnishKey) this.rebuildInterior();
     if ((s.time.weather === "rain" || s.time.weather === "storm") && this.weather !== s.time.weather) this.caption(s.time.weather === "storm" ? "⛈️ Thunder and heavy rain" : "🌧️ Rain starts falling");
     this.weather = s.time.weather;
     this.atmo.setWeather(s.time.weather);
@@ -734,7 +742,11 @@ export class World {
     if (this.inside || !this.player) return;
     this.path = [];
     this.arriveCb = null;
-    this.interior = buildHomeInterior(spec, items);
+    this.homeItems = items;
+    this.furnishKey = JSON.stringify(this.state?.player.home.furnish ?? null);
+    this.interior = buildHomeInterior(spec, items, this.state?.player.home.furnish ?? null);
+    this.level = 0;
+    this.floorY = 0;
     this.lastPower = "";
     this.interiorScene.add(this.interior.group);
     this.scene.remove(this.player.root);
@@ -749,6 +761,36 @@ export class World {
     this.camDist = THREE.MathUtils.clamp(Math.max(...this.interior.size) * 0.85, 9, 22);
     this.boom = this.camDist;
     this.updateSpouse();
+  }
+
+  private rebuildInterior() {
+    if (!this.interior || !this.state) return;
+    this.furnishKey = JSON.stringify(this.state.player.home.furnish ?? null);
+    this.interiorScene.remove(this.interior.group);
+    this.interior = buildHomeInterior(this.state.player.home.spec, this.homeItems, this.state.player.home.furnish ?? null);
+    this.interiorScene.add(this.interior.group);
+    this.showFloors();
+    this.lastPower = "";
+  }
+
+  /** The floor plan for one storey, for finding a path on it. */
+  /** Upper floors show once your eyes are near their level; everything above stays hidden. */
+  private showFloors() {
+    for (const lv of this.interior?.storeys?.levels ?? []) if (lv.group) lv.group.visible = lv.y <= this.floorY + 2.6;
+  }
+  /** Which floor a height is on. */
+  private levelAt(y: number) {
+    const lv = this.interior?.storeys?.levels ?? [];
+    let k = 0;
+    lv.forEach((l, i) => { if (y >= l.y - 0.6) k = i; });
+    return k;
+  }
+
+  private floorPlan(level: number) {
+    const it = this.interior!;
+    const lv = it.storeys?.levels[level];
+    if (level === 0 || !lv) return it;
+    return { ...it, colliders: [...lv.colliders, ...lv.blocked] };
   }
 
   /** Walk up to your front door (when your home is in this district) and go in. */
@@ -785,12 +827,16 @@ export class World {
     const rect = this.canvas.getBoundingClientRect();
     const ndc = new THREE.Vector2(((cx - rect.left) / rect.width) * 2 - 1, -((cy - rect.top) / rect.height) * 2 + 1);
     this.raycaster.setFromCamera(ndc, this.camera);
-    const hits = this.raycaster.intersectObject(this.interior.group, true).filter((h) => h.object.visible && (h.object as THREE.Mesh).isMesh);
+    const shown = (o: THREE.Object3D | null): boolean => { for (; o; o = o.parent) if (!o.visible) return false; return true; };
+    const hits = this.raycaster.intersectObject(this.interior.group, true).filter((h) => (h.object as THREE.Mesh).isMesh && shown(h.object));
     if (!hits.length) return;
     const p = hits[0].point;
+    const st = this.interior.storeys;
+    const tapLevel = st ? Math.min(this.levelAt(p.y), st.levels.filter((l) => !l.group || l.group.visible).length - 1) : 0;
     // Did you tap a thing you can use?
     let best: InteriorSpot | null = null, bd = 1.5;
     for (const sp of this.interior.spots) {
+      if (st && this.levelAt(sp.pos.y) !== tapLevel) continue;
       const ax = sp.use?.x ?? sp.pos.x, az = sp.use?.z ?? sp.pos.z;
       const d = Math.min(Math.hypot(p.x - ax, p.z - az), Math.hypot(p.x - sp.pos.x, p.z - sp.pos.z));
       if (d < bd) { bd = d; best = sp; }
@@ -800,13 +846,33 @@ export class World {
       this.walkTo(sp.pos, () => this.cb.onSpot?.(sp.id));
     } else {
       const b = this.interior.bounds;
-      this.walkTo(new THREE.Vector3(THREE.MathUtils.clamp(p.x, b.minX + 0.3, b.maxX - 0.3), 0, THREE.MathUtils.clamp(p.z, b.minZ + 0.3, b.maxZ - 0.3)), null);
+      this.walkTo(new THREE.Vector3(THREE.MathUtils.clamp(p.x, b.minX + 0.3, b.maxX - 0.3), st ? st.levels[tapLevel].y : 0, THREE.MathUtils.clamp(p.z, b.minZ + 0.3, b.maxZ - 0.3)), null);
     }
   }
 
   walkTo(target: THREE.Vector3, then: (() => void) | null) {
     if (!this.interior) return;
-    this.path = findPath(this.interior, this.pos, target);
+    const st = this.interior.storeys;
+    const want = st ? this.levelAt(target.y) : 0;
+    if (!st || want === this.level) this.path = findPath(this.floorPlan(this.level), this.pos, target);
+    else {
+      // Another floor: walk to the stairs, climb (or go down) flight by flight, then on.
+      const path: THREE.Vector3[] = [];
+      let at = this.level, cur = this.pos.clone();
+      while (at !== want) {
+        const dir = want > at ? 1 : -1;
+        const fl = st.flights.find((x) => x.from === (dir > 0 ? at : at - 1));
+        if (!fl) break;
+        const sg = Math.sign(fl.zEnd - fl.zStart), mx = (fl.x0 + fl.x1) / 2;
+        const bottom = new THREE.Vector3(mx, 0, fl.zStart - sg * 0.55), top = new THREE.Vector3(mx, 0, fl.zEnd + sg * 0.55);
+        const [a, b] = dir > 0 ? [bottom, top] : [top, bottom];
+        path.push(...findPath(this.floorPlan(at), cur, a), a, b);
+        cur = b;
+        at += dir;
+      }
+      path.push(...findPath(this.floorPlan(at), cur, target));
+      this.path = path;
+    }
     this.arriveCb = then;
   }
 
@@ -833,7 +899,7 @@ export class World {
           fx = activityFx(kind, at, use.look);
           this.interiorScene.add(fx.group);
         }
-        const dur = THREE.MathUtils.clamp(minutes / 16, 3, 10);
+        const dur = use.pose === "swim" ? 22 : THREE.MathUtils.clamp(minutes / 16, 3, 10);
         this.doing = { use, stand: (spot?.pos ?? this.pos).clone(), label, icon, t: 0, dur, fx, lastReport: -1, resolve };
         this.cb.onActivity?.({ label, icon, p: 0 });
       };
@@ -850,7 +916,8 @@ export class World {
   private updateDoing(dt: number, t: number) {
     const d = this.doing!;
     d.t += dt;
-    applyPose(this.player!, d.use, t);
+    if (d.use.pose === "swim") this.swimLaps(d.use, d.t);
+    else applyPose(this.player!, d.use, t);
     d.fx?.update(dt, t);
     const p = Math.min(1, d.t / d.dur);
     if (p - d.lastReport > 0.02 || p === 1) {
@@ -866,6 +933,59 @@ export class World {
       this.cb.onActivity?.(null);
       d.resolve(true);
     }
+  }
+
+  /**
+   * Swimming: dive in off the edge, then front crawl up and down the pool,
+   * turning at each wall, until the time's up.
+   */
+  private swimLaps(use: SpotUse, time: number) {
+    const rig = this.player!;
+    const root = rig.root;
+    const b = "real" in rig ? rig.bones : null;
+    const set = (n: string, x: number, y = 0, z = 0) => b?.[n]?.rotation.set(x, y, z);
+    const ax = use.x, az = use.z, bx = use.look[0], bz = use.look[1];
+    const len = Math.hypot(bx - ax, bz - az) || 1;
+    const dx = (bx - ax) / len, dz = (bz - az) / len;
+    const yaw = Math.atan2(dx, dz);
+    root.rotation.order = "YXZ";
+    const DIVE = 1.1;
+    if (time < DIVE) {
+      // Arms up, lean, push off and arc into the water.
+      const k = time / DIVE;
+      const pitch = THREE.MathUtils.smoothstep(k, 0.1, 0.75) * Math.PI / 2;
+      const fx = -0.4 + k * 1.6;
+      const y = k < 0.25 ? 0 : Math.sin(((k - 0.25) / 0.75) * Math.PI) * 0.45 + THREE.MathUtils.lerp(0, use.y - 0.12, (k - 0.25) / 0.75);
+      root.rotation.set(pitch, yaw, 0);
+      root.position.set(ax + dx * fx - dx * 0.85 * Math.sin(pitch), y, az + dz * fx - dz * 0.85 * Math.sin(pitch));
+      for (const s of ["L", "R"]) { set(`upperarm01.${s}`, -2.9 * Math.min(1, k * 3), 0, s === "L" ? 0.1 : -0.1); set(`lowerarm01.${s}`, 0); set(`upperleg01.${s}`, k < 0.25 ? -0.5 * k * 4 : 0); set(`lowerleg01.${s}`, k < 0.25 ? 0.8 * k * 4 : 0.05); }
+      set("neck02", 0.2);
+      return;
+    }
+    // Lengths: 1.3 m/s, turning at each end.
+    const run = Math.max(0.5, len - 1.8), speed = 1.3;
+    const dist = (time - DIVE) * speed;
+    const lap = Math.floor(dist / run), u = (dist % run) / run;
+    const fwd = lap % 2 === 0;
+    const along = 0.9 + (fwd ? u : 1 - u) * run;
+    const cx = ax + dx * along, cz = az + dz * along;
+    const dir = fwd ? 1 : -1;
+    const w = 5.2, ph = time * w;
+    root.rotation.set(Math.PI / 2, fwd ? yaw : yaw + Math.PI, Math.sin(ph) * 0.22);
+    root.position.set(cx - dx * dir * 0.85, use.y + Math.sin(ph * 2) * 0.02, cz - dz * dir * 0.85);
+    // Front crawl: arms windmill out of phase, legs flutter.
+    set("upperarm01.L", -1.4 + Math.sin(ph) * 1.5, 0, 0.15);
+    set("upperarm01.R", -1.4 + Math.sin(ph + Math.PI) * 1.5, 0, -0.15);
+    set("lowerarm01.L", Math.max(0, Math.cos(ph)) * -0.6);
+    set("lowerarm01.R", Math.max(0, Math.cos(ph + Math.PI)) * -0.6);
+    for (const s of ["L", "R"]) {
+      set(`upperleg01.${s}`, Math.sin(time * 11 + (s === "L" ? 0 : Math.PI)) * 0.22, 0, s === "L" ? -0.05 : 0.05);
+      set(`lowerleg01.${s}`, 0.15 + Math.max(0, Math.sin(time * 11 + (s === "L" ? 0.6 : Math.PI + 0.6))) * 0.3);
+    }
+    set("neck02", 0.35 + Math.max(0, Math.sin(ph)) * 0.25, Math.max(0, Math.sin(ph)) * 0.5); // turn to breathe
+    // Splash follows the swimmer.
+    const fx = this.doing?.fx;
+    if (fx) fx.group.position.set(cx - use.x, 0, cz - use.z);
   }
 
   /** Lights at home follow the power: candle-dim during dumsor unless there's a generator. */
@@ -1563,6 +1683,39 @@ export class World {
     this.camDist = THREE.MathUtils.clamp(this.camDist * (delta > 0 ? 1.15 : 1 / 1.15), 4, 34);
   }
 
+  /**
+   * Walk there from the map: along the pavement, across at the zebra
+   * crossing if it's on the other side, then up to the door.
+   */
+  walkToPlace(placeId: string): boolean {
+    const d = this.district;
+    const door = placeId === "home" ? d?.homeDoor : placeId === "plot" ? d?.plotSpot : d?.placeDoors.get(placeId);
+    if (!d || !door || this.inside || this.drive || this.ride) return false;
+    const walkZ = (WALK_IN + WALK_OUT) / 2;
+    const pts: THREE.Vector3[] = [];
+    const at = this.pos.clone();
+    const side = (z: number) => (z >= 0 ? 1 : -1);
+    const upCross = (p: THREE.Vector3) => Math.abs(p.x) < CROSS_HALF + 4 && Math.abs(p.z) > WALK_OUT + 1;
+    // Off a side street: come back down it to the main road first.
+    if (upCross(at)) { const cx = (at.x >= 0 ? 1 : -1) * (CROSS_HALF + 1.6); pts.push(new THREE.Vector3(cx, 0, at.z), new THREE.Vector3(cx, 0, side(at.z) * walkZ)); }
+    else pts.push(new THREE.Vector3(at.x, 0, side(at.z) * walkZ));
+    const cur = pts[pts.length - 1];
+    const target = upCross(door) ? new THREE.Vector3((door.x >= 0 ? 1 : -1) * (CROSS_HALF + 1.6), 0, side(door.z) * walkZ) : new THREE.Vector3(door.x, 0, side(door.z) * walkZ);
+    if (side(cur.z) !== side(target.z) && !d.shoreZ) {
+      // Cross the main road at the zebra by the junction.
+      const zx = (cur.x >= 0 ? 1 : -1) * (CROSS_HALF + 2.2);
+      pts.push(new THREE.Vector3(zx, 0, cur.z), new THREE.Vector3(zx, 0, target.z));
+    } else if (side(cur.z) !== side(target.z)) pts.push(new THREE.Vector3(cur.x, 0, target.z));
+    pts.push(target);
+    if (upCross(door)) pts.push(new THREE.Vector3(target.x, 0, door.z));
+    pts.push(door.clone().setY(0));
+    this.path = pts;
+    this.pathStuck = 0;
+    this.arriveCb = null;
+    return true;
+  }
+  private pathStuck = 0;
+
   /** Walk-to helper for map markers. */
   teleportNear(placeId: string) {
     const door = this.district?.placeDoors.get(placeId);
@@ -1577,7 +1730,8 @@ export class World {
       z: this.pos.z,
       yaw: this.yaw,
       camYaw: this.camYaw,
-      places: [...d.placeDoors].map(([id, p]) => ({ id, x: p.x, z: p.z, kind: PLACE_BY_ID[id].kind, known: this.discovered.has(id) || PLACE_BY_ID[id].kind === "transport" })),
+      places: [...d.placeDoors].map(([id, p]) => ({ id, x: p.x, z: p.z, kind: PLACE_BY_ID[id].kind, name: PLACE_BY_ID[id].name, known: this.discovered.has(id) || PLACE_BY_ID[id].kind === "transport" })),
+      walking: this.path.length ? this.path[this.path.length - 1].clone() : null,
       npcs: [...(this.life?.npcs.values() ?? [])].map((a) => ({ id: a.npc.id, x: a.home.x, z: a.home.z })),
       home: this.state?.player.home.district === d.id ? { x: d.homeDoor.x, z: d.homeDoor.z } : null,
       plot: { x: d.plotSpot.x, z: d.plotSpot.z },
@@ -1700,7 +1854,7 @@ export class World {
       const b = this.interior.bounds;
       p.x = THREE.MathUtils.clamp(p.x, b.minX + 0.35, b.maxX - 0.35);
       p.z = THREE.MathUtils.clamp(p.z, b.minZ + 0.35, b.maxZ - 0.2);
-      for (const c of this.interior.colliders) this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
+      for (const c of this.interior.storeys?.levels[this.level]?.colliders ?? this.interior.colliders) this.pushOutBox(p, r, c.minX, c.maxX, c.minZ, c.maxZ);
       return;
     }
     const airborne = this.jumpY > 0.05 || !!this.hopVel;
@@ -1737,8 +1891,31 @@ export class World {
     if (this.siteBox) this.pushOutBox(p, r, this.siteBox.minX, this.siteBox.maxX, this.siteBox.minZ, this.siteBox.maxZ);
   }
 
+  /** Stairs in a storey building: your height follows the flight; upstairs you can't step past the balcony rail. */
+  private climb(before: THREE.Vector3) {
+    const st = this.inside ? this.interior?.storeys : undefined;
+    if (!st) { this.floorY = 0; return; }
+    const k = this.level;
+    const inFoot = (fl: (typeof st.flights)[number], p: THREE.Vector3, pad = 0) =>
+      p.x > fl.x0 - 0.05 && p.x < fl.x1 + 0.05 && p.z > Math.min(fl.zStart, fl.zEnd) - pad && p.z < Math.max(fl.zStart, fl.zEnd) + pad;
+    const fl = st.flights.find((x) => (x.from === k || x.from === k - 1) && (inFoot(x, this.pos) || (inFoot(x, before) && inFoot(x, this.pos, 0.3))));
+    if (fl) {
+      // Stay between the banisters.
+      this.pos.x = THREE.MathUtils.clamp(this.pos.x, fl.x0 + 0.28, fl.x1 - 0.28);
+      const t = THREE.MathUtils.clamp((this.pos.z - fl.zStart) / (fl.zEnd - fl.zStart), 0, 1);
+      const y0 = st.levels[fl.from].y, y1 = st.levels[fl.from + 1].y;
+      this.floorY = y0 + t * (y1 - y0);
+      this.level = t > 0.5 ? fl.from + 1 : fl.from;
+    } else {
+      const lv = st.levels[k];
+      this.floorY = lv.y;
+      if (lv.blocked.some((b) => this.pos.x > b.minX && this.pos.x < b.maxX && this.pos.z > b.minZ && this.pos.z < b.maxZ)) this.pos.copy(before);
+    }
+    this.showFloors();
+  }
+
   private groundY(p: THREE.Vector3) {
-    if (this.inside) return 0;
+    if (this.inside) return this.floorY;
     const az = Math.abs(p.z), ax = Math.abs(p.x);
     if (az >= WALK_IN && az <= WALK_OUT + 0.1) return 0.16;
     if (ax >= CROSS_HALF && ax <= CROSS_HALF + 3.1 && az > WALK_OUT) return 0.16;
@@ -1785,6 +1962,11 @@ export class World {
           cb?.();
         }
       } else autoDir = to.normalize();
+      // Walked into something on the way: give up on that waypoint after a moment.
+      if (!this.inside && autoDir) {
+        this.pathStuck = this.vel.length() < 0.25 ? this.pathStuck + dt : 0;
+        if (this.pathStuck > 1.5) { this.path.shift(); this.pathStuck = 0; }
+      }
     }
     const mag = autoDir ? 1 : Math.min(1, Math.hypot(ix, iz));
     const running = this.run || this.keys.has("shift") || mag > 0.95 && (this.joy.x !== 0 || this.joy.y !== 0) && Math.hypot(this.joy.x, this.joy.y) > 0.98;
@@ -1808,8 +1990,10 @@ export class World {
       const sp = Math.hypot(this.vel.x, this.vel.z);
       if (sp > 0.5 && this.gutterAhead(new THREE.Vector3(this.vel.x / sp, 0, this.vel.z / sp))) this.jump();
     }
+    const before = this.pos.clone();
     this.pos.addScaledVector(this.hopVel ?? this.vel, dt);
     this.resolve(this.pos, 0.32);
+    this.climb(before);
     // Jumping.
     this.vy -= 9.8 * dt;
     this.jumpY = Math.max(0, this.jumpY + this.vy * dt);
@@ -1834,7 +2018,8 @@ export class World {
     // Camera.
     if (this.inside && this.interior) {
       const b = this.interior.bounds;
-      const focus = this.pos.clone().lerp(new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2), 0.4);
+      const focus = this.pos.clone().lerp(new THREE.Vector3((b.minX + b.maxX) / 2, 0, (b.minZ + b.maxZ) / 2), this.interior.storeys ? 0.15 : 0.4);
+      focus.y = this.floorY;
       this.camTarget.lerp(focus, Math.min(1, dt * 3));
     } else this.camTarget.lerp(this.pos, Math.min(1, dt * 6));
     const cd = this.camDist;

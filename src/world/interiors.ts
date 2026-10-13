@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { Batcher, G } from "./batch.ts";
 import * as T from "./textures.ts";
 import type { HomeSpec } from "../../shared/homes.ts";
+import { fullyFurnished, type Furnishing } from "../../shared/furnish.ts";
 
 export type Pose = "lie" | "sit" | "squat" | "stand" | "bath" | "swim" | "hidden";
 export interface SpotUse {
@@ -30,8 +31,19 @@ export interface CutWall {
   /** Bottom of the piece (0 for walls, above the door for lintels). */
   base: number;
 }
+export type Rect = { minX: number; maxX: number; minZ: number; maxZ: number };
+/** One floor of a storey building. The ground floor has no group of its own (it's the interior group). */
+export interface Level {
+  y: number;
+  group: THREE.Group | null;
+  colliders: Rect[];
+  /** Places on this floor with nothing to stand on (beyond the balcony rail). */
+  blocked: Rect[];
+}
 export interface Interior {
   group: THREE.Group;
+  /** Storey buildings: the floors, and the straight flights that climb from one to the next. */
+  storeys?: { levels: Level[]; flights: { from: number; x0: number; x1: number; zStart: number; zEnd: number }[] };
   bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
   colliders: { minX: number; maxX: number; minZ: number; maxZ: number }[];
   spots: InteriorSpot[];
@@ -145,7 +157,8 @@ const MAT = {
   glass: () => mat("glass", () => new THREE.MeshPhysicalMaterial({ color: "#cfe3ea", roughness: 0.05, transmission: 0.6, transparent: true, opacity: 0.35, metalness: 0 })),
   water: () => std("poolwater", { color: "#2aa8c8", roughness: 0.05, metalness: 0.1, transparent: true, opacity: 0.85 }),
   grass: () => std("lawn", { map: T.grass(true), roughness: 1 }),
-  fabric: (pattern: "wax" | "kente" | "plain" | "stripe", color: string) => std(`fab:${pattern}:${color}`, { map: T.fabric(pattern, color), roughness: 0.95 }),
+  // Indoors everything is plain cloth in softened colours: no wax-print or kente patterns on beds, rugs or curtains.
+  fabric: (_pattern: "wax" | "kente" | "plain" | "stripe", color: string) => { const c = soften(color); return std(`fab:plain:${c}`, { map: T.fabric("plain", c), roughness: 0.95 }); },
   color: (c: string, rough = 0.7, metal = 0) => std(`c:${c}:${rough}:${metal}`, { color: c, roughness: rough, metalness: metal }),
   skyline: () => mat("skyline", () => new THREE.MeshBasicMaterial({ map: canvasTex("skyline", 1024, 512, skyline) })),
   bars: () => std("bars", { color: "#2b2b2b", roughness: 0.5, metalness: 0.6 }),
@@ -155,8 +168,49 @@ const MAT = {
 // ---------------------------------------------------------------------------
 // Builder
 
+/** Pull a bright colour towards a warm neutral, for fabrics. */
+function soften(hex: string) {
+  return "#" + new THREE.Color(hex).lerp(new THREE.Color("#d9d0c1"), 0.55).getHexString();
+}
+
 class Room {
   b = new Batcher();
+  /** A local frame (origin and turn about y) for furnishing a room whichever wall the bed's on. */
+  private xf: { ox: number; oz: number; a: number } | null = null;
+  turned(ox: number, oz: number, a: number, fn: () => void) {
+    const prev = this.xf;
+    this.xf = { ox, oz, a };
+    fn();
+    this.xf = prev;
+  }
+  /** Local point to world (identity outside a turned frame). */
+  pt(x: number, z: number): [number, number] {
+    const f = this.xf;
+    if (!f) return [x, z];
+    const c = Math.cos(f.a), s = Math.sin(f.a);
+    return [f.ox + x * c + z * s, f.oz - x * s + z * c];
+  }
+  private get swap() { return !!this.xf && Math.abs(Math.sin(this.xf.a)) > 0.5; }
+  add(geo: THREE.BufferGeometry, m: M, pos: [number, number, number], rot: [number, number, number], scale: [number, number, number]) {
+    const [x, z] = this.pt(pos[0], pos[2]);
+    const a = this.xf?.a ?? 0, c = Math.cos(a), s = Math.sin(a);
+    this.b.add(geo, m, [x, pos[1], z], [rot[0] * c + rot[2] * s, rot[1] + a, -rot[0] * s + rot[2] * c], scale);
+  }
+  /** Build things hung on a wall (AC, art, curtains) so they hide when the cutaway lowers that wall. */
+  onWall(axis: "x" | "z", c: number, fn: () => void) {
+    const prev = this.b;
+    this.b = new Batcher();
+    fn();
+    const g = this.b.build();
+    this.b = prev;
+    this.extra.add(g);
+    if (this.xf) {
+      // A wall line in the local frame, as a world axis and position.
+      const [wx, wz] = this.pt(axis === "x" ? 0 : c, axis === "x" ? c : 0);
+      const turnedAxis = this.swap ? (axis === "x" ? "z" : "x") : axis;
+      this.walls.push({ mesh: g as unknown as THREE.Mesh, axis: turnedAxis, c: turnedAxis === "x" ? wz : wx, h: 1, base: 1 });
+    } else this.walls.push({ mesh: g as unknown as THREE.Mesh, axis, c, h: 1, base: 1 });
+  }
   extra = new THREE.Group();
   colliders: Interior["colliders"] = [];
   spots: InteriorSpot[] = [];
@@ -178,11 +232,15 @@ class Room {
     this.uses.set(id, { x, y, z, look, pose });
   }
   box(m: M, x: number, y: number, z: number, w: number, h: number, d: number, solid = false, ry = 0) {
-    this.b.add(G.box, m, [x, y, z], [0, ry, 0], [w, h, d]);
-    if (solid) this.colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
+    this.add(G.box, m, [x, y, z], [0, ry, 0], [w, h, d]);
+    if (solid) {
+      const [wx, wz] = this.pt(x, z);
+      const [cw, cd] = this.swap ? [d, w] : [w, d];
+      this.colliders.push({ minX: wx - cw / 2, maxX: wx + cw / 2, minZ: wz - cd / 2, maxZ: wz + cd / 2 });
+    }
   }
   cyl(m: M, x: number, y: number, z: number, r: number, h: number, rx = 0, rz = 0) {
-    this.b.add(G.cyl, m, [x, y, z], [rx, 0, rz], [r, h, r]);
+    this.add(G.cyl, m, [x, y, z], [rx, 0, rz], [r, h, r]);
   }
   floor(m: M, x0: number, z0: number, x1: number, z1: number, y = 0) {
     this.box(m, (x0 + x1) / 2, y - 0.05, (z0 + z1) / 2, x1 - x0, 0.1, z1 - z0);
@@ -213,12 +271,12 @@ class Room {
       this.box(fm, x - 0.47, 1.05, z, 0.06, 2.1, 0.16);
       this.box(fm, x + 0.47, 1.05, z, 0.06, 2.1, 0.16);
       this.box(fm, x, 2.1, z, 1.0, 0.08, 0.16);
-      this.b.add(G.box, MAT.lightWood(), [x - 0.45 + Math.cos(open) * 0.43, 1.02, z + Math.sin(open) * 0.43], [0, -open, 0], [0.86, 2.0, 0.045]);
+      this.add(G.box, MAT.lightWood(), [x - 0.45 + Math.cos(open) * 0.43, 1.02, z + Math.sin(open) * 0.43], [0, -open, 0], [0.86, 2.0, 0.045]);
     } else {
       this.box(fm, x, 1.05, z - 0.47, 0.16, 2.1, 0.06);
       this.box(fm, x, 1.05, z + 0.47, 0.16, 2.1, 0.06);
       this.box(fm, x, 2.1, z, 0.16, 0.08, 1.0);
-      this.b.add(G.box, MAT.lightWood(), [x + Math.sin(open) * 0.43, 1.02, z - 0.45 + Math.cos(open) * 0.43], [0, Math.PI / 2 - open, 0], [0.86, 2.0, 0.045]);
+      this.add(G.box, MAT.lightWood(), [x + Math.sin(open) * 0.43, 1.02, z - 0.45 + Math.cos(open) * 0.43], [0, Math.PI / 2 - open, 0], [0.86, 2.0, 0.045]);
     }
   }
   /** Window on a back wall (facing +z): frame, glass, burglar bars and optional curtains. */
@@ -264,7 +322,7 @@ function clothesLine(r: Room, x0: number, x1: number, z: number, y = 1.9) {
   for (let i = 0; i < 6; i++) r.box(MAT.color(cols[i]), x0 + 0.4 + i * ((x1 - x0 - 0.8) / 5), y - 0.33, z, 0.42, 0.62, 0.02);
 }
 function sofaSet(r: Room, x: number, z: number, kind: "wooden" | "fabric" | "leather" | "l_shape", facing = -1) {
-  const m = kind === "leather" || kind === "l_shape" ? MAT.color("#3a2418", 0.45) : kind === "fabric" ? MAT.color("#6e7480", 0.95) : MAT.fabric("wax", "#B03A62");
+  const m = kind === "leather" || kind === "l_shape" ? MAT.color("#3a2418", 0.45) : kind === "fabric" ? MAT.color("#8d8a84", 0.95) : MAT.color("#c9bba3", 0.95);
   const frame = kind === "wooden" ? MAT.darkWood() : m;
   const len = kind === "l_shape" ? 3.2 : 2.2;
   const back = z - facing * 0.4;
@@ -320,8 +378,8 @@ function displayCabinet(r: Room, x: number, z: number) {
   for (let i = 0; i < 4; i++) r.cyl(MAT.ceramic(), x - 0.4 + i * 0.27, 1.05, z + 0.05, 0.1, 0.02, Math.PI / 2);
 }
 function fan(r: Room, x: number, z: number) {
-  r.b.add(G.cyl8, MAT.black(), [x, 0.6, z], [0, 0, 0], [0.04, 1.2, 0.04]);
-  r.b.add(G.cyl, MAT.color("#2E86AB", 0.5), [x, 1.3, z], [Math.PI / 2, 0, 0], [0.32, 0.08, 0.32]);
+  r.add(G.cyl8, MAT.black(), [x, 0.6, z], [0, 0, 0], [0.04, 1.2, 0.04]);
+  r.add(G.cyl, MAT.color("#2E86AB", 0.5), [x, 1.3, z], [Math.PI / 2, 0, 0], [0.32, 0.08, 0.32]);
 }
 function bucketAndKettle(r: Room, x: number, z: number) {
   r.cyl(MAT.color("#2e6fae", 0.6), x, 0.2, z, 0.22, 0.4);
@@ -429,21 +487,21 @@ function radio(r: Room, x: number, y: number, z: number) {
 function mortarPestle(r: Room, x: number, z: number) {
   r.cyl(MAT.color("#7a4a28", 0.8), x, 0.25, z, 0.28, 0.5);
   r.cyl(MAT.color("#4a2a14", 0.9), x, 0.5, z, 0.23, 0.02);
-  r.b.add(G.cyl8, MAT.color("#a3784e", 0.8), [x + 0.05, 0.95, z], [0, 0, 0.12], [0.05, 1.5, 0.05]);
+  r.add(G.cyl8, MAT.color("#a3784e", 0.8), [x + 0.05, 0.95, z], [0, 0, 0.12], [0.05, 1.5, 0.05]);
 }
 function basins(r: Room, x: number, z: number) {
   const cols = ["#2E86AB", "#F2B705", "#c8452c"];
   cols.forEach((c, i) => r.cyl(MAT.color(c, 0.5), x + i * 0.55, 0.09 + (i === 2 ? 0.18 : 0), z, 0.26 - i * 0.03, 0.18));
 }
 function charcoalSack(r: Room, x: number, z: number) {
-  r.b.add(G.sphere, MAT.color("#d9cfb5", 1), [x, 0.3, z], [0, 0, 0], [0.32, 0.38, 0.28]);
-  r.b.add(G.sphere, MAT.color("#1d1d1d", 1), [x, 0.6, z], [0, 0, 0], [0.22, 0.08, 0.2]);
+  r.add(G.sphere, MAT.color("#d9cfb5", 1), [x, 0.3, z], [0, 0, 0], [0.32, 0.38, 0.28]);
+  r.add(G.sphere, MAT.color("#1d1d1d", 1), [x, 0.6, z], [0, 0, 0], [0.22, 0.08, 0.2]);
 }
 function chicken(r: Room, x: number, z: number, ry = 0, hen = true) {
   const c = hen ? "#a8673a" : "#f2efe8";
-  r.b.add(G.sphere, MAT.color(c, 0.9), [x, 0.22, z], [0, ry, 0], [0.16, 0.14, 0.22]);
-  r.b.add(G.sphere, MAT.color(c, 0.9), [x + Math.sin(ry) * 0.17, 0.36, z + Math.cos(ry) * 0.17], [0, 0, 0], [0.08, 0.09, 0.08]);
-  r.b.add(G.sphere, MAT.color("#c8152c", 0.7), [x + Math.sin(ry) * 0.17, 0.45, z + Math.cos(ry) * 0.17], [0, 0, 0], [0.02, 0.04, 0.05]);
+  r.add(G.sphere, MAT.color(c, 0.9), [x, 0.22, z], [0, ry, 0], [0.16, 0.14, 0.22]);
+  r.add(G.sphere, MAT.color(c, 0.9), [x + Math.sin(ry) * 0.17, 0.36, z + Math.cos(ry) * 0.17], [0, 0, 0], [0.08, 0.09, 0.08]);
+  r.add(G.sphere, MAT.color("#c8152c", 0.7), [x + Math.sin(ry) * 0.17, 0.45, z + Math.cos(ry) * 0.17], [0, 0, 0], [0.02, 0.04, 0.05]);
   r.box(MAT.color("#e8a33a", 0.7), x, 0.06, z, 0.12, 0.12, 0.02);
 }
 function waterDrum(r: Room, x: number, z: number) {
@@ -457,7 +515,7 @@ function potsOnHob(r: Room, x: number, y: number, z: number) {
 function fruitBowl(r: Room, x: number, y: number, z: number) {
   r.cyl(MAT.color("#7a4a28", 0.5), x, y + 0.04, z, 0.2, 0.08);
   for (const [dx, dz, c] of [[0, 0, "#f2b705"], [0.08, 0.05, "#e85d2a"], [-0.07, 0.04, "#3f8f2a"], [0.02, -0.08, "#f2b705"]] as const)
-    r.b.add(G.sphere, MAT.color(c, 0.6), [x + dx, y + 0.12, z + dz], [0, 0, 0], [0.06, 0.06, 0.06]);
+    r.add(G.sphere, MAT.color(c, 0.6), [x + dx, y + 0.12, z + dz], [0, 0, 0], [0.06, 0.06, 0.06]);
 }
 function pendantLamp(r: Room, x: number, y: number, z: number, h = 2.9) {
   r.box(MAT.black(), x, (y + h) / 2, z, 0.01, h - y, 0.01);
@@ -485,14 +543,15 @@ function floorLamp(r: Room, x: number, z: number) {
 
 function plant(r: Room, x: number, z: number, big = false) {
   r.cyl(MAT.color("#5a3a22", 0.9), x, 0.25, z, big ? 0.3 : 0.2, 0.5);
-  r.b.add(G.ico, MAT.color("#3f6f2a", 0.9), [x, big ? 1.3 : 0.85, z], [0, 0, 0], [big ? 0.6 : 0.4, big ? 1.0 : 0.6, big ? 0.6 : 0.4]);
+  r.add(G.ico, MAT.color("#3f6f2a", 0.9), [x, big ? 1.3 : 0.85, z], [0, 0, 0], [big ? 0.6 : 0.4, big ? 1.0 : 0.6, big ? 0.6 : 0.4]);
 }
 function rug(r: Room, x: number, z: number, w: number, d: number, color = "#C8452C") {
   r.box(MAT.fabric("kente", color), x, 0.012, z, w, 0.02, d);
 }
 function frame(r: Room, x: number, y: number, z: number, w = 0.7, h = 0.5) {
   r.box(MAT.color("#b08d57", 0.3, 0.7), x, y, z, w, h, 0.03);
-  r.box(MAT.fabric("kente", "#1F7A4D"), x, y, z + 0.02, w - 0.1, h - 0.1, 0.01);
+  r.box(MAT.color("#e9e2d4", 0.9), x, y, z + 0.02, w - 0.1, h - 0.1, 0.01);
+  r.box(MAT.color("#8a8378", 0.9), x, y - 0.03, z + 0.025, w - 0.3, h - 0.3, 0.005);
 }
 
 /** Owned furniture that the base layout doesn't already cover. */
@@ -507,7 +566,8 @@ function ownedExtras(r: Room, items: string[], spots: { tv: [number, number]; fr
 // ---------------------------------------------------------------------------
 // Layouts by kind of home
 
-export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
+export function buildHomeInterior(spec: HomeSpec, items: string[], furnish: Furnishing | null = null): Interior {
+  if ((spec.tier as string) === "mansion" || (spec.tier as string) === "villa") return buildManor(spec, items, furnish);
   const r = new Room();
   const has = (i: string) => items.includes(i);
   let bounds = { minX: -3, maxX: 3, minZ: -3, maxZ: 3 };
@@ -614,10 +674,10 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
         const a = (i / 20) * Math.PI * 2;
         const front = Math.sin(a) > 0.35;
         const h = front ? 0.9 : 2.4;
-        r.b.add(G.box, MAT.mud(), [cx + Math.cos(a) * R, h / 2, cz + Math.sin(a) * R], [0, -a, 0], [0.25, h, 0.8]);
+        r.add(G.box, MAT.mud(), [cx + Math.cos(a) * R, h / 2, cz + Math.sin(a) * R], [0, -a, 0], [0.25, h, 0.8]);
       }
       r.colliders.push({ minX: -2.6, maxX: 2.6, minZ: -5.7, maxZ: -5.4 });
-      r.b.add(G.cone, MAT.thatch(), [cx, 3.3, cz - 0.6], [0, 0, 0], [2.9, 1.6, 2.2]);
+      r.add(G.cone, MAT.thatch(), [cx, 3.3, cz - 0.6], [0, 0, 0], [2.9, 1.6, 2.2]);
       r.box(MAT.color("#d8b878"), cx - 0.7, 0.04, cz - 0.6, 1.2, 0.06, 1.9); // sleeping mat
       bedPos = new THREE.Vector3(cx + 0.4, 0, cz - 0.3);
       r.use("bed", cx - 0.7, 0.08, cz - 0.5, [cx - 0.7, cz - 2], "lie");
@@ -625,7 +685,7 @@ export function buildHomeInterior(spec: HomeSpec, items: string[]): Interior {
       r.cyl(MAT.color("#c9a227", 0.8), cx - 1.6, 0.15, cz - 0.3, 0.25, 0.25); // calabash
       // Courtyard: granary, bathing enclosure, coal pot, water pots.
       r.cyl(MAT.mud(), 4.5, 1.1, -2, 1.0, 2.2);
-      r.b.add(G.cone, MAT.thatch(), [4.5, 2.7, -2], [0, 0, 0], [1.3, 1.1, 1.3]);
+      r.add(G.cone, MAT.thatch(), [4.5, 2.7, -2], [0, 0, 0], [1.3, 1.1, 1.3]);
       r.colliders.push({ minX: 3.5, maxX: 5.5, minZ: -3, maxZ: -1 });
       r.wall(MAT.mud(), -5.5, 2, -3.5, 2, 1.3);
       r.wall(MAT.mud(), -5.5, 2, -5.5, 4, 1.3);
@@ -940,4 +1000,557 @@ function signSprite(text: string, x: number, y: number, z: number) {
   s.scale.set(0.45 * (img.width / img.height), 0.45, 1);
   s.position.set(x, y, z);
   return s;
+}
+
+// ---------------------------------------------------------------------------
+// Storey buildings (villa: ground + first floor; mansion: ground, first and
+// second floor). A stair core in the middle climbs floor to floor; bedrooms
+// are spread over the floors, with a sitting room downstairs and a family
+// lounge on the first floor. A house you buy comes empty (fitted kitchen and
+// bathrooms only); each room shows exactly the furniture bought for it.
+// Rented ones come furnished by the landlord.
+
+type Has = (id: string) => boolean;
+/** A plain wool rug with a border, in quiet colours. */
+function lrug(r: Room, x: number, z: number, w: number, d: number, color = "#cbbfa8") {
+  r.box(MAT.fabric("plain", color), x, 0.012, z, w, 0.02, d);
+  r.box(MAT.fabric("plain", "#efe6d4"), x, 0.014, z, w - 0.3, 0.02, d - 0.3);
+  r.box(MAT.fabric("plain", color), x, 0.016, z, w - 0.5, 0.02, d - 0.5);
+}
+/** An abstract canvas in a thin gold frame, hung on a wall along x facing +z (dir 1) or -z. */
+function canvasArt(r: Room, x: number, y: number, z: number, w: number, h: number, dir: 1 | -1, seed = 0) {
+  const pal = [["#8a8378", "#c9bba3", "#2b2b2b"], ["#5b6470", "#d9c9a8", "#b08d57"], ["#6e6a66", "#efe6d4", "#3a2418"], ["#9a8f80", "#d8d0c2", "#4a4642"]][seed % 4];
+  r.box(MAT.color("#b08d57", 0.3, 0.7), x, y, z + dir * 0.02, w, h, 0.03);
+  r.box(MAT.color("#f4efe6", 0.9), x, y, z + dir * 0.035, w - 0.08, h - 0.08, 0.01);
+  for (let i = 0; i < 3; i++) r.box(MAT.color(pal[i], 0.8), x - w / 2 + 0.12 + ((i + 0.5) * (w - 0.24)) / 3, y - 0.04 + (i - 1) * 0.06, z + dir * 0.042, (w - 0.24) / 3 - 0.04, h * (0.45 + i * 0.12), 0.005);
+}
+/** A bed with the headboard at the back (-z, dir 1) or the front (+z, dir -1). */
+function bedDir(r: Room, x: number, z: number, size: "single" | "double" | "king", dir: 1 | -1, cloth: string, upholstered = true, tables = true) {
+  const w = size === "king" ? 2.0 : size === "double" ? 1.6 : 1.05, d = 2.1;
+  const fm = upholstered ? MAT.color("#7d6a5a", 0.95) : MAT.darkWood();
+  r.box(fm, x, 0.22, z, w + 0.1, 0.44, d, true);
+  r.box(MAT.white(), x, 0.58, z, w, 0.26, d - 0.1);
+  // Hotel-style: crisp cream duvet with a coloured throw (children's beds keep their bright covers).
+  r.box(MAT.fabric("plain", upholstered ? "#f1ece2" : cloth), x, 0.73, z + dir * 0.4, w + 0.04, 0.05, 1.25);
+  r.box(MAT.fabric("plain", upholstered ? cloth : "#f1ece2"), x, 0.765, z + dir * 0.85, w + 0.06, 0.03, 0.45); // throw at the foot
+  if (upholstered) for (const s of size === "single" ? [0] : [-0.25, 0.25]) r.box(MAT.fabric("plain", cloth), x + s * w, 0.86, z - dir * 0.55, 0.4, 0.22, 0.12); // cushions
+  for (const s of size === "single" ? [0] : [-1, 1]) r.box(MAT.white(), x + s * w / 4, 0.79, z - dir * 0.78, size === "single" ? w * 0.7 : w * 0.4, 0.15, 0.36);
+  r.box(fm, x, upholstered ? 1.25 : 0.95, z - dir * (d / 2 + 0.05), w + 0.3, upholstered ? 1.6 : 1.0, 0.12);
+  if (!tables) return;
+  for (const s of size === "single" ? [1] : [-1, 1]) {
+    r.box(MAT.darkWood(), x + s * (w / 2 + 0.36), 0.28, z - dir * 0.8, 0.48, 0.56, 0.42, true);
+    r.cyl(MAT.color("#c8a86a", 0.4, 0.6), x + s * (w / 2 + 0.36), 0.68, z - dir * 0.8, 0.03, 0.24);
+    r.cyl(MAT.glow("#fff0cc", 1.1), x + s * (w / 2 + 0.36), 0.9, z - dir * 0.8, 0.14, 0.2);
+  }
+}
+/** Split air-conditioner high on a wall, blowing towards +z (dir 1) or -z (dir -1). */
+function splitAC(r: Room, x: number, z: number, dir: 1 | -1 = 1, y = 2.6) {
+  r.box(MAT.color("#f4f4f2", 0.3), x, y, z + dir * 0.12, 0.95, 0.3, 0.22);
+  r.box(MAT.color("#d9d9d6", 0.4), x, y - 0.11, z + dir * 0.235, 0.85, 0.04, 0.01);
+  r.box(MAT.glow("#7fd7ff", 1.5), x + 0.38, y + 0.05, z + dir * 0.235, 0.03, 0.02, 0.005);
+}
+/** Dressing table against a side wall (side -1 = the room's left wall, facing +x). */
+function dresserSide(r: Room, x: number, z: number, side: 1 | -1) {
+  r.box(MAT.color("#f1e9dc", 0.5), x, 0.4, z, 0.45, 0.8, 1.2, true);
+  for (let i = 0; i < 3; i++) r.box(MAT.color("#c8a86a", 0.3, 0.7), x - side * 0.23, 0.18 + i * 0.25, z, 0.01, 0.02, 0.12);
+  r.box(MAT.color("#cfe3ea", 0.02, 0.9), x + side * 0.18, 1.35, z, 0.03, 0.9, 0.8);
+  r.box(MAT.color("#c8a86a", 0.3, 0.7), x + side * 0.2, 1.35, z, 0.02, 0.96, 0.86);
+  r.cyl(MAT.color("#c9b28c", 0.2, 0.3), x, 0.88, z - 0.4, 0.04, 0.16); // perfume
+  r.cyl(MAT.color("#e9e2d4", 0.2, 0.3), x, 0.86, z - 0.28, 0.03, 0.12);
+  r.box(MAT.color("#efe7da", 0.8), x - side * 0.6, 0.25, z, 0.4, 0.5, 0.4); // pouffe
+}
+function desk(r: Room, x: number, z: number, dir: 1 | -1 = 1) {
+  r.box(MAT.darkWood(), x, 0.74, z, 1.5, 0.05, 0.7, true);
+  for (const s of [-1, 1]) r.box(MAT.darkWood(), x + s * 0.7, 0.37, z, 0.05, 0.74, 0.65);
+  r.box(MAT.black(), x, 0.78, z, 0.38, 0.02, 0.26); // laptop
+  r.box(MAT.color("#22324a", 0.1), x, 0.9, z - dir * 0.12, 0.38, 0.24, 0.015);
+  r.box(MAT.black(), x, 0.48, z + dir * 0.65, 0.5, 0.08, 0.5); // office chair
+  r.box(MAT.black(), x, 0.8, z + dir * 0.88, 0.48, 0.6, 0.06);
+}
+function bookshelf(r: Room, x: number, z: number, w = 1.2, dir: 1 | -1 = 1) {
+  r.box(MAT.darkWood(), x, 1.0, z, w, 2.0, 0.35, true);
+  for (let i = 0; i < 4; i++) for (let k = 0; k < 3; k++) books(r, x - w / 2 + 0.25 + k * (w / 3), 0.25 + i * 0.48, z + dir * 0.02);
+}
+/** A window with curtains on a wall that runs along x. */
+function curtains(r: Room, x: number, z: number, w: number, dir: 1 | -1 = 1, color = "#e9e2d0", dressed = true) {
+  r.box(MAT.glass(), x, 1.55, z + dir * 0.08, w, 1.3, 0.02);
+  r.box(MAT.white(), x, 1.55, z + dir * 0.06, w + 0.12, 1.42, 0.04);
+  if (!dressed) return;
+  for (const s of [-1, 1]) r.box(MAT.color(color, 0.95), x + s * (w / 2 + 0.05), 1.65, z + dir * 0.16, 0.38, 1.85, 0.05);
+  r.box(MAT.color("#b08d57", 0.3, 0.7), x, 2.62, z + dir * 0.16, w + 1.0, 0.04, 0.04); // rail
+}
+function wardrobeSide(r: Room, x: number, z: number, len: number, side: 1 | -1) {
+  r.box(MAT.color("#efe7da", 0.6), x, 1.15, z, 0.6, 2.3, len, true);
+  for (let i = 1; i < 3; i++) r.box(MAT.color("#d8cfc0", 0.6), x - side * 0.305, 1.15, z - len / 2 + (i * len) / 3, 0.01, 2.2, 0.02);
+  for (let i = 0; i < 3; i++) r.box(MAT.color("#c8a86a", 0.3, 0.7), x - side * 0.31, 1.15, z - len / 2 + ((i + 0.5) * len) / 3 + 0.2, 0.02, 0.35, 0.02);
+}
+function label(r: Room, text: string, x: number, z: number, y = 2.75) {
+  const [wx, wz] = r.pt(x, z);
+  r.extra.add(signSprite(text, wx, y, wz));
+}
+/** Split a wall along x or z into pieces with several doorways. */
+function wallDoors(r: Room, m: M, x0: number, z0: number, x1: number, z1: number, h: number, gaps: [number, number][]) {
+  const along = x0 === x1 ? "z" : "x";
+  let a = along === "x" ? Math.min(x0, x1) : Math.min(z0, z1);
+  const end = along === "x" ? Math.max(x0, x1) : Math.max(z0, z1);
+  for (const g of [...gaps].sort((p, q) => p[0] - q[0])) {
+    if (along === "x") r.wall(m, a, z0, g[1], z1, h, g); else r.wall(m, x0, a, x1, g[1], h, g);
+    a = g[1];
+  }
+  if (end - a > 0.05) { if (along === "x") r.wall(m, a, z0, end, z1, h); else r.wall(m, x0, a, x1, end, h); }
+}
+
+/**
+ * Furnish one bedroom from what's been bought for it, in a local frame: the
+ * bed's head wall runs along z = 0, the room spans x in [-hw, hw] and z in
+ * [0, len]. `door` is the doorway in the same frame, so nothing blocks it.
+ */
+function bedroomLocal(r: Room, hw: number, len: number, door: [number, number], name: string, cloth: string, has: Has) {
+  const x0 = -hw, x1 = hw;
+  const bz = 1.12;
+  const bed = has("king_bed") ? "king" : has("double_bed") || has("carpenter_bed") ? "double" : has("twin_beds") ? "twin" : null;
+  const empty = !["king_bed", "double_bed", "carpenter_bed", "twin_beds", "wardrobe", "dresser", "desk", "split_ac", "curtains", "rug", "art", "plant", "lights"].some(has);
+  if (bed === "twin") {
+    bedDir(r, -0.85, bz, "single", 1, cloth, false, false);
+    bedDir(r, 0.85, bz, "single", 1, "#7d8fa3", false, false);
+    r.box(MAT.darkWood(), 0, 0.28, 0.3, 0.45, 0.56, 0.4, true);
+    r.cyl(MAT.glow("#fff0cc", 1.1), 0, 0.75, 0.3, 0.13, 0.22);
+  } else if (bed) bedDir(r, 0, bz, bed, 1, cloth, !has("carpenter_bed"));
+  const bedHalf = bed === "king" ? 1.6 : bed ? 1.4 : 0.8;
+  if (has("rug")) lrug(r, 0, bz + 1.2, Math.min(2 * hw - 1.6, 3.2), 2.2);
+  // Which wall is the door on? Keep that side clear.
+  const [du, dv] = door;
+  const doorSide: "left" | "right" | "foot" = dv > len - 0.4 ? "foot" : du < 0 ? "left" : "right";
+  const clear = (u: number, v0: number, v1: number) => !(doorSide !== "foot" && Math.sign(u) === Math.sign(du) && v1 > dv - 0.75 && v0 < dv + 0.75);
+  const flip = has("_flip");
+  const wardSide: 1 | -1 = doorSide === "left" ? 1 : doorSide === "right" ? -1 : flip ? -1 : 1;
+  // Head wall: AC over the bed, a window one side, a painting the other.
+  const avail = hw - bedHalf - 0.4;
+  const ww = THREE.MathUtils.clamp(avail - 0.6, 0.7, 1.4);
+  r.onWall("x", 0, () => {
+    if (has("split_ac")) splitAC(r, 0, 0, 1);
+    curtains(r, (flip ? 1 : -1) * (hw - 0.2 - avail / 2), 0, ww, 1, "#e6ddcc", has("curtains"));
+    if (has("art") && avail > 0.9) canvasArt(r, (flip ? -1 : 1) * (hw - 0.2 - avail / 2), 1.6, 0, Math.min(0.9, avail - 0.2), 1.1, 1, Math.round(hw * 3));
+  });
+  const wLen = Math.min(2.4, len - 3.2);
+  const wv = Math.min(len * 0.5, 3.9);
+  if (has("wardrobe") && wLen > 1) wardrobeSide(r, wardSide * (hw - 0.34), wv, wLen, wardSide);
+  if (has("dresser")) {
+    const ds = (-wardSide) as 1 | -1;
+    if (clear(ds * hw, 2.0, 3.2)) dresserSide(r, ds * (hw - 0.25), 2.6, ds);
+    else if (len - 0.3 > wv + wLen / 2 + 1.4) dresserSide(r, wardSide * (hw - 0.25), len - 1.0, wardSide);
+  }
+  if (has("desk")) {
+    const dxu = doorSide === "foot" ? (du > 0 ? -1 : 1) * (hw - 1.3) : (-Math.sign(du) || 1) * (hw - 1.3);
+    desk(r, dxu, len - 0.5, -1);
+  }
+  if (has("lights")) pendantLamp(r, 0, 2.6, len / 2, r.wallH);
+  if (has("plant")) plant(r, (doorSide === "left" ? 1 : -1) * (hw - 0.45), len - 0.45, true);
+  label(r, empty ? `${name} · empty` : name, 0, len / 2);
+}
+type Side = "back" | "front" | "left" | "right";
+/** Turn a room rectangle into the local frame bedroomLocal wants, with the head on `head`. */
+function frameOf(x0: number, z0: number, x1: number, z1: number, head: Side) {
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2;
+  if (head === "back") return { ox: cx, oz: z0, a: 0, hw: (x1 - x0) / 2, len: z1 - z0 };
+  if (head === "front") return { ox: cx, oz: z1, a: Math.PI, hw: (x1 - x0) / 2, len: z1 - z0 };
+  if (head === "left") return { ox: x0, oz: cz, a: Math.PI / 2, hw: (z1 - z0) / 2, len: x1 - x0 };
+  return { ox: x1, oz: cz, a: -Math.PI / 2, hw: (z1 - z0) / 2, len: x1 - x0 };
+}
+/** World point → that frame's local (u, v). */
+function toLocal(f: { ox: number; oz: number; a: number }, x: number, z: number): [number, number] {
+  const dx = x - f.ox, dz = z - f.oz, c = Math.cos(f.a), s = Math.sin(f.a);
+  return [dx * c - dz * s, dx * s + dz * c];
+}
+function seating(r: Room, cx: number, tvZ: number, sofaZ: number, has: Has) {
+  // TV on the wall at tvZ, sofa facing it at sofaZ.
+  const dir: 1 | -1 = sofaZ > tvZ ? -1 : 1;
+  if (has("leather_sofa")) sofaSet(r, cx, sofaZ, "l_shape", dir);
+  else if (has("fabric_sofa")) sofaSet(r, cx, sofaZ, "fabric", dir);
+  else if (has("wooden_sofa")) sofaSet(r, cx, sofaZ, "wooden", dir);
+  if (has("tv65") || has("tv32")) tvWall(r, cx, tvZ + (dir === -1 ? 0.4 : -0.4), has("tv65"));
+  const mid = (tvZ + sofaZ) / 2 + (sofaZ - tvZ) * 0.15;
+  if (has("coffee_table")) { coffeeTable(r, cx, mid); fruitBowl(r, cx, 0.44, mid); }
+  if (has("rug")) lrug(r, cx, (tvZ + sofaZ) / 2 + (sofaZ - tvZ) * 0.1, 4.2, 3.0, "#9a8f80");
+  if (has("armchairs")) for (const s of [-1, 1]) {
+    const ax = cx + s * 2.6;
+    r.box(MAT.color("#c9b28c", 0.9), ax, 0.22, mid, 0.85, 0.44, 0.85, true);
+    r.box(MAT.color("#d8c4a0", 0.95), ax, 0.5, mid, 0.76, 0.14, 0.76);
+    r.box(MAT.color("#c9b28c", 0.9), ax + s * 0.36, 0.75, mid, 0.14, 0.6, 0.85);
+  }
+}
+function bathroomSet(r: Room, x0: number, z0: number, x1: number, z1: number, tub: boolean) {
+  r.floor(MAT.bathTiles(), x0, z0, x1, z1, 0.006);
+  r.box(MAT.bathTiles(), (x0 + x1) / 2, 1.0, z0 + 0.04, x1 - x0 - 0.1, 2.0, 0.02);
+  toilet(r, x0 + 0.5, z0 + 0.45);
+  sink(r, x0 + 1.35, z0 + 0.35);
+  if (x1 - x0 > 3.4) sink(r, x0 + 2.0, z0 + 0.35);
+  if (tub && x1 - x0 > 3.2) bathtub(r, x1 - 1.0, z0 + 0.55);
+  shower(r, x1 - 0.55, z1 - 0.55, true);
+  r.box(MAT.color("#ffffff", 0.9), x0 + 0.08, 1.2, (z0 + z1) / 2, 0.04, 0.6, 0.4); // towel
+}
+/** Glass balustrade with a brass handrail along x or z; solid to walk into. */
+function balustrade(r: Room, x0: number, z0: number, x1: number, z1: number) {
+  const cx = (x0 + x1) / 2, cz = (z0 + z1) / 2, alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+  const w = alongX ? x1 - x0 : 0.04, d = alongX ? 0.04 : z1 - z0;
+  r.box(MAT.glass(), cx, 0.5, cz, w, 1.0, d);
+  r.box(MAT.color("#b08d57", 0.3, 0.7), cx, 1.02, cz, alongX ? w : 0.06, 0.05, alongX ? 0.06 : d);
+  r.colliders.push({ minX: Math.min(x0, x1) - (alongX ? 0 : 0.08), maxX: Math.max(x0, x1) + (alongX ? 0 : 0.08), minZ: Math.min(z0, z1) - (alongX ? 0.08 : 0), maxZ: Math.max(z0, z1) + (alongX ? 0.08 : 0) });
+}
+/** Outdoor chairs and a table on a terrace or balcony. */
+function terraceSet(r: Room, x: number, z: number) {
+  r.cyl(MAT.color("#3a3a3a", 0.5, 0.4), x, 0.36, z, 0.45, 0.04);
+  r.cyl(MAT.color("#3a3a3a", 0.5, 0.4), x, 0.18, z, 0.04, 0.36);
+  for (const s of [-1, 1]) {
+    r.box(MAT.color("#6b5a48", 0.8), x + s * 0.85, 0.22, z, 0.6, 0.06, 0.6, true);
+    r.box(MAT.color("#6b5a48", 0.8), x + s * 1.12, 0.5, z, 0.06, 0.55, 0.6);
+    r.box(MAT.fabric("plain", "#e6ddcc"), x + s * 0.85, 0.28, z, 0.55, 0.06, 0.55);
+  }
+}
+
+export type Flight = { from: number; x0: number; x1: number; zStart: number; zEnd: number };
+
+function buildManor(spec: HomeSpec, items: string[], furnish: Furnishing | null): Interior {
+  const mansion = spec.tier === "mansion";
+  const f = furnish ?? fullyFurnished(spec.tier);
+  const hasIn = (room: string): Has => (id) => (f[room] ?? []).includes(id);
+  const roomEmpty = (room: string) => !(f[room] ?? []).some((x) => x !== "_flip");
+  const hx = mansion ? 12 : 10, hz = mansion ? 8 : 7, FY = 3.4;
+  const NL = mansion ? 3 : 2;
+  const s0 = mansion ? -1.6 : -2, s1 = mansion ? 4.4 : 3.6; // the stair core runs from s0 (back) to s1 (front)
+  const HW = 2.6; // the hall: x from -HW to HW on every floor
+  const outside = 9;
+  const flights: Flight[] = [];
+  for (let i = 0; i < NL - 1; i++) flights.push(i % 2 === 0 ? { from: i, x0: -1.5, x1: -0.1, zStart: s1, zEnd: s0 } : { from: i, x0: 0.1, x1: 1.5, zStart: s0, zEnd: s1 });
+  const L: Room[] = [];
+  for (let k = 0; k < NL; k++) { const rr = new Room(); rr.wallH = FY; L.push(rr); }
+  const r = L[0];
+  const lamp = (rr: Room, x: number, y: number, z: number, i = 7, d = 10) => { const l = new THREE.PointLight("#ffe2b0", i, d, 1.6); l.position.set(x, y, z); rr.extra.add(l); };
+  const wallM = MAT.plaster("#f4eee3");
+  const cols = ["#8a7a68", "#6b7684", "#7d8a74", "#a08c6c", "#857a8c", "#8c7466", "#7a7a72"];
+  const D1 = [s0 - 2.2, s0 - 1.2] as [number, number]; // a door off the back hall
+  const D2 = [s1 - 1.6, s1 - 0.6] as [number, number]; // a door off the stair-side corridor
+  const D3 = [s1 + 0.8, s1 + 1.7] as [number, number]; // a door off the front landing
+  const ARCH = [s1 + 0.6, hz - 0.6] as [number, number];
+  const bedSpots: { id: string; level: number; x: number; z: number; lx: number; lz: number; mat: boolean }[] = [];
+
+  /** A bedroom in a rectangle, head on `head`, door at (doorX, doorZ). */
+  const bedroomAt = (k: number, id: string, name: string, x0: number, z0: number, x1: number, z1: number, head: Side, doorX: number, doorZ: number, ci: number) => {
+    const rr = L[k];
+    const fr = frameOf(x0, z0, x1, z1, head);
+    const has = hasIn(id);
+    rr.floor(MAT.wood(), x0, z0, x1, z1, 0.005);
+    rr.turned(fr.ox, fr.oz, fr.a, () => bedroomLocal(rr, fr.hw, fr.len, toLocal(fr, doorX, doorZ), name, cols[ci % cols.length], has));
+    // Where you lie down (or the mat on the floor if there's no bed yet).
+    const anyBed = ["king_bed", "double_bed", "carpenter_bed", "twin_beds"].some(has);
+    let use: [number, number] = [0, 0], look: [number, number] = [0, 0], spot: [number, number] = [0, 0];
+    rr.turned(fr.ox, fr.oz, fr.a, () => {
+      const bx = has("twin_beds") ? -0.85 : 0;
+      use = rr.pt(bx, 1.42); look = rr.pt(bx, 0.2); spot = rr.pt(bx + 1.4, 2.8);
+    });
+    bedSpots.push({ id, level: k, x: use[0], z: use[1], lx: look[0], lz: look[1], mat: !anyBed });
+    void spot;
+    lamp(rr, (x0 + x1) / 2, FY - 0.4, (z0 + z1) / 2, 5, 9);
+  };
+
+  // ---------------- Shell of every floor ----------------
+  for (let k = 0; k < NL; k++) {
+    const rr = L[k];
+    // Floor slab, open where the stair arrives from below.
+    const arr = flights.find((fl) => fl.from === k - 1);
+    const fm = k === 0 ? MAT.marble() : MAT.marble();
+    if (!arr) rr.floor(fm, -hx, -hz, hx, hz);
+    else {
+      rr.floor(fm, -hx, -hz, hx, s0);
+      rr.floor(fm, -hx, s1, hx, hz);
+      rr.floor(fm, -hx, s0, arr.x0, s1);
+      rr.floor(fm, arr.x1, s0, hx, s1);
+    }
+    rr.wall(wallM, -hx, -hz, hx, -hz, FY);
+    rr.wall(wallM, -hx, -hz, -hx, hz, FY);
+    rr.wall(wallM, hx, -hz, hx, hz, FY);
+    // Windows on the outside walls, every few metres.
+    rr.onWall("x", -hz, () => { for (let x = -hx + 2; x < hx - 1; x += 4) { rr.box(MAT.glass(), x, 1.6, -hz + 0.08, 1.3, 1.3, 0.02); rr.box(MAT.white(), x, 1.6, -hz + 0.06, 1.42, 1.42, 0.03); } });
+    // Stair core: the wall between the flights, rails and landings.
+    rr.cutBox(MAT.plaster("#ece5d8"), 0, FY / 2, (s0 + s1) / 2, 0.2, FY, s1 - s0);
+    lamp(rr, 0, FY - 0.3, s0 - 1.2, 6, 10);
+    lamp(rr, 0, FY - 0.3, s1 + 1.2, 6, 10);
+  }
+  // The flights themselves: marble treads and risers, solid underneath, a glass and brass balustrade outside.
+  for (const fl of flights) {
+    const rr = L[fl.from];
+    const steps = Math.round(FY / 0.17), run = (fl.zEnd - fl.zStart) / steps;
+    const sx = (fl.x0 + fl.x1) / 2, sw = fl.x1 - fl.x0;
+    for (let i = 0; i < steps; i++) {
+      const z = fl.zStart + (i + 0.5) * run, y = ((i + 1) * FY) / steps;
+      rr.box(MAT.marble(), sx, y - 0.04, z, sw, 0.08, Math.abs(run) + 0.03);
+      rr.box(MAT.color("#ece5d8", 0.7), sx, (y - 0.08) / 2, z, sw, Math.max(0.02, y - 0.08), Math.abs(run) + 0.02);
+    }
+    const outer = fl.x0 < 0 ? fl.x0 - 0.04 : fl.x1 + 0.04;
+    const dz = fl.zEnd - fl.zStart, len = Math.hypot(FY, dz), slope = dz < 0 ? Math.atan2(FY, -dz) : -Math.atan2(FY, dz);
+    rr.add(G.box, MAT.glass(), [outer, FY / 2 + 0.5, (fl.zStart + fl.zEnd) / 2], [slope, 0, 0], [0.03, 0.9, len]);
+    rr.add(G.box, MAT.color("#b08d57", 0.3, 0.7), [outer, FY / 2 + 0.97, (fl.zStart + fl.zEnd) / 2], [slope, 0, 0], [0.06, 0.05, len]);
+    label(rr, "Stairs ↑", sx, fl.zStart - Math.sign(run) * 0.5, 2.2);
+    if (L[fl.from + 1]) label(L[fl.from + 1], "Stairs ↓", sx, fl.zEnd + Math.sign(run) * 0.5, 2.2);
+  }
+  // What you can't walk through on each floor around the stairs.
+  const levelColliders = (k: number): Rect[] => {
+    const out: Rect[] = [{ minX: -0.1, maxX: 0.1, minZ: s0, maxZ: s1 }];
+    const dep = flights.find((fl) => fl.from === k), arr = flights.find((fl) => fl.from === k - 1);
+    const outerRail = (fl: Flight): Rect => fl.x0 < 0 ? { minX: fl.x0 - 0.12, maxX: fl.x0, minZ: s0, maxZ: s1 } : { minX: fl.x1, maxX: fl.x1 + 0.12, minZ: s0, maxZ: s1 };
+    if (dep) {
+      out.push(outerRail(dep));
+      // You can't step onto the top end of a flight from its own floor.
+      out.push(dep.zEnd < dep.zStart ? { minX: dep.x0, maxX: dep.x1, minZ: dep.zEnd - 0.1, maxZ: dep.zEnd + 1.3 } : { minX: dep.x0, maxX: dep.x1, minZ: dep.zEnd - 1.3, maxZ: dep.zEnd + 0.1 });
+    }
+    if (arr) {
+      out.push(outerRail(arr));
+      out.push({ minX: arr.x0, maxX: arr.x1, minZ: arr.zStart - 0.08, maxZ: arr.zStart + 0.08 }); // rail across the bottom end of the hole
+    }
+    // Any other flight on the ground floor is closed in underneath (a cupboard).
+    if (k === 0) for (const fl of flights) if (fl !== dep) out.push({ minX: fl.x0, maxX: fl.x1, minZ: s0, maxZ: s1 });
+    return out;
+  };
+  for (let k = 0; k < NL; k++) {
+    const rr = L[k];
+    const arr = flights.find((fl) => fl.from === k - 1);
+    if (arr) {
+      const ox = arr.x0 < 0 ? arr.x0 - 0.04 : arr.x1 + 0.04;
+      rr.box(MAT.glass(), ox, 0.5, (s0 + s1) / 2, 0.03, 1.0, s1 - s0);
+      rr.box(MAT.color("#b08d57", 0.3, 0.7), ox, 1.02, (s0 + s1) / 2, 0.06, 0.05, s1 - s0);
+      rr.box(MAT.glass(), (arr.x0 + arr.x1) / 2, 0.5, arr.zStart, arr.x1 - arr.x0, 1.0, 0.03);
+    }
+    rr.colliders.push(...levelColliders(k));
+  }
+
+  // ---------------- Ground floor ----------------
+  // Front wall with the main door; the hall walls to the wings.
+  wallDoors(r, wallM, -hx, hz, hx, hz, FY, [[-1.1, 1.1]]);
+  r.onWall("x", hz, () => { r.box(MAT.doorWood(), -0.55, 1.25, hz, 1.1, 2.5, 0.1); r.add(G.box, MAT.doorWood(), [1.0, 1.25, hz - 0.5], [0, -1.2, 0], [1.1, 2.5, 0.08]); });
+  wallDoors(r, wallM, -HW, -hz, -HW, hz, FY, [[-4.6, -3.4], ARCH]);
+  wallDoors(r, wallM, HW, -hz, HW, hz, FY, [[-4.6, -3.4], ARCH]);
+  // Chandelier over the foyer.
+  const ch = new THREE.Group();
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 12) * Math.PI * 2, ring = Math.floor(i / 12), rr = 0.6 - ring * 0.15;
+    const m = new THREE.Mesh(G.sphere, MAT.color("#fff6e0", 0.05, 0.2));
+    m.scale.setScalar(0.06);
+    m.position.set(Math.cos(a) * rr, -ring * 0.22, Math.sin(a) * rr);
+    ch.add(m);
+  }
+  ch.position.set(0, FY - 0.6, (s1 + hz) / 2 + 0.3);
+  r.extra.add(ch);
+  lamp(r, 0, FY - 0.9, (s1 + hz) / 2 + 0.3, 10, 14);
+  r.box(MAT.darkMarble(), 0, 0.004, (s1 + hz) / 2 + 0.3, 2.6, 0.008, 2.0);
+  // Living room (sitting room) — front left.
+  const lx0 = -hx, lx1 = -HW, lz0 = 0.5, lcx = (lx0 + lx1) / 2;
+  const Lv = hasIn("living");
+  r.wall(wallM, lx0, lz0, lx1, lz0, FY);
+  r.floor(MAT.wood(), lx0, lz0, lx1, hz, 0.005);
+  seating(r, lcx, lz0, lz0 + 4.0, Lv);
+  r.onWall("x", lz0, () => { if (Lv("split_ac")) splitAC(r, lcx + 2.8, lz0, 1, 2.7); if (Lv("art")) canvasArt(r, lcx - 2.9, 1.9, lz0, 1.4, 1.0, 1, 1); });
+  r.onWall("x", hz, () => curtains(r, lcx, hz, 2.8, -1, "#e6ddcc", Lv("curtains")));
+  if (Lv("piano")) {
+    const px = Lv("_flip") ? lx1 - 1.6 : lx0 + 1.4;
+    r.box(MAT.black(), px, 0.75, hz - 2.0, 1.5, 0.25, 2.0, true);
+    r.box(MAT.black(), px, 0.85, hz - 0.85, 1.5, 0.3, 0.3);
+    r.box(MAT.white(), px, 0.75, hz - 0.8, 1.3, 0.04, 0.18);
+  }
+  if (Lv("lights")) { floorLamp(r, lx0 + 0.6, lz0 + 4.0); pendantLamp(r, lcx, 2.9, lz0 + 2.5, FY); }
+  if (Lv("plant")) plant(r, lx1 - 0.6, lz0 + 0.6, true);
+  if (Lv("bookshelf")) r.turned(lx0 + 0.2, lz0 + 2.2, Math.PI / 2, () => bookshelf(r, 0, 0, 1.6, 1));
+  label(r, roomEmpty("living") ? "Sitting room · empty" : "Sitting room", lcx, lz0 + 2.6);
+  lamp(r, lcx, FY - 0.4, (lz0 + hz) / 2, 8, 12);
+  // Guest bedroom with its own shower room, study, guest WC, the corridor between.
+  const gx1 = -5.6, guestId = mansion ? "bed7" : "bed4";
+  r.wall(wallM, gx1, -hz, gx1, lz0, FY, [-4.6, -3.4]);
+  r.wall(wallM, gx1, -5, lx1, -5, FY, [-4.6, -3.6]);
+  r.wall(wallM, gx1, -3, lx1, -3, FY, [-4.6, -3.6]);
+  r.wall(wallM, -hx, -1.8, -hx + 2.6, -1.8, FY, [-hx + 1.4, -hx + 2.3]);
+  r.wall(wallM, -hx + 2.6, -1.8, -hx + 2.6, lz0, FY);
+  bathroomSet(r, -hx + 0.1, -1.7, -hx + 2.5, lz0 - 0.1, false);
+  label(r, "Shower room", -hx + 1.3, -0.6);
+  bedroomAt(0, guestId, "Guest bedroom", -hx, -hz, gx1, -1.8, "back", gx1, -4, 6);
+  const St = hasIn("study"), scx = (gx1 + lx1) / 2;
+  r.floor(MAT.wood(), gx1, -3, lx1, lz0, 0.005);
+  if (St("desk")) desk(r, scx, lz0 - 0.55, -1);
+  if (St("bookshelf")) r.turned(gx1 + 0.2, -1.2, Math.PI / 2, () => bookshelf(r, 0, 0, 2.0, 1));
+  if (St("split_ac")) r.onWall("x", lz0, () => splitAC(r, scx, lz0, -1));
+  if (St("plant")) plant(r, lx1 - 0.4, -2.6, false);
+  if (St("lights")) pendantLamp(r, scx, 2.6, -1.2, FY);
+  label(r, roomEmpty("study") ? "Study · empty" : "Study", scx, -1.2);
+  r.floor(MAT.bathTiles(), gx1, -hz, lx1, -5, 0.006);
+  toilet(r, gx1 + 0.6, -hz + 0.5);
+  sink(r, lx1 - 0.7, -hz + 0.35);
+  label(r, "Guest WC", scx, -hz + 1.4);
+  // Dining (front right) and the kitchen behind it.
+  const dx0 = HW, dx1 = hx, dcx = (dx0 + dx1) / 2, kz = mansion ? 2 : 1.5, dcz = (kz + hz) / 2 + 0.3;
+  const Dn = hasIn("dining");
+  r.wall(wallM, dx0, kz, dx1, kz, FY, [dx0 + 1.4, dx0 + 3.9]);
+  if (Dn("dining10")) diningSet(r, dcx, dcz, 10, MAT.darkMarble());
+  else if (Dn("dining6")) diningSet(r, dcx, dcz, 6, MAT.darkWood());
+  if (Dn("lights")) for (const ddx of [-1, 1]) pendantLamp(r, dcx + ddx, 2.4, dcz, FY);
+  if (Dn("cabinet")) { r.box(MAT.darkWood(), dx1 - 0.3, 1.0, dcz, 0.45, 2.0, 2.2, true); r.box(MAT.glass(), dx1 - 0.53, 1.3, dcz, 0.01, 1.2, 2.0); }
+  r.onWall("x", hz, () => { if (Dn("split_ac")) splitAC(r, dcx, hz, -1, 2.7); curtains(r, dcx, hz, 2.8, -1, "#e6ddcc", Dn("curtains")); });
+  r.onWall("x", kz, () => { if (Dn("art")) canvasArt(r, dcx + 1.6, 1.9, kz, 1.4, 1.0, 1, 2); });
+  if (Dn("rug")) lrug(r, dcx, dcz, 5, 3.4, "#9a8f80");
+  if (Dn("plant")) plant(r, dx1 - 0.6, hz - 0.6, true);
+  label(r, roomEmpty("dining") ? "Dining room · empty" : "Dining room", dcx, dcz);
+  r.floor(MAT.terrazzo(), dx0, -hz, dx1, kz, 0.005);
+  fittedKitchen(r, dx0 + 0.15, -hz + 0.15, dx1 - dx0 - 0.3, 2.4, true);
+  potsOnHob(r, dx0 + (dx1 - dx0) * 0.5, 0.95, -hz + 0.5);
+  const kcz = (-hz + kz) / 2 + 0.4;
+  r.box(MAT.darkMarble(), dcx, 0.47, kcz, 3.0, 0.94, 1.1, true); // island
+  for (let i = -1; i <= 1; i++) r.cyl(MAT.color("#3a2418", 0.4), dcx + i * 0.9, 0.38, kcz + 0.85, 0.18, 0.76);
+  r.box(MAT.steel(), dx1 - 0.5, 1.0, kz - 1.0, 0.9, 2.0, 0.75, true); // American fridge
+  label(r, "Kitchen", dcx, kcz - 1.6);
+  r.spot("kitchen", dcx, -hz + 2.0, "Kitchen");
+  r.use("kitchen", dcx, 0, -hz + 1.1, [dcx, -hz], "stand");
+  lamp(r, dcx, FY - 0.4, kcz, 8, 12);
+
+  // ---------------- First floor ----------------
+  const U1 = L[1];
+  wallDoors(U1, wallM, -hx, hz, hx, hz, FY, mansion ? [[6.4 + 0.6, hx]] : [[6.4, hx]]);
+  wallDoors(U1, wallM, -HW, -hz, -HW, hz, FY, [D1, ARCH]);
+  wallDoors(U1, wallM, HW, -hz, HW, hz, FY, [D1, D2, D3]);
+  // Family lounge — the upstairs sitting room, over the living room.
+  const Lo = hasIn("lounge");
+  U1.wall(wallM, -hx, lz0, -HW, lz0, FY);
+  U1.floor(MAT.wood(), -hx, lz0, -HW, hz, 0.005);
+  seating(U1, lcx, lz0, lz0 + 4.0, Lo);
+  if (Lo("bookshelf")) U1.turned(-hx + 0.2, lz0 + 2.2, Math.PI / 2, () => bookshelf(U1, 0, 0, 1.6, 1));
+  U1.onWall("x", hz, () => { if (Lo("split_ac")) splitAC(U1, lcx, hz, -1); curtains(U1, lcx, hz, 2.6, -1, "#e6ddcc", Lo("curtains")); });
+  U1.onWall("x", lz0, () => { if (Lo("art")) canvasArt(U1, lcx - 2.9, 1.8, lz0, 1.2, 0.9, 1, 3); });
+  if (Lo("plant")) plant(U1, -HW - 0.5, hz - 0.5, true);
+  if (Lo("lights")) pendantLamp(U1, lcx, 2.6, (lz0 + hz) / 2, FY);
+  label(U1, roomEmpty("lounge") ? "Family lounge · empty" : "Family lounge", lcx, lz0 + 2.6);
+  lamp(U1, lcx, FY - 0.4, (lz0 + hz) / 2, 7, 12);
+  // Master suite (back left) with its ensuite.
+  const ex1 = -hx + 4;
+  U1.wall(wallM, ex1, lz0 - 3.2, ex1, lz0, FY, [lz0 - 2.4, lz0 - 1.5]);
+  U1.wall(wallM, -hx, lz0 - 3.2, ex1, lz0 - 3.2, FY);
+  bathroomSet(U1, -hx + 0.1, lz0 - 3.1, ex1 - 0.1, lz0 - 0.1, true);
+  label(U1, "Ensuite", -hx + 2, lz0 - 1.6);
+  U1.spot("bath", ex1 - 1.0, lz0 - 2.0, "Bath");
+  U1.use("bath", ex1 - 1.0, 0.35, lz0 - 2.55, [ex1 - 2.2, lz0 - 2.55], "lie");
+  bedroomAt(1, "bed1", "Master bedroom", -hx, -hz, -HW, lz0 - 3.2, "back", -HW, (D1[0] + D1[1]) / 2, 0);
+  // Right wing: bedrooms 2 and 3, a bathroom and a balcony.
+  const bxm = HW + (mansion ? 4.4 : 3.8);
+  U1.wall(wallM, HW, s0, hx, s0, FY);
+  U1.wall(wallM, HW, s1, hx, s1, FY, [bxm + 1.2, bxm + 2.1]);
+  U1.wall(wallM, bxm, s1, bxm, hz, FY);
+  bedroomAt(1, "bed2", "Bedroom 2", HW, -hz, hx, s0, "back", HW, (D1[0] + D1[1]) / 2, 1);
+  bedroomAt(1, "bed3", "Bedroom 3", HW, s0, hx, s1, "back", HW, (D2[0] + D2[1]) / 2, 2);
+  bathroomSet(U1, HW + 0.1, s1 + 0.1, bxm - 0.1, hz - 0.1, false);
+  label(U1, "Bathroom", (HW + bxm) / 2, (s1 + hz) / 2);
+  U1.floor(MAT.terrazzo(), bxm, s1, hx, hz, 0.006);
+  balustrade(U1, bxm, hz, hx, hz);
+  terraceSet(U1, (bxm + hx) / 2, (s1 + hz) / 2 + 0.3);
+  plant(U1, hx - 0.5, hz - 0.5, true);
+  label(U1, "Balcony", (bxm + hx) / 2, (s1 + hz) / 2 - 0.6);
+
+  // ---------------- Second floor (mansion) ----------------
+  if (mansion) {
+    const U2 = L[2];
+    wallDoors(U2, wallM, -hx, hz, hx, hz, FY, [[-hx, -HW], [HW, hx]]);
+    wallDoors(U2, wallM, -HW, -hz, -HW, hz, FY, [D1, D2, D3]);
+    wallDoors(U2, wallM, HW, -hz, HW, hz, FY, [D1, D2, D3]);
+    U2.wall(wallM, -hx, s0, -HW, s0, FY);
+    U2.wall(wallM, -hx, s1, -HW, s1, FY);
+    U2.wall(wallM, HW, s0, hx, s0, FY);
+    U2.wall(wallM, HW, s1, hx, s1, FY, [8.2, 9.1]);
+    U2.wall(wallM, 7, s0, 7, s1, FY);
+    bedroomAt(2, "bed4", "Bedroom 4", -hx, -hz, -HW, s0, "back", -HW, (D1[0] + D1[1]) / 2, 3);
+    bedroomAt(2, "bed5", "Bedroom 5", -hx, s0, -HW, s1, "left", -HW, (D2[0] + D2[1]) / 2, 4);
+    bedroomAt(2, "bed6", "Bedroom 6", HW, -hz, hx, s0, "back", HW, (D1[0] + D1[1]) / 2, 5);
+    bathroomSet(U2, HW + 0.1, s0 + 0.1, 7 - 0.1, s1 - 0.1, false);
+    label(U2, "Bathroom", (HW + 7) / 2, (s0 + s1) / 2);
+    U2.floor(MAT.terrazzo(), 7, s0, hx, s1, 0.006);
+    U2.box(MAT.white(), 9.5, 0.45, s0 + 0.45, 0.65, 0.9, 0.65, true); // washing machine
+    U2.box(MAT.white(), 10.3, 0.45, s0 + 0.45, 0.65, 0.9, 0.65, true); // dryer
+    U2.box(MAT.color("#d8d0c2", 0.8), 11.3, 0.8, (s0 + s1) / 2, 0.6, 1.6, 2.4, true); // linen press
+    label(U2, "Laundry", 9.5, (s0 + s1) / 2);
+    // Roof terraces at the front, either side of the landing.
+    for (const [a, b] of [[-hx, -HW], [HW, hx]] as const) {
+      U2.floor(MAT.terrazzo(), a, s1, b, hz, 0.006);
+      balustrade(U2, a, hz, b, hz);
+      terraceSet(U2, (a + b) / 2, (s1 + hz) / 2 + 0.4);
+      plant(U2, a < 0 ? a + 0.5 : b - 0.5, hz - 0.5, true);
+      label(U2, "Roof terrace", (a + b) / 2, (s1 + hz) / 2 - 0.5);
+    }
+    balustrade(U2, -HW, hz, HW, hz);
+  } else {
+    // Villa: the landing front looks out over the porch.
+  }
+
+  // Where you sleep: the master bed, or the first bedroom with a bed in it.
+  const order = ["bed1", "bed2", "bed3", "bed4", "bed5", "bed6", "bed7"];
+  const sleepIn = order.map((id) => bedSpots.find((b) => b.id === id)).find((b) => b && !b.mat) ?? bedSpots.find((b) => b.id === "bed1")!;
+  const SR = L[sleepIn.level];
+  if (sleepIn.mat) SR.box(MAT.fabric("plain", "#cbbfa8"), (sleepIn.x + sleepIn.lx) / 2, 0.03, (sleepIn.z + sleepIn.lz) / 2, 0.9, 0.05, 1.9);
+  SR.use("bed", sleepIn.x, sleepIn.mat ? 0.08 : 0.72, sleepIn.z, [sleepIn.lx, sleepIn.lz], "lie");
+  const sdx = sleepIn.x - sleepIn.lx, sdz = sleepIn.z - sleepIn.lz, sl = Math.hypot(sdx, sdz) || 1;
+  SR.spot("bed", sleepIn.x + (sdx / sl) * 1.3 + (sdz / sl) * 1.2, sleepIn.z + (sdz / sl) * 1.3 - (sdx / sl) * 1.2, sleepIn.mat ? "Sleep on a mat" : "Bed");
+  // TV: the sitting room downstairs, or the family lounge.
+  const tvRoom = Lv("tv65") || Lv("tv32") ? 0 : Lo("tv65") || Lo("tv32") ? 1 : -1;
+  if (tvRoom >= 0) {
+    const TR = L[tvRoom], has = tvRoom === 0 ? Lv : Lo;
+    const sofa = ["leather_sofa", "fabric_sofa", "wooden_sofa"].some(has);
+    TR.spot("tv", lcx + 0.4, lz0 + 2.6, "TV");
+    TR.use("tv", lcx, sofa ? 0.5 : 0, sofa ? lz0 + 4.0 : lz0 + 2.6, [lcx, lz0], sofa ? "sit" : "stand");
+  }
+
+  // ---------------- Outside: drive, garden, pool, gatehouse ----------------
+  r.floor(MAT.grass(), -hx, hz, hx, hz + outside);
+  r.floor(MAT.color("#d8d0c2", 0.7), -2.4, hz, 2.4, hz + outside, 0.01);
+  for (const x of [-1.8, 1.8]) r.cyl(MAT.white(), x, FY / 2, hz + 1.2, 0.2, FY);
+  r.box(MAT.white(), 0, FY + 0.1, hz + 1.2, 4.6, 0.2, 2.6); // porch canopy
+  const pz = hz + 4.6, pxc = hx - 6.2, pw = 9.0, pd = 3.6;
+  for (const [x, z, w, d] of [[pxc, pz - pd / 2 - 0.35, pw + 1.4, 0.7], [pxc, pz + pd / 2 + 0.35, pw + 1.4, 0.7], [pxc - pw / 2 - 0.35, pz, 0.7, pd], [pxc + pw / 2 + 0.35, pz, 0.7, pd]] as const) r.box(MAT.color("#e6ded0", 0.6), x, 0.04, z, w, 0.08, d);
+  r.box(MAT.color("#5fc0d6", 0.3), pxc, -1.5, pz, pw, 0.05, pd);
+  for (const [x, z, w, d] of [[pxc, pz - pd / 2, pw, 0.04], [pxc, pz + pd / 2, pw, 0.04], [pxc - pw / 2, pz, 0.04, pd], [pxc + pw / 2, pz, 0.04, pd]] as const) r.box(MAT.color("#9fdbe8", 0.3), x, -0.75, z, w, 1.5, d);
+  r.box(MAT.water(), pxc, -0.12, pz, pw, 0.02, pd);
+  for (let i = 0; i < 2; i++) r.box(MAT.steel(), pxc - pw / 2 + 0.3, 0.45, pz - 0.4 + i * 0.8, 0.04, 0.9, 0.04);
+  r.spot("pool", pxc - pw / 2 - 0.9, pz, "Pool");
+  r.use("pool", pxc - pw / 2 + 0.3, -0.3, pz, [pxc + pw / 2 - 0.3, pz], "swim");
+  r.colliders.push({ minX: pxc - pw / 2, maxX: pxc + pw / 2, minZ: pz - pd / 2, maxZ: pz + pd / 2 });
+  for (let i = 0; i < 3; i++) { r.box(MAT.white(), pxc - 3 + i * 1.7, 0.2, pz + pd / 2 + 1.5, 0.7, 0.3, 1.8, true); r.box(MAT.white(), pxc - 3 + i * 1.7, 0.45, pz + pd / 2 + 0.75, 0.7, 0.5, 0.1); }
+  r.cutBox(MAT.plaster("#e9dcc6"), -hx / 2 - 1.25, 1.4, hz + outside, hx - 2.5, 2.8, 0.3);
+  r.cutBox(MAT.plaster("#e9dcc6"), hx / 2 + 1.25, 1.4, hz + outside, hx - 2.5, 2.8, 0.3);
+  r.cutBox(MAT.color("#2b2b2b", 0.4, 0.7), 0, 1.3, hz + outside - 0.1, 5, 2.4, 0.08, false);
+  r.box(MAT.plaster("#e9dcc6"), -hx + 2, 1.3, hz + outside - 1.6, 2.6, 2.6, 2.4, true);
+  label(r, mansion ? "Gatehouse" : "Gate", -hx + 2, hz + outside - 0.4, 3.0);
+  if (mansion) {
+    r.box(MAT.plaster("#efe6d6"), -hx + 6.5, 1.4, hz + outside - 2.2, 4, 2.8, 3, true);
+    label(r, "Boys' quarters", -hx + 6.5, hz + outside - 0.5, 3.2);
+  }
+  for (let i = 0; i < 4; i++) plant(r, -hx + 1 + i * 1.6, hz + 1.0, true);
+  lamp(r, pxc, 3, pz, 6, 14);
+  ownedExtras(r, items.filter((i) => i === "generator"), { tv: [0, 0], fridge: [0, 0], gen: [hx - 1.2, hz + outside - 1.2] });
+
+  const door = new THREE.Vector3(0, 0, hz + outside - 0.9);
+  r.spot("exit", door.x, door.z, "Go outside");
+  const group = r.b.build();
+  group.add(r.extra);
+  const levels: Level[] = [{ y: 0, group: null, colliders: r.colliders, blocked: [] }];
+  for (let k = 0; k < NL; k++) {
+    const rr = L[k], y = k * FY;
+    for (const sp of rr.spots) { sp.pos.y = y; const u = rr.uses.get(sp.id); sp.use = u ? { ...u, y: u.y + y } : undefined; }
+    if (k === 0) continue;
+    const g = rr.b.build();
+    g.add(rr.extra);
+    g.position.y = y;
+    g.visible = false;
+    group.add(g);
+    levels.push({ y, group: g, colliders: rr.colliders, blocked: [{ minX: -hx - 5, maxX: hx + 5, minZ: hz, maxZ: hz + outside + 2 }] });
+  }
+  group.traverse((o) => { if ((o as THREE.Mesh).isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  const bedUse = SR.uses.get("bed")!;
+  return {
+    group, bounds: { minX: -hx, maxX: hx, minZ: -hz, maxZ: hz + outside }, colliders: r.colliders,
+    spots: L.flatMap((rr) => rr.spots), walls: L.flatMap((rr) => rr.walls), door,
+    bed: new THREE.Vector3(bedUse.x, sleepIn.level * FY, bedUse.z),
+    size: [2 * hx, 2 * hz + outside],
+    storeys: { levels, flights },
+  };
 }

@@ -82,7 +82,7 @@ export function Hud({ world, onOpen }: { world: World | null; onOpen: (what: str
   );
 }
 
-export function Minimap({ world, road, district }: { world: World | null; road: string; district: DistrictId }) {
+export function Minimap({ world, road, district, onOpen }: { world: World | null; road: string; district: DistrictId; onOpen?: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     let raf = 0;
@@ -114,6 +114,7 @@ export function Minimap({ world, road, district }: { world: World | null; road: 
       }
       ctx.fillStyle = "#cfc6b4";
       ctx.fillRect(-120, -10, 240, 20);
+      ctx.fillRect(-8, -120, 16, m.coastal ? 120 : 240);
       ctx.fillRect(-8, m.coastal ? -120 : -120, 16, m.coastal ? 120 : 240);
       ctx.fillStyle = "#3c3d40";
       ctx.fillRect(-120, -6, 240, 12);
@@ -133,10 +134,11 @@ export function Minimap({ world, road, district }: { world: World | null; road: 
         ctx.lineWidth = 0.8;
         ctx.stroke();
       };
-      for (const p of m.places) if (p.known) dot(p.x, p.z, p.kind === "transport" ? "#f2b705" : p.kind === "bank" ? "#0e7c86" : p.kind === "food" ? "#e35d3a" : p.kind === "nightlife" ? "#a24ae0" : "#ffffff");
+      for (const p of m.places) dot(p.x, p.z, p.kind === "transport" ? "#f2b705" : p.kind === "bank" ? "#0e7c86" : p.kind === "food" ? "#e35d3a" : p.kind === "nightlife" ? "#a24ae0" : "#ffffff");
       for (const n of m.npcs) dot(n.x, n.z, "#f2b705", 2.6);
       if (m.home) dot(m.home.x, m.home.z, "#3ddc84", 4);
       if (m.target) dot(m.target.x, m.target.z, "#F2B705", 6);
+      if (m.walking) { ctx.strokeStyle = "#3ddc84"; ctx.lineWidth = 1.2; ctx.setLineDash([3, 2]); ctx.beginPath(); ctx.moveTo(m.x, m.z); ctx.lineTo(m.walking.x, m.walking.z); ctx.stroke(); ctx.setLineDash([]); dot(m.walking.x, m.walking.z, "#3ddc84", 5); }
       dot(m.plot.x, m.plot.z, "#c8452c", 2.4);
       ctx.restore();
       // Player arrow (screen-space, the map rotates around it).
@@ -171,7 +173,7 @@ export function Minimap({ world, road, district }: { world: World | null; road: 
   }, [world, district]);
   return (
     <div className="minimap">
-      <canvas ref={ref} />
+      <canvas ref={ref} onClick={onOpen} title="Open the map (M)" style={{ cursor: "pointer" }} />
       <div className="where">
         <small>{DISTRICTS[district].name}</small>
         <b>{road}</b>

@@ -892,3 +892,45 @@ test("Saturday events always have real names (no 'undefined' anywhere)", () => {
     assert.ok(!/undefined|NaN/.test(e.title + e.host + e.blurb), `${c} day ${d}: ${e.title}`);
   }
 });
+
+test("a mansion bought empty is bare; furnish room by room, swap, sell and rearrange; or buy it furnished", () => {
+  const { ctx, id } = rich();
+  grant(ctx, id, 20_000_000);
+  ctx.db.run("UPDATE players SET reputation = 50 WHERE id = ?", id);
+  assert.ok(act(ctx, id, { type: "travel", to: "trasacco", mode: "taxi" }).ok);
+  const r = act(ctx, id, { type: "plot_buy", plotId: "trasacco_mansion_ready" });
+  assert.ok(r.ok, r.error);
+  const b = ctx.db.get<{ id: number }>("SELECT id FROM buildings WHERE player_id = ?", id)!;
+  assert.ok(act(ctx, id, { type: "building_use", buildingId: b.id, use: "live" }).ok);
+  let s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.deepEqual(s.player.home.furnish, {});
+  // No TV yet, so no telly.
+  assert.equal(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).code, "not_here");
+  const cash0 = bal(ctx, id, "cash") + bal(ctx, id, "bank");
+  assert.ok(act(ctx, id, { type: "furnish", op: "buy", room: "bed1", piece: "double_bed" }).ok);
+  assert.ok(act(ctx, id, { type: "furnish", op: "buy", room: "bed1", piece: "king_bed" }).ok); // replaces the double
+  assert.equal(act(ctx, id, { type: "furnish", op: "buy", room: "bed1", piece: "piano" }).code, "wrong_room");
+  assert.equal(act(ctx, id, { type: "furnish", op: "buy", room: "attic", piece: "rug" }).code, "bad_room");
+  assert.ok(act(ctx, id, { type: "furnish", op: "buy", room: "living", piece: "tv65" }).ok);
+  assert.ok(act(ctx, id, { type: "furnish", op: "rearrange", room: "bed1" }).ok);
+  s = buildState(ctx, loadPlayer(ctx.db, id));
+  assert.deepEqual([...s.player.home.furnish!.bed1].sort(), ["_flip", "king_bed"]);
+  assert.ok(act(ctx, id, { type: "home_activity", activity: "watch_tv" }).ok);
+  assert.ok(act(ctx, id, { type: "furnish", op: "sell", room: "living", piece: "tv65" }).ok);
+  assert.ok(bal(ctx, id, "cash") + bal(ctx, id, "bank") < cash0);
+  assert.ok(auditPlayer(ctx.db, id).ok);
+
+  // Someone else buys theirs furnished: every room is filled, and still theirs to change.
+  const two = rich();
+  grant(two.ctx, two.id, 20_000_000);
+  two.ctx.db.run("UPDATE players SET reputation = 50 WHERE id = ?", two.id);
+  assert.ok(act(two.ctx, two.id, { type: "travel", to: "trasacco", mode: "taxi" }).ok);
+  assert.ok(act(two.ctx, two.id, { type: "plot_buy", plotId: "trasacco_mansion_ready", furnished: true }).ok);
+  const b2 = two.ctx.db.get<{ id: number }>("SELECT id FROM buildings WHERE player_id = ?", two.id)!;
+  assert.ok(act(two.ctx, two.id, { type: "building_use", buildingId: b2.id, use: "live" }).ok);
+  const f = buildState(two.ctx, loadPlayer(two.ctx.db, two.id)).player.home.furnish!;
+  for (const room of ["bed1", "bed2", "bed3", "bed4", "bed5", "bed6", "bed7", "living", "dining", "study", "lounge"]) assert.ok(f[room]?.length, room);
+  assert.ok(act(two.ctx, two.id, { type: "furnish", op: "sell", room: "bed2", piece: "double_bed" }).ok);
+  assert.ok(act(two.ctx, two.id, { type: "home_activity", activity: "watch_tv" }).ok);
+  assert.ok(auditPlayer(two.ctx.db, two.id).ok);
+});

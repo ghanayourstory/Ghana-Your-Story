@@ -346,6 +346,15 @@ CREATE TABLE IF NOT EXISTS social (
   feed TEXT NOT NULL DEFAULT '[]'
 );
 
+CREATE TABLE IF NOT EXISTS furnishings (
+  player_id INTEGER NOT NULL,
+  building_id INTEGER NOT NULL,
+  room TEXT NOT NULL,
+  piece TEXT NOT NULL,
+  price INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (player_id, building_id, room, piece)
+);
+
 CREATE TABLE IF NOT EXISTS provider_state (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   status TEXT NOT NULL,

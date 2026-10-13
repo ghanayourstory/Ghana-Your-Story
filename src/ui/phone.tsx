@@ -10,6 +10,8 @@ import { AVATAR_COLORS, Bar, ConfirmButton, Delta, EffectsPreview, Sparkline, WE
 import { toGameDate, formatDuration } from "../../shared/calendar.ts";
 import { BUSINESSES, DESIGNS, PLOTS, QUALITY, QUALITY_ORDER, RENTALS, TBILLS, builtValue, stagePlan, type Quality } from "../../shared/economy.ts";
 import { CITIES } from "../../shared/cities.ts";
+import { ROOM_PLANS, furnishedPackage } from "../../shared/furnish.ts";
+import { tierForHome } from "../../shared/homes.ts";
 import { DISTRICTS, JOBS, PLACE_BY_ID, SERVICES, priceFor, rankPay } from "../../shared/world.ts";
 import { GOALS } from "../../shared/progress.ts";
 import { NPC_BY_ID, NPCS } from "../../shared/people.ts";
@@ -622,7 +624,11 @@ function PropertyApp({ minute }: { minute: number }) {
               {!repOk && <div className="tiny bad">Needs {p.requiresRep} standing</div>}
               {!unlockOk && <div className="tiny bad">Family land — an elder must speak for you</div>}
             </div>
-            <ConfirmButton className="btn primary sm" disabled={busy || ownedTypes.has(p.id) || !visited || !repOk || !unlockOk} ask={`Buy ${p.name}?`} details={{ where: DISTRICTS[p.district].name, cost: money(price * 100), changes: p.ready ? "It comes finished: move in or let it to tenants straight away." : "The land is yours. Plan a building, then pay for it stage by stage (foundation, walls, roof, finishing) as it goes up.", undo: "Land and buildings can't be sold back in this version; they count towards your net worth and can earn rent." }} onConfirm={() => act({ type: "plot_buy", plotId: p.id })}>{ownedTypes.has(p.id) ? "Yours" : money(price * 100, true)}</ConfirmButton>
+            {p.ready && ROOM_PLANS[tierForHome("owned", p.ready.design)] && !ownedTypes.has(p.id) && (() => {
+              const pkg = furnishedPackage(tierForHome("owned", p.ready.design));
+              return <ConfirmButton className="btn sm" disabled={busy || !visited || !repOk || !unlockOk} ask={`Buy ${p.name}, fully furnished?`} details={{ where: DISTRICTS[p.district].name, cost: `${money(price * 100)} + furniture ${money(pkg * 100)}`, changes: "Every room comes furnished: beds, wardrobes, ACs, sofas, TVs, dining. You can still move things around, swap or sell any piece (Home → Furnish).", undo: "Furniture sells back at 40%." }} onConfirm={() => act({ type: "plot_buy", plotId: p.id, furnished: true })}>Furnished +{money(pkg * 100, true)}</ConfirmButton>;
+            })()}
+            <ConfirmButton className="btn primary sm" disabled={busy || ownedTypes.has(p.id) || !visited || !repOk || !unlockOk} ask={`Buy ${p.name}${p.ready && ROOM_PLANS[tierForHome("owned", p.ready.design)] ? " (empty)" : ""}?`} details={{ where: DISTRICTS[p.district].name, cost: money(price * 100), changes: p.ready ? (ROOM_PLANS[tierForHome("owned", p.ready.design)] ? "Handed over empty: fitted kitchen and bathrooms, every other room bare. Furnish it room by room your way (Home → Furnish)." : "It comes finished: move in or let it to tenants straight away.") : "The land is yours. Plan a building, then pay for it stage by stage (foundation, walls, roof, finishing) as it goes up.", undo: "Land and buildings can't be sold back in this version; they count towards your net worth and can earn rent." }} onConfirm={() => act({ type: "plot_buy", plotId: p.id })}>{ownedTypes.has(p.id) ? "Yours" : money(price * 100, true)}</ConfirmButton>
           </div>
         );
       })}

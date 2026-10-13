@@ -36,6 +36,7 @@ import {
 } from "../shared/economy.ts";
 import { TOWN_BY_ID } from "../shared/ghana.ts";
 import { HOME_ACTIVITIES, HOME_SPECS, tierForHome } from "../shared/homes.ts";
+import { PIECES, ROOM_PLANS, furnishComfort, furnishItems, furnishedPackage, fullyFurnished, type Furnishing } from "../shared/furnish.ts";
 import { CITIES, INTERCITY_MODES, intercityQuote, type IntercityMode } from "../shared/cities.ts";
 import {
   BREAKDOWN_FIX, NO_INSURANCE_FINE, insuranceCost, repairCost,
@@ -953,7 +954,73 @@ function baseComfort(db: Db, p: PlayerRow): number {
 
 /** Building comfort plus what you've furnished it with (up to +3). */
 function homeComfort(db: Db, p: PlayerRow): number {
-  return baseComfort(db, p) + furnishingScore(ownedItems(db, p).map((i) => i.item_id)).bonus;
+  const tier = homeSpecFor(db, p).tier;
+  const f = homeFurnishing(db, p);
+  return baseComfort(db, p) + furnishingScore(ownedItems(db, p).map((i) => i.item_id)).bonus + (f ? furnishComfort(f, tier) : 0);
+}
+
+/**
+ * What's in each room of a two-storey home: rented ones come furnished by
+ * the landlord, ones you own hold exactly what you've bought. Other homes: null.
+ */
+export function homeFurnishing(db: Db, p: PlayerRow): Furnishing | null {
+  const tier = homeSpecFor(db, p).tier;
+  if (!ROOM_PLANS[tier]) return null;
+  if (p.home_kind === "rental") return fullyFurnished(tier);
+  const out: Furnishing = {};
+  for (const r of db.all<{ room: string; piece: string }>("SELECT room, piece FROM furnishings WHERE player_id = ? AND building_id = ?", p.id, Number(p.home_ref))) (out[r.room] ??= []).push(r.piece);
+  return out;
+}
+/** Shop items plus what your furniture counts as (a TV in the lounge). */
+function homeItemIds(db: Db, p: PlayerRow) {
+  const f = homeFurnishing(db, p);
+  return [...ownedItems(db, p).map((i) => i.item_id), ...(f ? furnishItems(f) : [])];
+}
+
+const RESALE = 0.4;
+/** Buy, sell or rearrange furniture room by room in a home you own. */
+function actFurnish(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
+  if (p.home_kind !== "owned") throw new GameError("not_owner", "It's the landlord's furniture. Buy a house to furnish it your way.");
+  const tier = homeSpecFor(ctx.db, p).tier;
+  const plan = ROOM_PLANS[tier]?.find((r) => r.id === a.room);
+  if (!plan) throw new GameError("bad_room", "No such room in your house.");
+  if (p.district !== homeDistrict(ctx.db, p)) throw new GameError("not_home", "Be at home to take the delivery.");
+  const bId = Number(p.home_ref);
+  const inRoom = ctx.db.all<{ piece: string; price: number }>("SELECT piece, price FROM furnishings WHERE player_id = ? AND building_id = ? AND room = ?", p.id, bId, plan.id);
+  const del = (piece: string) => ctx.db.run("DELETE FROM furnishings WHERE player_id = ? AND building_id = ? AND room = ? AND piece = ?", p.id, bId, plan.id, piece);
+  const refund = (row: { piece: string; price: number }) => {
+    const back = Math.round(row.price * RESALE);
+    if (back > 0) credit(ctx, p, "cash", back, "furniture_sale", `Sold ${PIECES[row.piece]?.name ?? row.piece}`);
+    return back;
+  };
+  if (a.op === "rearrange") {
+    const flipped = inRoom.some((r) => r.piece === "_flip");
+    if (flipped) del("_flip");
+    else ctx.db.run("INSERT INTO furnishings (player_id, building_id, room, piece, price) VALUES (?, ?, ?, '_flip', 0)", p.id, bId, plan.id);
+    advance(ctx, p, 30, fb, { quiet: true });
+    applyEffects(p, { energy: -4, fun: 3 }, fb, `🛋️ You move things around in the ${plan.name.toLowerCase().split(" (")[0]}. Feels new.`);
+    return null;
+  }
+  const piece = typeof a.piece === "string" ? PIECES[a.piece] : undefined;
+  if (!piece) throw new GameError("bad_piece", "Unknown furniture");
+  if (a.op === "sell") {
+    const row = inRoom.find((r) => r.piece === piece.id);
+    if (!row) throw new GameError("not_owned", "That isn't in this room.");
+    del(piece.id);
+    const back = refund(row);
+    advance(ctx, p, 15, fb, { quiet: true });
+    fb.add(`📦 Sold the ${piece.name.toLowerCase()} for ${formatMoney(back)}.`, [{ k: "cash", d: back }], "info");
+    return null;
+  }
+  if (!piece.rooms.includes(plan.kind)) throw new GameError("wrong_room", `A ${piece.name.toLowerCase()} doesn't go in the ${plan.name.toLowerCase()}.`);
+  if (inRoom.some((r) => r.piece === piece.id)) throw new GameError("already", "It's already there.");
+  const money = chargeStrict(ctx, p, minor(piece.price), "furniture", `${piece.name} for the ${plan.name.toLowerCase()}`);
+  let back = 0;
+  for (const old of inRoom.filter((r) => PIECES[r.piece]?.slot === piece.slot)) { del(old.piece); back += refund(old); }
+  ctx.db.run("INSERT INTO furnishings (player_id, building_id, room, piece, price) VALUES (?, ?, ?, ?, ?)", p.id, bId, plan.id, piece.id, minor(piece.price));
+  advance(ctx, p, 30, fb, { quiet: true });
+  applyEffects(p, { fun: 4 }, fb, `🚚 Delivered and set up: ${piece.name.toLowerCase()} in the ${plan.name.toLowerCase().split(" (")[0]}${back ? ` (old one sold for ${formatMoney(back)})` : ""}.`, money);
+  return null;
 }
 
 export function homeDistrict(db: Db, p: PlayerRow): DistrictId {
@@ -1241,6 +1308,7 @@ function dispatch(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback): unknown {
     case "marriage": return actMarriage(ctx, p, a, fb);
     case "household": return actHousehold(ctx, p, a, fb);
     case "wardrobe": return actWardrobe(ctx, p, a, fb);
+    case "furnish": return actFurnish(ctx, p, a, fb);
     case "oware": return actOware(ctx, p, a, fb);
     case "party": return actParty(ctx, p, a, fb);
     case "cleanup": return actCleanup(ctx, p, a, fb);
@@ -1856,6 +1924,17 @@ function actPlotBuy(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
     ctx.db.run("UPDATE plots SET price = ? WHERE id = ?", price - Math.round(buildShare), ins.lastInsertRowid);
     ctx.db.run("INSERT INTO buildings (player_id, plot_id, design, quality, stage, status, spent, completed_min) VALUES (?, ?, ?, ?, ?, 'complete', ?, ?)",
       p.id, ins.lastInsertRowid, plot.ready.design, plot.ready.quality, stages, Math.round(buildShare), p.game_min);
+    // Bought furnished: every room is fitted out (at a package price), and it's all yours to rearrange or sell.
+    const tier = HOME_SPECS[tierForHome("owned", plot.ready.design)]?.tier;
+    if (a.furnished === true && tier && ROOM_PLANS[tier]) {
+      const bId = ctx.db.get<{ id: number }>("SELECT id FROM buildings WHERE plot_id = ?", ins.lastInsertRowid)!.id;
+      const f = fullyFurnished(tier);
+      const pkg = minor(furnishedPackage(tier));
+      const m2 = chargeStrict(ctx, p, pkg, "furniture", `Furniture package: ${plot.name}`, true);
+      for (const [room, pieces] of Object.entries(f)) for (const piece of pieces) ctx.db.run("INSERT INTO furnishings (player_id, building_id, room, piece, price) VALUES (?, ?, ?, ?, ?)", p.id, bId, room, piece, Math.round(minor(PIECES[piece].price) * 0.85));
+      fb.add(`🛋️ Furnished throughout: ${formatMoney(pkg)}. Move things around or swap pieces any time (Home → Furnish).`, [], "info");
+      void m2;
+    }
   }
   rememberAcrossDistrict(ctx.db, p, plot.district, `you bought land here in ${DISTRICTS[plot.district].name}`);
   applyEffects(p, { reputation: 3, social: 5 }, fb, `You bought ${plot.name}. The indenture is registered in your name.`, money);
@@ -2187,7 +2266,7 @@ function actHomeActivity(ctx: Ctx, p: PlayerRow, a: Action, fb: Feedback) {
   const act = HOME_ACTIVITIES.find((x) => x.id === a.activity);
   if (!act) throw new GameError("bad_activity", "Unknown activity");
   const spec = homeSpecFor(ctx.db, p);
-  const items = ownedItems(ctx.db, p).map((i) => i.item_id);
+  const items = homeItemIds(ctx.db, p);
   if (!act.when(spec, items)) throw new GameError("not_here", `You can't do that in a ${spec.label.toLowerCase()}.`);
   if ((act.effects.energy ?? 0) < -5) requireAwake(p, 10, act.verb.toLowerCase());
   // Dumsor: screens need power. A generator keeps them going, for the price of fuel.
@@ -3289,7 +3368,7 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
       skills: { work: round1(p.work), fitness: round1(p.fitness), charisma: round1(p.charisma), business: round1(p.business) },
       reputation: round1(p.reputation), creditScore: p.credit_score,
       job: p.job_id ? { id: p.job_id, rank: p.job_rank, rankTitle: RANK_TITLES[p.job_rank], shifts: p.job_shifts, nextRankAt: p.job_rank < MAX_RANK ? SHIFTS_PER_RANK * (p.job_rank + 1) : null, payPerShift: minor(rankPay(JOBS[p.job_id].pay, p.job_rank)) } : null,
-      home: { kind: p.home_kind, ref: p.home_ref, district: homeDistrict(db, p), comfort: homeComfort(db, p), rentCredit: p.rent_credit, spec: homeSpecFor(db, p) },
+      home: { kind: p.home_kind, ref: p.home_ref, district: homeDistrict(db, p), comfort: homeComfort(db, p), rentCredit: p.rent_credit, spec: homeSpecFor(db, p), furnish: homeFurnishing(db, p) },
       unlocks: list(p.unlocks), visited: list(p.visited), discovered: list(p.discovered), isTest: !!p.is_test,
       jobRequirements: Object.fromEntries(Object.keys(JOBS).map((j) => [j, jobRequirements(p, j)])),
     },
@@ -3353,3 +3432,4 @@ export function buildState(ctx: Ctx, p: PlayerRow) {
 }
 
 export type GameState = ReturnType<typeof buildState>;
+
