@@ -658,6 +658,7 @@ const TOWNS_SPEC: TownSpec[] = [
       { id: "elmina_market", name: "Elmina Fish Market", kind: "market", services: ["market_haggle"], open: [5, 17], blurb: "Fresh, smoked and salted fish, sold by the women who run the trade." },
       { id: "elmina_chop", name: "Lagoon Side Chop Bar", kind: "food", services: ["fante_kenkey", "akyeke"], open: [7, 22], blurb: "Kenkey, fried fish, pepper. The view is free." },
       { id: "elmina_church", name: "Elmina Methodist Church", kind: "church", services: ["church"], open: [6, 20], blurb: "Hymns over the sound of the sea." },
+      { id: "elmina_castle_place", name: "St George's Castle", kind: "landmark", services: ["view"], open: [9, 17], blurb: "Built by the Portuguese in 1482 and later a centre of the Atlantic slave trade. The guides tell its history plainly.", geo: { lat: 5.0828, lon: -1.3486 } },
       lodge("elmina_lodge", "Lagoon Guesthouse"),
     ],
   },

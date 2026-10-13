@@ -561,7 +561,9 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     if (p.id === "jackson_park") return townPark(p, cx, cz, w, depth, faceDir);
     if (p.id === "sunyani_cenotaph") return cenotaph(p, cx, cz, w, depth, faceDir);
     if (p.id === "nima_pitch") return pitch(p, cx, cz, w, depth, faceDir);
-    if (p.id === "osu_castle" || p.id === "cape_castle_place" || p.id === "james_fort") {
+    if (p.kind === "church") return church(p, cx, cz, w, depth, h, faceDir);
+    if (p.id === "bonwire_palace") return asantePalace(p, cx, cz, w, depth, faceDir);
+    if (p.id === "osu_castle" || p.id === "cape_castle_place" || p.id === "james_fort" || p.id === "elmina_castle_place") {
       // Whitewashed fort: curtain walls with crenellations and corner bastions.
       const m = M.plaster;
       box(m, cx, h / 2, cz, w, h, depth);
@@ -575,7 +577,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       batch.add(G.plane, colorMat("#C8452C", 0.8), [cx + w / 2 - 0.4, h + 5.4, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#F2B705", 0.8), [cx + w / 2 - 0.4, h + 5.0, cz], [0, 0, 0], [1.1, 0.4, 1]);
       batch.add(G.plane, colorMat("#1F7A4D", 0.8), [cx + w / 2 - 0.4, h + 4.6, cz], [0, 0, 0], [1.1, 0.4, 1]);
-      const [castleName, castleSub] = p.id === "osu_castle" ? ["OSU CASTLE", "FORT CHRISTIANSBORG • 1661"] : p.id === "james_fort" ? ["JAMES FORT", "BUILT 1673"] : ["CAPE COAST CASTLE", "WORLD HERITAGE SITE • 1653"];
+      const [castleName, castleSub] = p.id === "osu_castle" ? ["OSU CASTLE", "FORT CHRISTIANSBORG • 1661"] : p.id === "james_fort" ? ["JAMES FORT", "BUILT 1673"] : p.id === "elmina_castle_place" ? ["ST GEORGE'S CASTLE", "ELMINA • 1482"] : ["CAPE COAST CASTLE", "WORLD HERITAGE SITE • 1653"];
       box(signMat(castleName, "#F4F1E6", "#3a2a1f", castleSub), cx, 3.9, front + faceDir * 0.06, 6, 1.1, 0.08);
       collide(cx, cz, w + 3, depth, h * 1.3);
       return;
@@ -683,6 +685,87 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
 
   // -------------------------------------------------------------------------
   // Building parts
+
+  /**
+   * A church: a gabled nave running back from the street, a bell tower over the
+   * entrance with a pyramid cap and a cross, tall arched windows down the sides
+   * and steps up to double doors.
+   */
+  function church(p: Place, cx: number, cz: number, w: number, depth: number, h: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const nw = Math.min(w - 2, 10), wh = Math.min(Math.max(h * 0.6, 5), 7), pitchH = nw * 0.36;
+    const wall = colorMat(p.color, 0.8), trim = M.white;
+    const roofM = colorMat(["#8a3b26", "#2f5d8a", "#5a6b3a", "#7a2e2e"][Math.floor(rnd() * 4)], 0.6, 0.3);
+    box(wall, cx, wh / 2, cz, nw, wh, depth);
+    // Gable roof as a prism, ridge running back from the street.
+    const tri = new THREE.Shape([new THREE.Vector2(-nw / 2 - 0.5, 0), new THREE.Vector2(nw / 2 + 0.5, 0), new THREE.Vector2(0, pitchH)]);
+    const prism = new THREE.ExtrudeGeometry(tri, { depth: depth + 0.8, bevelEnabled: false });
+    prism.translate(0, 0, -(depth + 0.8) / 2);
+    batch.add(prism, roofM, [cx, wh, cz]);
+    const gable = new THREE.ShapeGeometry(new THREE.Shape([new THREE.Vector2(-nw / 2, 0), new THREE.Vector2(nw / 2, 0), new THREE.Vector2(0, pitchH - 0.3)]));
+    batch.add(gable, wall, [cx, wh, front + faceDir * 0.02], [0, faceDir > 0 ? 0 : Math.PI, 0]);
+    // Tall arched windows down both sides.
+    for (let z = -depth / 2 + 2; z <= depth / 2 - 2; z += 2.6) for (const sx of [-1, 1]) {
+      box(colorMat("#2f4a63", 0.3, 0.2), cx + sx * (nw / 2 + 0.02), wh * 0.5, cz + z, 0.06, wh * 0.5, 0.9);
+      batch.add(G.cyl, colorMat("#2f4a63", 0.3, 0.2), [cx + sx * (nw / 2 + 0.02), wh * 0.75, cz + z], [0, 0, Math.PI / 2], [0.45, 0.06, 0.45]);
+      box(trim, cx + sx * (nw / 2 + 0.06), wh * 0.25 - 0.05, cz + z, 0.1, 0.08, 1.1);
+    }
+    // Bell tower over the entrance.
+    const tw = 2.8, th = wh + pitchH + 4, tz = front - faceDir * 1.2;
+    box(wall, cx, th / 2, tz, tw, th, tw);
+    box(trim, cx, th - 1.6, tz, tw + 0.15, 0.15, tw + 0.15);
+    for (const [dx, dz] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) box(colorMat("#2a241f", 0.9), cx + dx * (tw / 2 + 0.01), th - 0.8, tz + dz * (tw / 2 + 0.01), dx ? 0.05 : 0.9, 1.1, dz ? 0.05 : 0.9);
+    batch.add(new THREE.ConeGeometry(1, 1, 4), roofM, [cx, th + 1.2, tz], [0, Math.PI / 4, 0], [tw * 0.78, 2.4, tw * 0.78]);
+    box(M.white, cx, th + 3.1, tz, 0.12, 1.4, 0.12);
+    box(M.white, cx, th + 3.3, tz, 0.7, 0.12, 0.12);
+    // Doors, a round window above, steps.
+    box(colorMat("#5a3420", 0.7), cx, 1.3, front + faceDir * 0.02 + faceDir * 0.18, 1.8, 2.6, 0.06);
+    batch.add(G.cyl, colorMat("#2f4a63", 0.3, 0.2), [cx, 3.6, front + faceDir * 0.22], [Math.PI / 2, 0, 0], [0.55, 0.05, 0.55]);
+    for (let i = 0; i < 3; i++) box(M.concrete, cx, 0.1 + i * 0.12, front + faceDir * (1.0 - i * 0.3), 4 - i * 0.6, 0.12, 1.2 - i * 0.3);
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#F4F1E6", "#2f4a63"), cx + nw / 2 + 1.6, 1.4, front + faceDir * 0.4, 2.6, 0.9, 0.06);
+    box(M.metal, cx + nw / 2 + 1.6, 0.5, front + faceDir * 0.4, 0.08, 1.0, 0.08);
+    collide(cx, cz, nw, depth, wh + pitchH);
+  }
+
+  /**
+   * An Asante chief's palace: a compound behind red-ochre and white walls with
+   * adinkra-style relief panels, a shaded audience pavilion, and the chief's
+   * great umbrella.
+   */
+  function asantePalace(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const ochre = colorMat("#9a4a2a", 0.9), white = colorMat("#f2ece0", 0.85), black = colorMat("#1d1a17", 0.8);
+    batch.add(tiledPlane(w, depth, 3), std({ map: T.laterite(), roughness: 1 }), [cx, 0.04, cz], [-Math.PI / 2, 0, 0]);
+    // Walls: ochre lower band, white above, relief panels on the street side.
+    for (const [x, z, ww, dd] of [[cx - w / 4 - 0.8, front, w / 2 - 1.6, 0.35], [cx + w / 4 + 0.8, front, w / 2 - 1.6, 0.35], [cx, cz - faceDir * (depth / 2), w, 0.35], [cx - w / 2, cz, 0.35, depth], [cx + w / 2, cz, 0.35, depth]] as const) {
+      box(ochre, x, 0.6, z, ww, 1.2, dd);
+      box(white, x, 1.75, z, ww, 1.1, dd);
+      collide(x, z, ww, dd, 2.3);
+    }
+    for (const sx of [-1, 1]) for (let i = 0; i < 2; i++) {
+      const px = cx + sx * (2.4 + i * 2.2);
+      // Relief panel: concentric diamonds, white on black.
+      const fz = front + faceDir * 0.19, ry = faceDir > 0 ? 0 : Math.PI;
+      box(black, px, 1.75, fz, 1.2, 0.8, 0.03);
+      batch.add(G.plane, white, [px, 1.75, fz + faceDir * 0.02], [0, ry, Math.PI / 4], [0.48, 0.48, 1]);
+      batch.add(G.plane, black, [px, 1.75, fz + faceDir * 0.025], [0, ry, Math.PI / 4], [0.3, 0.3, 1]);
+      batch.add(G.plane, white, [px, 1.75, fz + faceDir * 0.03], [0, ry, Math.PI / 4], [0.12, 0.12, 1]);
+    }
+    // Audience pavilion with a high roof.
+    const pz = cz - faceDir * 1.5;
+    box(ochre, cx, 0.6, pz, 8, 1.2, 4.5);
+    box(white, cx, 2.2, pz - faceDir * 1.9, 8, 2, 0.4);
+    for (const sx of [-1, 1]) for (const dz of [-1, 1]) box(white, cx + sx * 3.7, 2.4, pz + dz * 2, 0.35, 2.4, 0.35);
+    batch.add(new THREE.ConeGeometry(1, 1, 4), M.roofRust, [cx, 4.4, pz], [0, Math.PI / 4, 0], [6.4, 1.8, 3.8]);
+    for (const sx of [-1, 1]) box(M.wood, cx + sx * 1.6, 1.45, pz, 1.2, 0.5, 0.6);
+    // The chief's great umbrella (kyinie) in bright cloth.
+    batch.add(G.cyl8, M.wood, [cx + 3, 1.8, pz + faceDir * 3], [0, 0, 0], [0.06, 3.6, 0.06]);
+    batch.add(G.cone, colorMat("#c8452c", 0.8), [cx + 3, 3.9, pz + faceDir * 3], [0, 0, 0], [1.7, 0.9, 1.7]);
+    batch.add(G.cyl, colorMat("#f2b705", 0.8), [cx + 3, 3.4, pz + faceDir * 3], [0, 0, 0], [1.72, 0.3, 1.72]);
+    batch.add(G.ico, colorMat("#c9a227", 0.35, 0.6), [cx + 3, 4.5, pz + faceDir * 3], [0, 0, 0], [0.18, 0.18, 0.18]);
+    box(signMat(p.sign ?? p.name.toUpperCase(), "#9a4a2a", "#f2ece0"), cx, 2.75, front + faceDir * 0.2, 4.2, 0.55, 0.06);
+    collide(cx, pz, 8, 4.5, 4);
+  }
 
   /** Jamestown Lighthouse: a tall red-and-white banded tower with a gallery and lantern, beside the keeper's house. */
   function lighthouse(p: Place, cx: number, cz: number, w: number, depth: number, faceDir: number) {
