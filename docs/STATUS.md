@@ -126,6 +126,7 @@ This is an end-to-end rebuild of the player-facing game: its live world, charact
 - ✅ Street edges now include narrow storm channels and flush metal catch basins along the main and cross streets, giving the Ghanaian road scene another practical, readable layer of infrastructure.
 - ✅ Rain now darkens exterior surfaces and lowers their roughness; wet roads, paving, earth and facades dry gradually after the weather clears.
 - ✅ Place cues now show one soft ground marker only as the player approaches; distant interactables no longer fill the neighbourhood with bright pulsing rings.
+- ✅ The minimap redraws at 10 Hz while the 3D scene keeps its regular frame rate, reducing repeated canvas work and map-data allocation on phones.
 - ⏳ The 3D world, character animation and core day-to-day play loop still need a full art and interaction pass. TypeScript and the offline demo build pass for this slice; gait needs a visual pass in the game, and no cross-device save or mobile performance claim is made here.
 
 ## Next slices, in order

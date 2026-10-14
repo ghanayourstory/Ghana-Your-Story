@@ -86,8 +86,13 @@ export function Minimap({ world, road, district, onOpen }: { world: World | null
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     let raf = 0;
-    const draw = () => {
+    let lastDraw = -Infinity;
+    const draw = (now: number) => {
       raf = requestAnimationFrame(draw);
+      // The minimap is a small HUD overlay; 10Hz keeps it responsive while
+      // avoiding a canvas redraw and fresh place/NPC arrays on every 3D frame.
+      if (now - lastDraw < 100) return;
+      lastDraw = now;
       const c = ref.current;
       const m = world?.minimap();
       if (!c || !m) return;
@@ -168,7 +173,7 @@ export function Minimap({ world, road, district, onOpen }: { world: World | null
       ctx.textBaseline = "middle";
       ctx.fillText("N", S / 2 + sx * (S / 2 - 16), S / 2 + sz * (S / 2 - 16));
     };
-    draw();
+    raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
   }, [world, district]);
   return (
