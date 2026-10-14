@@ -192,6 +192,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     curbPaint: std({ color: "#17181a", roughness: 0.7 }),
     signalYellow: std({ color: "#f2c200", roughness: 0.6 }),
     concrete: textured(T.concrete("#b5aea3", 41), {}, 1.4),
+    drain: textured(T.concrete("#41413e", 43), { roughness: 0.98 }, 1.15),
     white: std({ color: "#f3f1ea", roughness: 0.6 }),
     yellowLine: std({ color: "#e8b923", roughness: 0.6 }),
     roofRust: textured(T.corrugated(true), { roughness: 0.7, metalness: 0.4 }, 1.5),
@@ -277,6 +278,16 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
 
   const box = (m: THREE.Material, x: number, y: number, z: number, w: number, h: number, dd: number, ry = 0) => batch.add(G.box, m, [x, y, z], [0, ry, 0], [w, h, dd]);
   const collide = (x: number, z: number, w: number, dd: number, h = 2.5) => colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - dd / 2, maxZ: z + dd / 2, h });
+  /** A flush catch basin: dark slot with closely spaced cross-bars, parallel to the road. */
+  const catchBasin = (x: number, z: number, along: "x" | "z") => {
+    const dims: [number, number, number] = along === "x" ? [0.92, 0.035, 0.48] : [0.48, 0.035, 0.92];
+    box(M.concrete, x, 0.163, z, ...dims);
+    box(M.darkMetal, x, 0.174, z, along === "x" ? 0.82 : 0.39, 0.01, along === "x" ? 0.39 : 0.82);
+    for (let i = 0; i < 8; i++) {
+      const p = (i - 3.5) * 0.095;
+      box(M.metal, x + (along === "x" ? p : 0), 0.182, z + (along === "z" ? p : 0), along === "x" ? 0.024 : 0.39, 0.006, along === "z" ? 0.024 : 0.39);
+    }
+  };
 
   // -------------------------------------------------------------------------
   // Ground, roads, pavements
@@ -349,6 +360,13 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       batch.add(tiledPlane(len, WALK_OUT - p0, 3), M.walk, [cx, 0.16, side * ((p0 + WALK_OUT) / 2)], [-Math.PI / 2, 0, 0]);
       box(M.concrete, cx, 0.075, side * ((p0 + WALK_OUT) / 2), len, 0.15, WALK_OUT - p0);
       box(M.curb, cx, 0.08, side * (WALK_OUT + 0.08), len, 0.16, 0.16);
+      // Narrow concrete storm channels run along the road edge; regularly
+      // spaced grates read as real drainage infrastructure, not lane paint.
+      const drainZ = side * (ROAD_HALF + 0.58);
+      box(M.drain, cx, 0.162, drainZ, len, 0.018, 0.38);
+      for (let x = x0 + 12; x < x1 - 3; x += 20) {
+        if (Math.abs(x) > CROSS_HALF + 4) catchBasin(x, drainZ, "x");
+      }
     }
   }
   // Pavements on the cross street.
@@ -360,6 +378,9 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       batch.add(tiledPlane(3, len, 3), M.walk, [side * (CROSS_HALF + 1.6), 0.16, cz], [-Math.PI / 2, 0, 0]);
       box(savanna ? M.curb : M.curbWhite, side * (CROSS_HALF + 0.1), 0.12, cz, 0.2, 0.24, len);
       if (!savanna) for (let z = z0 + 0.5; z < z1; z += 2) box(M.curbPaint, side * (CROSS_HALF + 0.1), 0.122, z, 0.21, 0.248, 1);
+      const drainX = side * (CROSS_HALF + 1.72);
+      box(M.drain, drainX, 0.162, cz, 0.38, 0.018, len);
+      for (let z = z0 + 12; z < z1 - 3; z += 20) if (Math.abs(z) > ROAD_HALF + 4) catchBasin(drainX, z, "z");
     }
   }
 

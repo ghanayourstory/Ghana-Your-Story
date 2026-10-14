@@ -123,6 +123,7 @@ This is an end-to-end rebuild of the player-facing game: its live world, charact
 - ✅ Daily goals open their relevant activity instead of sending every goal back to the same Today sheet; the Phone & apps hub keeps access to the full set of game systems.
 - ✅ Movement now accelerates and turns with easing; the motion-captured gait is synced to ground speed, sideways recording-room drift is removed, and stance-phase foot locking with two-bone IK keeps skinned characters' ankles planted while their bodies travel. Low-graphics characters use a smoother speed-coupled stride, NPCs turn through corners, and walking adds quiet surface-aware footfalls.
 - ✅ High graphics adds adaptive, high-quality ambient occlusion; the pass turns off when measured frame time is poor and disposes cleanly when graphics quality changes.
+- ✅ Street edges now include narrow storm channels and flush metal catch basins along the main and cross streets, giving the Ghanaian road scene another practical, readable layer of infrastructure.
 - ⏳ The 3D world, character animation and core day-to-day play loop still need a full art and interaction pass. TypeScript and the offline demo build pass for this slice; gait needs a visual pass in the game, and no cross-device save or mobile performance claim is made here.
 
 ## Next slices, in order
