@@ -221,7 +221,7 @@ export class World {
   private minuteAt = performance.now();
   private weather: Weather = "sunny";
   private wetnessBand = -1;
-  private rings: THREE.Mesh[] = [];
+  private rings: { mesh: THREE.Mesh; interaction: Interactable }[] = [];
   private boom = 13;
   private siteBox: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
   /** A fixed pool of street-light point lights that follows the player (cheap on phones). */
@@ -287,7 +287,7 @@ export class World {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     setMaxAnisotropy(this.renderer.capabilities.getMaxAnisotropy());
     this.atmo = new Atmosphere(this.scene, this.renderer, quality === "high" ? 2048 : 1024);
-    this.ringMat = new THREE.MeshBasicMaterial({ color: "#F2B705", transparent: true, opacity: 0.8, depthWrite: false });
+    this.ringMat = new THREE.MeshBasicMaterial({ color: "#E8C97A", transparent: true, opacity: 0.22, depthWrite: false });
     this.interiorScene.background = new THREE.Color("#20262f");
     this.interiorScene.add(new THREE.HemisphereLight("#fff4e4", "#5a4632", 1.9));
     const idir = new THREE.DirectionalLight("#fff1d6", 2.2);
@@ -439,7 +439,7 @@ export class World {
       this.scene.remove(this.life.group);
       this.life.dispose();
     }
-    for (const r of this.rings) this.scene.remove(r);
+    for (const r of this.rings) this.scene.remove(r.mesh);
     this.rings = [];
     for (const l of this.leaving) l.rig.group.removeFromParent();
     this.leaving = [];
@@ -469,9 +469,10 @@ export class World {
     for (const it of d.interactables) {
       const ring = new THREE.Mesh(new THREE.RingGeometry(it.radius * 0.55, it.radius * 0.68, 40), this.ringMat);
       ring.rotation.x = -Math.PI / 2;
-      ring.position.copy(it.pos).setY(0.2);
+      ring.position.copy(it.pos).setY(0.08);
+      ring.visible = false;
       this.scene.add(ring);
-      this.rings.push(ring);
+      this.rings.push({ mesh: ring, interaction: it });
     }
     // Place the player: server position if it's sensible, else at the stop.
     const sp = s.player.pos;
@@ -2510,8 +2511,6 @@ export class World {
           this.cb.onTaxiArrived();
         }
       }
-      const pulse = 0.55 + Math.sin(t * 3) * 0.25;
-      this.ringMat.opacity = pulse;
       // Audio: the listener is the camera-facing player; beds follow the place and the hour.
       const dist = DISTRICTS[this.district.id];
       const busy = hour >= 6 && hour < 20 ? 1 : hour >= 20 && hour < 23 ? 0.5 : 0.15;
@@ -2555,6 +2554,7 @@ export class World {
 
   private updateNearby() {
     let best: Nearby | null = null;
+    let marker: { mesh: THREE.Mesh; distance: number } | null = null;
     if (this.drive?.exam || this.drive?.gig) {
       // The examiner decides when you get out.
     } else if (this.drive) {
@@ -2588,12 +2588,29 @@ export class World {
           }
         }
       }
+      // A single, soft ground cue fades in as a place comes into view. Keeping it
+      // local avoids a field of pulsing markers across the whole neighbourhood.
+      let markerDistance = 14;
+      for (const entry of this.rings) {
+        const it = entry.interaction;
+        if (it.kind === "home" && this.state?.player.home.district !== this.district.id) continue;
+        const dd = Math.hypot(it.pos.x - this.pos.x, it.pos.z - this.pos.z);
+        if (dd < markerDistance) {
+          markerDistance = dd;
+          marker = { mesh: entry.mesh, distance: dd };
+        }
+      }
       if (!best && this.life.taxiNear(this.pos)) best = { kind: "taxi", id: "taxi", label: "Stop this taxi" };
       if (this.family && this.family.spot.distanceTo(new THREE.Vector3(this.pos.x, 0, this.pos.z)) < 3.2) best = { kind: "family", id: "family", label: "Your family" };
       // Your own car: get in and drive.
       for (const c of this.parkedCars) {
         if (c.rig.group.position.distanceTo(this.pos) < Math.max(2.6, c.rig.length / 2 + 1)) best = { kind: "car", id: c.type, label: VEHICLES[c.type]?.name ?? "car" };
       }
+    }
+    for (const entry of this.rings) entry.mesh.visible = !!marker && entry.mesh === marker.mesh && !this.inside;
+    if (marker && !this.inside) {
+      const fade = THREE.MathUtils.smoothstep(14 - marker.distance, 0, 8);
+      this.ringMat.opacity = (0.08 + Math.sin(this.clock.elapsedTime * 1.5) * 0.015) * fade;
     }
     const key = best ? `${best.kind}:${best.id}` : "";
     const prev = this.nearby ? `${this.nearby.kind}:${this.nearby.id}` : "";

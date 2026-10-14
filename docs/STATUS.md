@@ -1,6 +1,6 @@
 # Ghana: Your Story: where the build stands against the foundation brief
 
-Last checked: game build v22; rebuild pass updated 2026-10-14. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
+Last checked: game build v38; rebuild pass updated 2026-10-14. This is the Stage 0 "discovery" note from the foundation brief, kept up to date as we go.
 
 ## What exists today
 
@@ -125,6 +125,7 @@ This is an end-to-end rebuild of the player-facing game: its live world, charact
 - ✅ High graphics adds adaptive, high-quality ambient occlusion; the pass turns off when measured frame time is poor and disposes cleanly when graphics quality changes.
 - ✅ Street edges now include narrow storm channels and flush metal catch basins along the main and cross streets, giving the Ghanaian road scene another practical, readable layer of infrastructure.
 - ✅ Rain now darkens exterior surfaces and lowers their roughness; wet roads, paving, earth and facades dry gradually after the weather clears.
+- ✅ Place cues now show one soft ground marker only as the player approaches; distant interactables no longer fill the neighbourhood with bright pulsing rings.
 - ⏳ The 3D world, character animation and core day-to-day play loop still need a full art and interaction pass. TypeScript and the offline demo build pass for this slice; gait needs a visual pass in the game, and no cross-device save or mobile performance claim is made here.
 
 ## Next slices, in order
