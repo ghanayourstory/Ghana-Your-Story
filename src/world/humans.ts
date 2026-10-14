@@ -412,6 +412,12 @@ export interface HumanRig {
   forearmFix: number;
   /** The model's rest pose has the feet apart; this brings them under the hips. */
   legAdduct: number;
+  /** Rest-pose ankle height in metres, used to keep planted steps on the local floor. */
+  ankleHeight: number;
+  /** World-space ankle targets held during each foot's stance phase. */
+  footTargets: { L: THREE.Vector3 | null; R: THREE.Vector3 | null };
+  footLastY: { L: number; R: number };
+  footLockYaw: { L: number; R: number };
   body: THREE.Group;
   walkBlend?: number;
   /** Seconds alive (idle breathing and glances). */
@@ -622,7 +628,14 @@ export function buildHuman(look: PersonLook): HumanRig | null {
   // The A-pose forearms point forward; this brings them down to hang naturally.
   const forearmFix = Math.atan2(a.arm.wrist[2] - a.arm.elbow[2], a.arm.elbow[1] - a.arm.wrist[1]) - 0.18;
   const legAdduct = Math.atan2(a.leg.foot[0] - a.leg.hip[0], a.leg.hip[1] - a.leg.foot[1]) - 0.035;
-  return { root, mesh, body, bones: byName, rest, armDrop, forearmFix, legAdduct, gender: look.feminine ? "female" : "male", phase: Math.random() * 10, speed: 0, talk: 0, carry: look.carry === "tray", real: true };
+  return {
+    root, mesh, body, bones: byName, rest, armDrop, forearmFix, legAdduct,
+    ankleHeight: a.leg.foot[1],
+    footTargets: { L: null, R: null },
+    footLastY: { L: Number.POSITIVE_INFINITY, R: Number.POSITIVE_INFINITY },
+    footLockYaw: { L: 0, R: 0 },
+    gender: look.feminine ? "female" : "male", phase: Math.random() * 10, speed: 0, talk: 0, carry: look.carry === "tray", real: true,
+  };
 }
 
 const hairMats = new Map<string, THREE.Material>();
@@ -749,6 +762,8 @@ function addHair(look: PersonLook, head: THREE.Bone, center: THREE.Vector3, r: n
 // living idle (breathing, weight shift, looking about) when you stop.
 
 const qWalk = new THREE.Quaternion(), qRun = new THREE.Quaternion(), qTmp = new THREE.Quaternion();
+const plantRoot = new THREE.Vector3();
+const plantFeet = { L: new THREE.Vector3(), R: new THREE.Vector3() };
 function sampleClip(c: GaitClip, bone: string, t: number, out: THREE.Quaternion) {
   const arr = c.bones[bone];
   const n = arr.length / 4;
@@ -838,6 +853,14 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
     r.body.position.x = THREE.MathUtils.lerp(r.body.position.x, THREE.MathUtils.lerp(wx, rx, run), wb);
     r.body.position.y = THREE.MathUtils.lerp(0, THREE.MathUtils.lerp(wy, ry, run), wb);
   }
+  if (wb > 0.78 && moving) {
+    applyFootPlants(r, dt);
+  } else {
+    r.footTargets.L = null;
+    r.footTargets.R = null;
+    r.footLastY.L = Number.POSITIVE_INFINITY;
+    r.footLastY.R = Number.POSITIVE_INFINITY;
+  }
   if (!r.carry && r.talk > 0 && idle > 0.5) {
     const tk = Math.sin(r.clock * 3) * 0.3;
     set("upperarm01.R", -0.5 - tk, 0, drop - 0.2);
@@ -854,12 +877,85 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
 
 const _v = { s: new THREE.Vector3(), e: new THREE.Vector3(), w: new THREE.Vector3(), t: new THREE.Vector3(), a: new THREE.Vector3(), b: new THREE.Vector3() };
 const _q = { d: new THREE.Quaternion(), p: new THREE.Quaternion(), c: new THREE.Quaternion() };
+const _leg = { hip: new THREE.Vector3(), knee: new THREE.Vector3(), ankle: new THREE.Vector3(), a: new THREE.Vector3(), b: new THREE.Vector3(), axis: new THREE.Vector3(), rootRight: new THREE.Vector3() };
 /** Rotate a bone by a world-space rotation, keeping the change in its local quaternion. */
 function rotateWorld(bone: THREE.Bone, delta: THREE.Quaternion) {
   bone.getWorldQuaternion(_q.c);
   (bone.parent as THREE.Object3D).getWorldQuaternion(_q.p);
   bone.quaternion.copy(_q.p.invert().multiply(delta).multiply(_q.c));
   bone.updateMatrixWorld(true);
+}
+/**
+ * Hold an ankle at a world-space point during stance. The animation still
+ * supplies the step timing and foot roll; IK only corrects the leg chain so
+ * forward motion no longer drags the foot over the ground.
+ */
+function solveLegTo(r: HumanRig, side: "L" | "R", target: THREE.Vector3) {
+  const upper = r.bones[`upperleg01.${side}`], lower = r.bones[`lowerleg01.${side}`], ankle = r.bones[`foot.${side}`];
+  if (!upper || !lower || !ankle) return;
+  r.root.updateMatrixWorld(true);
+  const { hip, knee, ankle: end, a, b, axis, rootRight } = _leg;
+  upper.getWorldPosition(hip);
+  lower.getWorldPosition(knee);
+  ankle.getWorldPosition(end);
+  const upperLen = hip.distanceTo(knee), lowerLen = knee.distanceTo(end);
+  if (upperLen < 0.1 || lowerLen < 0.1) return;
+  const reach = THREE.MathUtils.clamp(hip.distanceTo(target), Math.abs(upperLen - lowerLen) + 0.005, upperLen + lowerLen - 0.005);
+
+  // Bend the knee to the distance required by the locked ankle, preserving
+  // the mocap's current bend plane wherever it is well-defined.
+  a.copy(hip).sub(knee).normalize();
+  b.copy(end).sub(knee).normalize();
+  const current = Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1));
+  const wanted = Math.acos(THREE.MathUtils.clamp((upperLen * upperLen + lowerLen * lowerLen - reach * reach) / (2 * upperLen * lowerLen), -1, 1));
+  axis.crossVectors(a, b);
+  if (axis.lengthSq() < 1e-8) {
+    rootRight.set(1, 0, 0).applyQuaternion(r.root.quaternion);
+    axis.copy(rootRight);
+  } else axis.normalize();
+  rotateWorld(lower, _q.d.setFromAxisAngle(axis, wanted - current));
+
+  // Swing the thigh just enough to bring the ankle onto its planted target.
+  r.root.updateMatrixWorld(true);
+  ankle.getWorldPosition(end);
+  a.copy(end).sub(hip).normalize();
+  b.copy(target).sub(hip).normalize();
+  rotateWorld(upper, _q.d.setFromUnitVectors(a, b));
+  r.root.updateMatrixWorld(true);
+}
+
+function applyFootPlants(r: HumanRig, dt: number) {
+  r.root.updateMatrixWorld(true);
+  r.root.getWorldPosition(plantRoot);
+  const floorAnkleY = plantRoot.y + r.ankleHeight * r.body.scale.y;
+  const sides = ["L", "R"] as const;
+
+  // Read both uncorrected feet before solving either leg, so a planted leg
+  // cannot affect the other side's touchdown detection.
+  for (const side of sides) r.bones[`foot.${side}`]?.getWorldPosition(plantFeet[side]);
+  for (const side of sides) {
+    const foot = plantFeet[side];
+    const target = r.footTargets[side];
+    const aboveFloor = foot.y - floorAnkleY;
+    const risingTooFast = foot.y > r.footLastY[side] + Math.max(0.025, dt * 0.8);
+    let yawChange = r.root.rotation.y - r.footLockYaw[side];
+    yawChange = ((yawChange + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+
+    // A foot leaves stance when its animated ankle lifts, the character turns
+    // sharply, or the floor height changes (stairs/slopes).
+    if (target && (aboveFloor > 0.2 || Math.abs(yawChange) > 0.72 || Math.abs(target.y - floorAnkleY) > 0.14)) {
+      r.footTargets[side] = null;
+    }
+    if (!r.footTargets[side] && aboveFloor <= 0.105 && !risingTooFast) {
+      r.footTargets[side] = new THREE.Vector3(foot.x, floorAnkleY, foot.z);
+      r.footLockYaw[side] = r.root.rotation.y;
+    }
+    r.footLastY[side] = foot.y;
+  }
+  for (const side of sides) {
+    const target = r.footTargets[side];
+    if (target) solveLegTo(r, side, target);
+  }
 }
 /** Two-bone IK: put a hand at a point given in the head bone's frame (x across, y up, z forward). */
 function reachTo(r: HumanRig, side: "L" | "R", local: THREE.Vector3) {
