@@ -129,6 +129,7 @@ This is an end-to-end rebuild of the player-facing game: its live world, charact
 - ✅ The minimap redraws at 10 Hz while the 3D scene keeps its regular frame rate, reducing repeated canvas work and map-data allocation on phones.
 - ✅ SUV traffic now uses the included, credited Land Cruiser FJ40 in a deterministic mix with procedural vehicles, bringing a real model into a common vehicle class.
 - ✅ Building facades now select different window-atlas phases from their world positions, reducing repeated identical window patterns without shifting seeded street layouts.
+- ✅ World teardown now aborts its keyboard and pointer listeners, disposes atmosphere GPU assets and audio voices, and removes the scene overlay, avoiding stale resources when the 3D world is rebuilt.
 - ⏳ The 3D world, character animation and core day-to-day play loop still need a full art and interaction pass. TypeScript and the offline demo build pass for this slice; gait needs a visual pass in the game, and no cross-device save or mobile performance claim is made here.
 
 ## Next slices, in order

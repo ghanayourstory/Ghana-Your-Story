@@ -28,6 +28,7 @@ export class Atmosphere {
   private wetness = 0;
   fogColor = new THREE.Color("#c9d8e6");
   private puffs = new THREE.Group();
+  private puffGeometry: THREE.SphereGeometry;
   private puffMats: THREE.MeshBasicMaterial[] = [];
 
   constructor(private scene: THREE.Scene, private renderer: THREE.WebGLRenderer, shadowSize: number) {
@@ -68,7 +69,7 @@ export class Atmosphere {
 
     // Soft, rounded cumulus silhouettes around the horizon. The old faceted
     // icosahedra made the sky look like a low-poly game even at high quality.
-    const geo = new THREE.SphereGeometry(1, 20, 14);
+    this.puffGeometry = new THREE.SphereGeometry(1, 20, 14);
     const shade = [new THREE.MeshBasicMaterial({ color: "#ffffff", fog: false, transparent: true }), new THREE.MeshBasicMaterial({ color: "#e4ecf5", fog: false, transparent: true })];
     this.puffMats = shade;
     let seed = 7;
@@ -77,7 +78,7 @@ export class Atmosphere {
       const a = (c / 22) * Math.PI * 2 + rnd() * 0.2, d = 520 + rnd() * 380, y = 90 + rnd() * 140;
       const cx = Math.cos(a) * d, cz = Math.sin(a) * d, s = 22 + rnd() * 26;
       for (let k = 0; k < 5; k++) {
-        const m = new THREE.Mesh(geo, shade[k < 4 ? 0 : 1]);
+        const m = new THREE.Mesh(this.puffGeometry, shade[k < 4 ? 0 : 1]);
         const sc = s * (0.6 + rnd() * 0.6);
         m.scale.set(sc * (1.25 + rnd() * 0.35), sc * (0.48 + rnd() * 0.2), sc * (0.85 + rnd() * 0.35));
         m.position.set(cx + (rnd() - 0.5) * s * 2.6, y + (k < 4 ? rnd() * s * 0.5 : -s * 0.25), cz + (rnd() - 0.5) * s * 1.2);
@@ -212,5 +213,27 @@ export class Atmosphere {
   }
   get lightning() {
     return this.flash;
+  }
+
+  /** Release GPU resources owned by this world before its renderer is destroyed. */
+  dispose() {
+    if (this.scene.environment === this.envRT?.texture) this.scene.environment = null;
+    this.envRT?.dispose();
+    this.envRT = null;
+    this.pmrem.dispose();
+    this.scene.remove(this.sky, this.sun, this.sun.target, this.moon, this.moon.target, this.hemi, this.cloudMesh, this.stars, this.puffs, this.rain);
+    this.envScene.remove(this.envSky);
+    this.sky.geometry.dispose();
+    this.sky.material.dispose();
+    this.envSky.geometry.dispose();
+    this.envSky.material.dispose();
+    this.cloudMesh.geometry.dispose();
+    (this.cloudMesh.material as THREE.Material).dispose();
+    this.puffGeometry.dispose();
+    this.puffMats.forEach((material) => material.dispose());
+    this.stars.geometry.dispose();
+    (this.stars.material as THREE.Material).dispose();
+    this.rain.geometry.dispose();
+    (this.rain.material as THREE.Material).dispose();
   }
 }

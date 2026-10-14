@@ -214,6 +214,7 @@ export class World {
   camDist = 13;
   private camTarget = new THREE.Vector3();
   private keys = new Set<string>();
+  private inputController = new AbortController();
   joy = { x: 0, y: 0 };
   run = false;
   private clock = new THREE.Clock();
@@ -273,6 +274,7 @@ export class World {
   private leaving: { rig: VehicleRig; dir: number; speed: number }[] = [];
   private fadeEl: HTMLDivElement;
   private camPos = new THREE.Vector3();
+  private disposed = false;
 
   constructor(private canvas: HTMLCanvasElement, private cb: WorldCallbacks, quality: Quality) {
     this.quality = quality;
@@ -2160,15 +2162,17 @@ export class World {
       this.audio.start();
     };
     const up = (e: KeyboardEvent) => this.keys.delete(e.key.toLowerCase());
-    window.addEventListener("keydown", down);
-    window.addEventListener("keyup", up);
-    window.addEventListener("blur", () => this.keys.clear());
+    const clearKeys = () => this.keys.clear();
+    const signal = this.inputController.signal;
+    window.addEventListener("keydown", down, { signal });
+    window.addEventListener("keyup", up, { signal });
+    window.addEventListener("blur", clearKeys, { signal });
     let dragging = false;
     let lx = 0, ly = 0;
     const pointers = new Map<number, { x: number; y: number }>();
     let pinch = 0;
     let downAt = { x: 0, y: 0, t: 0 };
-    this.canvas.addEventListener("pointerdown", (e) => {
+    const pointerDown = (e: PointerEvent) => {
       downAt = { x: e.clientX, y: e.clientY, t: performance.now() };
       if (this.editMode && this.ghost) {
         // Drag the ghost with one finger or the mouse.
@@ -2183,8 +2187,8 @@ export class World {
       lx = e.clientX;
       ly = e.clientY;
       this.canvas.setPointerCapture(e.pointerId);
-    });
-    this.canvas.addEventListener("pointermove", (e) => {
+    };
+    const pointerMove = (e: PointerEvent) => {
       if (!pointers.has(e.pointerId)) return;
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       if (this.dragGhost && this.ghost && this.interior) {
@@ -2205,7 +2209,7 @@ export class World {
       this.camPitch = THREE.MathUtils.clamp(this.camPitch + (e.clientY - ly) * 0.004, 0.18, 1.35);
       lx = e.clientX;
       ly = e.clientY;
-    });
+    };
     const end = (e: PointerEvent) => {
       if (this.dragGhost) { this.dragGhost = false; pointers.delete(e.pointerId); return; }
       if (e.type === "pointerup" && pointers.size === 1 && Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) < 8 && performance.now() - downAt.t < 450) this.tap(e.clientX, e.clientY);
@@ -2213,12 +2217,15 @@ export class World {
       if (pointers.size < 2) pinch = 0;
       if (pointers.size === 0) dragging = false;
     };
-    this.canvas.addEventListener("pointerup", end);
-    this.canvas.addEventListener("pointercancel", end);
-    this.canvas.addEventListener("wheel", (e) => {
+    const wheel = (e: WheelEvent) => {
       e.preventDefault();
       this.zoom(e.deltaY);
-    }, { passive: false });
+    };
+    this.canvas.addEventListener("pointerdown", pointerDown, { signal });
+    this.canvas.addEventListener("pointermove", pointerMove, { signal });
+    this.canvas.addEventListener("pointerup", end, { signal });
+    this.canvas.addEventListener("pointercancel", end, { signal });
+    this.canvas.addEventListener("wheel", wheel, { passive: false, signal });
   }
 
   // ---------------------------------------------------------------------------
@@ -2626,10 +2633,18 @@ export class World {
   }
 
   dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
+    this.inputController.abort();
     this.disposeFx();
+    this.atmo.dispose();
+    this.audio.dispose();
     this.district?.dispose();
+    this.life?.dispose();
+    this.ringMat.dispose();
+    this.fadeEl.remove();
     this.renderer.dispose();
   }
 }

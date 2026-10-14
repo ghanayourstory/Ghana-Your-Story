@@ -50,11 +50,12 @@ export class CityAudio {
   private spots: SoundSpot[] = [];
   private voices = new Map<string, Voice>();
   private stepPhase = 0;
+  private disposed = false;
   muted = false;
   settings: MixSettings = { master: 0.8, market: true, music: true, traffic: true };
 
   start() {
-    if (this.ctx) return;
+    if (this.ctx || this.disposed) return;
     const ctx = new AudioContext();
     this.ctx = ctx;
     this.master = ctx.createGain();
@@ -123,6 +124,19 @@ export class CityAudio {
     this.spots = spots;
     for (const v of this.voices.values()) v.stop();
     this.voices.clear();
+  }
+
+  /** Stop all voices and close the audio device when the world is torn down. */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.voices.forEach((voice) => voice.stop());
+    this.voices.clear();
+    this.spots = [];
+    this.onVoice = null;
+    const ctx = this.ctx;
+    this.ctx = null;
+    if (ctx && ctx.state !== "closed") void ctx.close().catch(() => undefined);
   }
 
   /** Called every frame with where the player is and how loud the ambient beds should be. */
