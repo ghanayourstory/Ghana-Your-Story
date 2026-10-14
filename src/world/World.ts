@@ -220,6 +220,7 @@ export class World {
   private gameMinute = 0;
   private minuteAt = performance.now();
   private weather: Weather = "sunny";
+  private wetnessBand = -1;
   private rings: THREE.Mesh[] = [];
   private boom = 13;
   private siteBox: { minX: number; maxX: number; minZ: number; maxZ: number } | null = null;
@@ -452,6 +453,8 @@ export class World {
     const d = buildDistrict(id, this.homeTierBuilt || undefined);
     this.district = d;
     this.scene.add(d.group);
+    this.wetnessBand = -1;
+    this.applyWetSurfaceWeather(this.atmo.isWet);
     const gd = toGameDate(Math.floor(this.minuteNow));
     this.life = new CityLife(d);
     this.life.onHonk = (p) => {
@@ -481,6 +484,30 @@ export class World {
     // Camera on the road side at three-quarters, looking at you and the shopfronts behind.
     this.camYaw = (this.pos.z > 0 ? Math.PI : 0) + 0.45;
     if (this.player) this.player.root.position.copy(this.pos);
+  }
+
+  /** Wet exterior materials darken and sharpen their reflections during rain, then dry gradually. */
+  private applyWetSurfaceWeather(wetness: number) {
+    const band = Math.round(wetness * 20) / 20;
+    if (band === this.wetnessBand || !this.district) return;
+    this.wetnessBand = band;
+    this.district.group.traverse((object) => {
+      const mesh = object as THREE.Mesh;
+      if (!mesh.isMesh || !mesh.material) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        if (!(material instanceof THREE.MeshStandardMaterial)) continue;
+        const surface = material.userData.weatherSurface as {
+          dryRoughness: number;
+          wetRoughness: number;
+          dryColor: THREE.Color;
+          wetColor: THREE.Color;
+        } | undefined;
+        if (!surface) continue;
+        material.roughness = THREE.MathUtils.lerp(surface.dryRoughness, surface.wetRoughness, wetness);
+        material.color.copy(surface.dryColor).lerp(surface.wetColor, wetness);
+      }
+    });
   }
 
   private updateSite(s: GameState) {
@@ -2449,6 +2476,7 @@ export class World {
 
     if (!this.inside && this.district && this.life) {
       this.atmo.update(hour, dt, this.pos, this.camera.position);
+      this.applyWetSurfaceWeather(this.atmo.isWet);
       const night = this.atmo.night;
       // Dumsor: no street lights and most windows dark (a few on generators).
       const cut = powerOff(this.district.id, minute);

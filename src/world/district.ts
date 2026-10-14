@@ -125,7 +125,15 @@ function std(params: THREE.MeshStandardMaterialParameters) {
 
 /** Give painted procedural surfaces fine height and reflectance variation. */
 function textured(map: THREE.Texture, params: THREE.MeshStandardMaterialParameters = {}, relief = 1.6) {
-  return std({ map, ...T.surfaceDetail(map, relief), ...params });
+  const material = std({ map, ...T.surfaceDetail(map, relief), ...params });
+  const dryColor = material.color.clone();
+  material.userData.weatherSurface = {
+    dryRoughness: material.roughness,
+    wetRoughness: Math.max(0.28, material.roughness * 0.46),
+    dryColor,
+    wetColor: dryColor.clone().multiplyScalar(0.82),
+  };
+  return material;
 }
 
 /** A drooping palm frond: a strip with leaflets that curves down along its length. */
