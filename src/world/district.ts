@@ -241,6 +241,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     if (!m) {
       const f = T.facade(kind);
       m = std({ color: kind === "glass" ? "#ffffff" : color, map: f.map, ...T.surfaceDetail(f.map, kind === "glass" ? 0.35 : 0.8), emissiveMap: f.emissive, emissive: "#ffffff", emissiveIntensity: 0, roughness: kind === "glass" ? 0.25 : 0.85, metalness: kind === "glass" ? 0.4 : 0 });
+      m.userData.facadeAtlasVariation = true;
       facadeMats.set(k, m);
       night.push({ mat: m, on: (kind === "glass" ? 1.1 : 0.9) * glow, off: 0 });
     }

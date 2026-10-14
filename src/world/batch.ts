@@ -22,6 +22,20 @@ export class Batcher {
     if (!g.attributes.uv) {
       g.setAttribute("uv", new THREE.Float32BufferAttribute(new Float32Array((g.attributes.position.count) * 2), 2));
     }
+    // Facades share one compact 2×2 window atlas. Shift each static building
+    // by a deterministic half-tile so neighbouring walls don't all repeat the
+    // same window arrangement. Position hashing leaves district generation's
+    // seeded random sequence untouched.
+    if (material.userData.facadeAtlasVariation) {
+      const x = Math.round(m.elements[12] * 4), z = Math.round(m.elements[14] * 4);
+      let hash = Math.imul(x, 0x45d9f3b) ^ Math.imul(z, 0x119de1f3);
+      hash = Math.imul(hash ^ (hash >>> 16), 0x45d9f3b);
+      hash ^= hash >>> 16;
+      const du = hash & 1 ? 0.5 : 0;
+      const dv = hash & 2 ? 0.5 : 0;
+      const uv = g.attributes.uv as THREE.BufferAttribute;
+      for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) + du, uv.getY(i) + dv);
+    }
     g.clearGroups();
     let list = this.buckets.get(material);
     if (!list) {
