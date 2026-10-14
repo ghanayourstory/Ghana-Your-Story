@@ -786,11 +786,12 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
   const wb = r.walkBlend * THREE.MathUtils.smoothstep(v, 0.05, 0.6);
   // Walk → run between a brisk walk and a jog.
   const run = THREE.MathUtils.smoothstep(v, 2.4, 3.8);
-  // Cycles per second: the clip's own cadence, sped up for longer, faster strides (cadence rises
-  // more slowly than speed, as in real people; the stride covers the rest).
-  const ws = gait.walk.stride / gait.walk.duration, rs = gait.run.stride / gait.run.duration;
+  // The clip's stride is the distance covered by one complete left-right
+  // cycle. Tie phase directly to the character's ground speed so the feet and
+  // body controller travel the same distance per cycle instead of skating.
   const vv = Math.max(v, 0.4);
-  const rate = THREE.MathUtils.lerp(Math.pow(vv / ws, 0.7) / gait.walk.duration, Math.pow(vv / rs, 0.55) / gait.run.duration, run);
+  const stride = THREE.MathUtils.lerp(gait.walk.stride, gait.run.stride, run);
+  const rate = vv / stride;
   if (moving) r.phase = (r.phase + dt * rate) % 1000;
   const t = r.phase % 1;
 
