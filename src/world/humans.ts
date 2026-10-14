@@ -456,7 +456,8 @@ export function buildHuman(look: PersonLook): HumanRig | null {
   const arm = a.arm;
   const sleeveX = outfit.sleeves === "long" ? 99 : outfit.sleeves === "elbow" ? arm.elbow[0] + 0.02 : outfit.sleeves === "short" ? arm.shoulder[0] + (arm.elbow[0] - arm.shoulder[0]) * 0.42 : arm.shoulder[0] + 0.015;
   const lower = outfit.lower;
-  const closedShoes = shoeKind !== "sandals" && shoeKind !== "barefoot";
+  // Open shoes (sandals, heels) show the foot; only closed ones hide it.
+  const closedShoes = shoeKind !== "sandals" && shoeKind !== "barefoot" && shoeKind !== "heels";
   const pattern = outfit.pattern ?? (outfit.id === "suit" ? "plain" : look.pattern ?? "plain");
   // Suits: jacket and trousers share the dark colour; the shirt is white and the tie takes the top colour.
   const jacketColor = outfit.id === "suit" ? look.pants : look.shirt;
@@ -836,11 +837,45 @@ export function animateHuman(r: HumanRig, dt: number, speed: number) {
     set("lowerarm01.R", r.forearmFix - 1.2 + tk * 0.4);
   }
   if (r.carry) {
-    // One hand steadies the head tray.
-    set("upperarm01.R", 0, 0, drop - 2.5);
-    set("lowerarm01.R", r.forearmFix - 0.4, 0, 0);
+    // One hand up at the rim of the head tray, out to the side, steadying it.
+    // The hand on the rim of the basin, out to the side of the head (two-bone IK).
+    set("clavicle.R", 0, 0, 0.12);
+    reachTo(r, "R", new THREE.Vector3(-0.3, 0.23, 0.02));
   }
   if (r.talk > 0) r.talk -= dt;
+}
+
+const _v = { s: new THREE.Vector3(), e: new THREE.Vector3(), w: new THREE.Vector3(), t: new THREE.Vector3(), a: new THREE.Vector3(), b: new THREE.Vector3() };
+const _q = { d: new THREE.Quaternion(), p: new THREE.Quaternion(), c: new THREE.Quaternion() };
+/** Rotate a bone by a world-space rotation, keeping the change in its local quaternion. */
+function rotateWorld(bone: THREE.Bone, delta: THREE.Quaternion) {
+  bone.getWorldQuaternion(_q.c);
+  (bone.parent as THREE.Object3D).getWorldQuaternion(_q.p);
+  bone.quaternion.copy(_q.p.invert().multiply(delta).multiply(_q.c));
+  bone.updateMatrixWorld(true);
+}
+/** Two-bone IK: put a hand at a point given in the head bone's frame (x across, y up, z forward). */
+function reachTo(r: HumanRig, side: "L" | "R", local: THREE.Vector3) {
+  const B = r.bones;
+  const up = B[`upperarm01.${side}`], lo = B[`lowerarm01.${side}`], wr = B[`wrist.${side}`], head = B.head;
+  if (!up || !lo || !wr || !head) return;
+  r.root.updateMatrixWorld(true);
+  const { s, e, w, t, a, b } = _v;
+  head.localToWorld(t.copy(local));
+  up.getWorldPosition(s); lo.getWorldPosition(e); wr.getWorldPosition(w);
+  const la = s.distanceTo(e), lb = e.distanceTo(w);
+  const lc = THREE.MathUtils.clamp(s.distanceTo(t), Math.abs(la - lb) + 1e-3, la + lb - 1e-3);
+  // Elbow: bend to the angle that makes the shoulder-to-hand distance right.
+  a.copy(s).sub(e).normalize(); b.copy(w).sub(e).normalize();
+  const cur = Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1));
+  const want = Math.acos(THREE.MathUtils.clamp((la * la + lb * lb - lc * lc) / (2 * la * lb), -1, 1));
+  const axis = new THREE.Vector3().crossVectors(a, b);
+  if (axis.lengthSq() < 1e-8) axis.set(1, 0, 0); else axis.normalize();
+  rotateWorld(lo, _q.d.setFromAxisAngle(axis, want - cur));
+  // Shoulder: swing the whole arm so the hand lands on the target.
+  wr.getWorldPosition(w);
+  a.copy(w).sub(s).normalize(); b.copy(t).sub(s).normalize();
+  rotateWorld(up, _q.d.setFromUnitVectors(a, b));
 }
 
 /** Attach something to the top of a person's head (vendors' trays). */

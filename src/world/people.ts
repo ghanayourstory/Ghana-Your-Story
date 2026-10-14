@@ -111,15 +111,33 @@ export function buildPerson(look: PersonLook, opts: { key?: boolean } = {}): Per
   return buildSimplePerson(look);
 }
 
+const basinGeo = (() => {
+  // A wide aluminium basin (the hawker's "tray"): flat base, flared sides, rolled rim.
+  const prof = [[0, 0], [0.17, 0], [0.19, 0.01], [0.27, 0.075], [0.285, 0.085], [0.29, 0.078], [0.275, 0.07], [0.185, 0.008], [0, 0.008]].map(([x, y]) => new THREE.Vector2(x, y));
+  return new THREE.LatheGeometry(prof, 36);
+})();
+const padGeo = new THREE.TorusGeometry(0.075, 0.028, 8, 20).rotateX(Math.PI / 2);
+const basinMat = new THREE.MeshStandardMaterial({ color: "#c9ced3", metalness: 0.85, roughness: 0.32, side: THREE.DoubleSide });
 function trayMesh(look: PersonLook, y: number) {
   const tray = new THREE.Group();
   tray.position.y = y;
-  tray.add(part(geo.cyl, plainMat("#c0c4c8", 0.35, 0.8), 0.28, 0.06, 0.28, 0, 0, 0));
   const rnd = mulberry32(look.shirt.charCodeAt(2) * 31);
-  const goods = ["#e04a2f", "#f2b705", "#3c8d2f", "#f7f3e8", "#8b4a2b"];
-  for (let i = 0; i < 7; i++) {
-    const a = (i / 7) * Math.PI * 2;
-    tray.add(part(geo.sphere, plainMat(goods[Math.floor(rnd() * goods.length)], 0.6), 0.06, 0.05, 0.06, Math.cos(a) * 0.16, 0.06, Math.sin(a) * 0.16));
+  // The cloth head pad (kahyire) between the head and the basin.
+  tray.add(part(padGeo, plainMat(["#C8452C", "#1F7A4D", "#2E86AB", "#F2B705"][Math.floor(rnd() * 4)], 0.9), 1, 1, 1, 0, -0.02, 0));
+  const basin = new THREE.Mesh(basinGeo, basinMat);
+  basin.position.y = 0.005;
+  basin.castShadow = true;
+  tray.add(basin);
+  // Wares piled in it: oranges, plantain chips, sachet water, bread or eggs.
+  const kinds = [["#f08a1c", 0.035], ["#e9d27a", 0.03], ["#e8eef2", 0.035], ["#d9a35a", 0.045], ["#f4ead8", 0.028]] as const;
+  const [col, sz] = kinds[Math.floor(rnd() * kinds.length)];
+  const m = plainMat(col, col === "#e8eef2" ? 0.15 : 0.7);
+  for (let ring = 0; ring < 3; ring++) {
+    const r0 = 0.2 - ring * 0.08, n = Math.max(1, Math.round((r0 * Math.PI * 2) / (sz * 2.1)));
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2 + ring;
+      tray.add(part(geo.sphere, m, sz, sz * 0.9, sz, Math.cos(a) * r0, 0.04 + ring * sz * 1.3 + sz * 0.6, Math.sin(a) * r0));
+    }
   }
   return tray;
 }

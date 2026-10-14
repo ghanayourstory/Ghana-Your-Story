@@ -310,19 +310,20 @@ export class World {
   private setupFx() {
     this.fx?.composer.dispose();
     this.fx = null;
-    if (this.quality !== "high") return;
+    if (this.quality === "low") return;
     const composer = new EffectComposer(this.renderer);
     const render = new RenderPass(this.scene, this.camera);
     // Ambient occlusion cost more frame time than it was worth: off. (Kept the pass type for the fields.)
     const ao = null as unknown as GTAOPass;
     const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.92);
     composer.addPass(render);
-    composer.addPass(bloom);
-    // A touch more colour, like a sunny postcard.
+    if (this.quality === "high") composer.addPass(bloom);
+    // Colour grade (high and medium): richer colour and a gentle S-curve so the picture
+    // has depth instead of looking washed out. One cheap full-screen pass.
     composer.addPass(new ShaderPass({
-      uniforms: { tDiffuse: { value: null }, sat: { value: 1.18 } },
+      uniforms: { tDiffuse: { value: null }, sat: { value: 1.22 }, con: { value: 1.1 } },
       vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
-      fragmentShader: "uniform sampler2D tDiffuse; uniform float sat; varying vec2 vUv; void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); gl_FragColor = vec4(max(vec3(0.0), mix(vec3(l), c.rgb, sat)), c.a); }",
+      fragmentShader: "uniform sampler2D tDiffuse; uniform float sat; uniform float con; varying vec2 vUv; void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); vec3 g = max(vec3(0.0), mix(vec3(l), c.rgb, sat)); g = clamp((g - 0.42) * con + 0.42, 0.0, 1.0); gl_FragColor = vec4(g, c.a); }",
     }));
     composer.addPass(new OutputPass());
     this.fx = { composer, render, ao, bloom };
@@ -333,7 +334,8 @@ export class World {
     this.quality = q;
     if (changed) this.setupFx();
     setHumanMode(q === "low" ? "key" : "all");
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, q === "high" ? 2 : q === "medium" ? 1.5 : 1));
+    this.maxPR = Math.min(window.devicePixelRatio, q === "high" ? 2 : q === "medium" ? 1.6 : 1.1);
+    this.renderer.setPixelRatio(this.maxPR);
     this.renderer.shadowMap.enabled = q !== "low";
     this.resize();
   }
@@ -451,8 +453,12 @@ export class World {
     const sp = s.player.pos;
     const candidate = new THREE.Vector3(sp.x, 0, sp.z);
     if (this.collides(candidate, 0.4) || Math.abs(sp.z) < ROAD_HALF) candidate.copy(d.spawn);
+    // Step out from under the stop's shelter so the crowd waiting there isn't on top of you.
+    if (candidate.equals(d.spawn)) candidate.x += 4;
     this.pos.copy(candidate);
     this.camTarget.copy(this.pos);
+    // Camera on the road side at three-quarters, looking at you and the shopfronts behind.
+    this.camYaw = (this.pos.z > 0 ? Math.PI : 0) + 0.45;
     if (this.player) this.player.root.position.copy(this.pos);
   }
 
@@ -2185,7 +2191,8 @@ export class World {
   /** Is something taller than the camera point in the way (for the camera boom)? */
   private occludes(p: THREE.Vector3) {
     for (const c of this.district?.colliders ?? []) {
-      if (c.h > p.y && p.x > c.minX && p.x < c.maxX && p.z > c.minZ && p.z < c.maxZ) return true;
+      // Shelters, kiosks, walls and canopies are low: the camera looks over them, never under them.
+      if (c.h >= 3.5 && c.h > p.y && p.x > c.minX && p.x < c.maxX && p.z > c.minZ && p.z < c.maxZ) return true;
     }
     return false;
   }

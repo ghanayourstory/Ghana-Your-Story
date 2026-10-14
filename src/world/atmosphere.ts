@@ -137,26 +137,28 @@ export class Atmosphere {
     const golden = THREE.MathUtils.clamp(1 - this.sunDir.y * 3, 0, 1);
     const overcast = rainy ? 0.35 : w === "cloudy" ? 0.65 : w === "hazy" ? 0.75 : 1;
     this.sun.color.setRGB(1, 0.93 - golden * 0.25, 0.82 - golden * 0.42);
-    this.sun.intensity = sunUp * 3.0 * overcast;
+    // Strong tropical sun, softer fill: shadows and form read clearly.
+    this.sun.intensity = sunUp * 3.5 * overcast;
     this.sun.position.copy(focus).addScaledVector(this.sunDir, 120);
     this.sun.target.position.copy(focus);
     this.sun.castShadow = sunUp > 0.05;
     this.moon.intensity = this.night * 0.45;
     this.moon.position.copy(focus).add(new THREE.Vector3(-40, 90, -30));
     this.moon.target.position.copy(focus);
-    this.hemi.intensity = 0.3 + sunUp * 1.1 * (rainy ? 1.0 : 1) + this.flash * 4;
+    this.hemi.intensity = 0.3 + sunUp * (rainy ? 1.1 : 0.75) + this.flash * 4;
     this.hemi.color.setRGB(0.72 + 0.1 * sunUp, 0.84 + 0.06 * sunUp, 1);
     this.hemi.groundColor.setRGB(0.36 * sunUp + 0.05, 0.4 * sunUp + 0.05, 0.22 * sunUp + 0.08);
 
     // Fog and horizon colour.
-    const fogDay = w === "hazy" ? new THREE.Color("#d9cdb2") : rainy ? new THREE.Color("#8f9aa3") : w === "cloudy" ? new THREE.Color("#b9c6cf") : new THREE.Color("#a9d1f0");
+    const fogDay = w === "hazy" ? new THREE.Color("#d6c39c") : rainy ? new THREE.Color("#8f9aa3") : w === "cloudy" ? new THREE.Color("#b9c6cf") : new THREE.Color("#a9d1f0");
     const fogDusk = new THREE.Color("#e7a36b");
     const fogNight = new THREE.Color("#0d1424");
     this.fogColor.copy(fogDay).lerp(fogDusk, golden * sunUp * 0.6).lerp(fogNight, this.night);
     const fog = this.scene.fog as THREE.Fog;
     fog.color.copy(this.fogColor);
-    fog.near = w === "hazy" ? 70 : rainy ? 25 : 160;
-    fog.far = w === "hazy" ? 380 : rainy ? 190 : 700;
+    // Harmattan dust softens the distance without bleaching the street you're standing in.
+    fog.near = w === "hazy" ? 110 : rainy ? 25 : 160;
+    fog.far = w === "hazy" ? 520 : rainy ? 190 : 700;
     this.skyColor.copy(fogDay).lerp(fogNight, this.night);
 
     this.renderer.toneMappingExposure = 0.78 + sunUp * 0.22 + this.night * 0.2;
@@ -198,7 +200,7 @@ export class Atmosphere {
       this.lastEnvKey = key;
       const rt = this.pmrem.fromScene(this.envScene, 0, 0.1, 5000);
       this.scene.environment = rt.texture;
-      this.scene.environmentIntensity = 0.35 + sunUp * 0.65;
+      this.scene.environmentIntensity = 0.3 + sunUp * 0.45;
       this.envRT?.dispose();
       this.envRT = rt;
     }
