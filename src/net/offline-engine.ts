@@ -207,7 +207,10 @@ export async function importSave(text: string): Promise<void> {
   frozen = true;
   await saveBytes(bytes);
   try {
-    if (parsed.token) localStorage.setItem("sika.token", parsed.token);
+    if (parsed.token) {
+      localStorage.setItem("sika.token", parsed.token);
+      localStorage.setItem("sika.token.backend", "offline");
+    }
   } catch { /* ignore */ }
   location.reload();
 }

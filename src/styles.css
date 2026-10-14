@@ -227,6 +227,13 @@ b, strong { font-weight: 700; }
 
 /* ---------- Splash / brand ---------- */
 .splash { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(1200px 700px at 50% 115%, #e9a50b 0%, #c2402a 30%, #4a1e14 62%, #1c140d 90%); color: var(--paper); z-index: 100; }
+.save-recovery { width: min(510px, calc(100vw - 32px)); display: grid; gap: 20px; padding: clamp(20px, 5vw, 34px); border: 1px solid rgba(255,255,255,.48); border-radius: 24px; background: var(--paper); color: var(--ink); box-shadow: 0 24px 80px rgba(0,0,0,.38); }
+.save-recovery .wordmark { color: var(--ink); font-size: clamp(23px, 6vw, 34px); }
+.save-recovery .wordmark span { color: var(--green); }
+.save-recovery .kente-strip { height: 4px; }
+.save-recovery h1 { margin: 0 0 8px; font-size: clamp(22px, 5vw, 30px); line-height: 1.1; }
+.save-recovery p { margin: 0; line-height: 1.55; }
+.save-recovery-note { color: var(--muted); font-size: 13px; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .coin { width: 54px; height: 54px; border-radius: 50%; background: radial-gradient(circle at 35% 30%, #fff1a8, var(--gold) 45%, #9a6a00); display: grid; place-items: center; color: #3a2a00; font-family: var(--display); font-weight: 800; font-size: 27px; box-shadow: 0 6px 24px rgba(233, 165, 11, 0.45), inset 0 -4px 0 rgba(0,0,0,0.2); flex: none; }
 .wordmark { font-size: clamp(30px, 8vw, 44px); font-weight: 800; letter-spacing: -0.035em; line-height: 0.95; color: var(--paper); }

@@ -8,6 +8,8 @@ export interface Backend {
 }
 
 const TOKEN_KEY = "sika.token";
+const BACKEND_KEY = "sika.token.backend";
+export type BackendMode = "server" | "offline";
 
 export function getToken(): string | null {
   try {
@@ -16,10 +18,25 @@ export function getToken(): string | null {
     return null;
   }
 }
-export function setToken(t: string | null) {
+export function getTokenBackend(): BackendMode | null {
   try {
-    if (t) localStorage.setItem(TOKEN_KEY, t);
-    else localStorage.removeItem(TOKEN_KEY);
+    const mode = localStorage.getItem(BACKEND_KEY);
+    return mode === "server" || mode === "offline" ? mode : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(t: string | null, backend?: BackendMode) {
+  try {
+    if (t) {
+      localStorage.setItem(TOKEN_KEY, t);
+      if (backend) localStorage.setItem(BACKEND_KEY, backend);
+      else localStorage.removeItem(BACKEND_KEY);
+    } else {
+      localStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(BACKEND_KEY);
+    }
   } catch {
     /* private mode: session-only */
   }
@@ -68,6 +85,11 @@ export function offlineBackend(): Backend {
 
 /** Prefer the real server; fall back to the offline engine when there isn't one. */
 export async function pickBackend(): Promise<Backend> {
+  // A sign-in belongs to one save store. Keep an offline save on its local
+  // IndexedDB and a hosted save on the server even if the other is available.
+  const savedBackend = getTokenBackend();
+  if (savedBackend === "offline") return offlineBackend();
+  if (savedBackend === "server") return httpBackend();
   if (import.meta.env.VITE_OFFLINE === "1") return offlineBackend();
   try {
     const res = await fetch("/api/health", { signal: AbortSignal.timeout(2500) });

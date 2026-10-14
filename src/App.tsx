@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GameProvider, useGame } from "./store.tsx";
-import { getToken, pickBackend, setToken, type Backend } from "./net/backend.ts";
+import { getToken, getTokenBackend, httpBackend, offlineBackend, pickBackend, setToken, type Backend } from "./net/backend.ts";
 import { CharacterCreate } from "./ui/CharacterCreate.tsx";
 import { MapSheet } from "./ui/map.tsx";
 import { ArrangePanel } from "./ui/furnish.tsx";
@@ -20,7 +20,7 @@ import type { GameState } from "../server/engine.ts";
 import type { PersonLook } from "./world/people.ts";
 import { DISTRICTS, type DistrictId } from "../shared/world.ts";
 
-type Boot = { phase: "loading" } | { phase: "create"; backend: Backend } | { phase: "play"; backend: Backend; state: GameState };
+type Boot = { phase: "loading" } | { phase: "create"; backend: Backend } | { phase: "play"; backend: Backend; state: GameState } | { phase: "recover"; message: string };
 
 export default function App() {
   const [boot, setBoot] = useState<Boot>({ phase: "loading" });
@@ -29,14 +29,38 @@ export default function App() {
 
   const start = useCallback(async () => {
     const [backend] = await Promise.all([pickBackend(), loadHumans(), loadCarModels()]);
-    if (getToken()) {
-      try {
-        const res = await backend.request<{ state: GameState }>("GET", "/api/state");
-        if (res.status === 200 && res.json.state) return setBoot({ phase: "play", backend, state: res.json.state });
-      } catch {
-        /* fall through to create */
+    const token = getToken();
+    if (token) {
+      const knownBackend = getTokenBackend();
+      const candidates = knownBackend
+        ? [backend]
+        : [backend, backend.mode === "server" ? offlineBackend() : httpBackend()];
+      for (const candidate of candidates) {
+        try {
+          const res = await candidate.request<{ state: GameState }>("GET", "/api/state");
+          if (res.status === 200 && res.json.state) {
+            if (!knownBackend) setToken(token, candidate.mode);
+            return setBoot({ phase: "play", backend: candidate, state: res.json.state });
+          }
+          // Older saves predate the backend marker. Check the other store once
+          // before deciding that their token can't be used.
+          if (res.status === 401 && !knownBackend && candidate !== candidates.at(-1)) continue;
+          setBoot({
+            phase: "recover",
+            message: res.status === 401
+              ? "Neither save store recognized this sign-in. It is still on this device; check that you're opening the matching game copy or restore the matching save before starting a new character."
+              : "The save service could not load your character. Your sign-in is still on this device; try again when the service is available.",
+          });
+          return;
+        } catch {
+          if (!knownBackend && candidate !== candidates.at(-1)) continue;
+          return setBoot({
+            phase: "recover",
+            message: "Couldn't reach the service that owns this save. Your sign-in is still on this device. Check your connection and try again; no new character has been created.",
+          });
+        }
       }
-      setToken(null);
+      return setBoot({ phase: "recover", message: "Couldn't find this saved story. Your sign-in remains on this device; restore the backup that belongs to this game copy." });
     }
     setBoot({ phase: "create", backend });
   }, []);
@@ -46,6 +70,22 @@ export default function App() {
   }, [start]);
 
   if (boot.phase === "loading") return <Splash />;
+  if (boot.phase === "recover") {
+    return (
+      <div className="splash">
+        <section className="save-recovery" role="alert">
+          <div className="brand"><div className="coin">₵</div><div className="wordmark">Ghana: <span>Your Story</span></div></div>
+          <div className="kente-strip" />
+          <div>
+            <h1>We couldn't load your saved story</h1>
+            <p>{boot.message}</p>
+            <p className="save-recovery-note">No new character has been created, and the saved sign-in remains on this device.</p>
+          </div>
+          <button className="btn primary block" onClick={() => void start()}>Try again</button>
+        </section>
+      </div>
+    );
+  }
   if (boot.phase === "create") {
     return (
       <CharacterCreate
@@ -57,7 +97,7 @@ export default function App() {
           try {
             const res = await boot.backend.request<{ token?: string; state?: GameState; error?: string }>("POST", "/api/player", { name, background, look, hometown, languages, priorities, test: boot.backend.mode === "offline" });
             if (res.json.token && res.json.state) {
-              setToken(res.json.token);
+              setToken(res.json.token, boot.backend.mode);
               try { localStorage.setItem("sika.intro", "1"); } catch { /* ignore */ }
               setBoot({ phase: "play", backend: boot.backend, state: res.json.state });
             } else setError(res.json.error ?? "Could not create your character");
