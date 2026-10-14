@@ -10,6 +10,15 @@ export type Person = Rig | HumanRig;
 let humanMode: "all" | "key" | "off" = "all";
 export const setHumanMode = (m: typeof humanMode) => { humanMode = m; };
 
+/** Turn people through a short, speed-limited arc instead of snapping at path corners. */
+export function turnPersonToward(person: Pick<Person, "root">, targetYaw: number, dt: number, response = 8) {
+  let angle = targetYaw - person.root.rotation.y;
+  angle = ((angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+  const stepDt = Math.min(dt, 0.05);
+  const maxStep = response * stepDt;
+  person.root.rotation.y += THREE.MathUtils.clamp(angle * (1 - Math.exp(-response * stepDt)), -maxStep, maxStep);
+}
+
 export type HairStyle = "low" | "afro" | "braids" | "bun" | "wrap" | "cap" | "locs";
 export type Pattern = "plain" | "kente" | "wax" | "stripe";
 
@@ -319,38 +328,47 @@ export function animatePerson(r: Person, dt: number, speed: number) {
     dt = acc;
   }
   if ("real" in r) return animateHuman(r, dt, speed);
-  r.speed += (speed - r.speed) * Math.min(1, dt * 8);
+  r.speed += (speed - r.speed) * (1 - Math.exp(-8 * dt));
   const v = r.speed;
   const walking = v > 0.15;
-  r.phase += dt * (walking ? 2.3 + v * 1.6 : 1.2);
+  const runBlend = THREE.MathUtils.smoothstep(v, 2.1, 3.7);
+  const stride = THREE.MathUtils.lerp(1.12, 1.72, runBlend);
+  // One phase cycle represents the distance this lightweight rig travels in a
+  // left-right step pair, just as it does for the motion-captured bodies.
+  r.phase += dt * (walking ? (v / stride) * Math.PI * 2 : 1.2);
   const ph = r.phase;
-  const amp = Math.min(0.75, 0.25 + v * 0.18);
+  const intensity = THREE.MathUtils.smoothstep(v, 0.1, 0.42);
+  const amp = THREE.MathUtils.lerp(0.42, 0.72, runBlend) * intensity;
   if (walking) {
     const sw = Math.sin(ph);
     r.legL.rotation.x = sw * amp;
     r.legR.rotation.x = -sw * amp;
-    r.kneeL.rotation.x = Math.max(0, -Math.cos(ph)) * amp * 1.3;
-    r.kneeR.rotation.x = Math.max(0, Math.cos(ph)) * amp * 1.3;
+    r.kneeL.rotation.x = Math.max(0, -Math.cos(ph)) * THREE.MathUtils.lerp(0.42, 0.88, runBlend);
+    r.kneeR.rotation.x = Math.max(0, Math.cos(ph)) * THREE.MathUtils.lerp(0.42, 0.88, runBlend);
     if (!r.carry) {
-      r.armL.rotation.x = -sw * amp * 0.8;
-      r.armR.rotation.x = sw * amp * 0.8;
-      r.elbowL.rotation.x = -0.25 - Math.max(0, sw) * 0.3;
-      r.elbowR.rotation.x = -0.25 - Math.max(0, -sw) * 0.3;
+      r.armL.rotation.x = -sw * amp * 0.74;
+      r.armR.rotation.x = sw * amp * 0.74;
+      r.elbowL.rotation.x = -0.14 - Math.max(0, sw) * 0.3;
+      r.elbowR.rotation.x = -0.14 - Math.max(0, -sw) * 0.3;
     } else {
       r.armL.rotation.x = -sw * amp * 0.6;
     }
-    r.hips.position.y = 0.86 + Math.abs(Math.cos(ph)) * 0.035;
-    r.hips.rotation.y = Math.sin(ph) * 0.06;
-    r.body.rotation.x = Math.min(0.15, v * 0.025);
+    r.hips.position.y = 0.86 + Math.abs(Math.sin(ph)) * 0.018;
+    r.hips.rotation.y = Math.sin(ph * 2) * 0.035;
+    r.body.rotation.x = Math.min(0.12, v * 0.02);
+    r.body.rotation.z = Math.sin(ph * 2 + 0.4) * 0.014;
+    r.head.rotation.y = Math.sin(ph * 0.5) * 0.035;
   } else {
     const br = Math.sin(ph * 1.3);
-    r.legL.rotation.x *= 0.85;
-    r.legR.rotation.x *= 0.85;
-    r.kneeL.rotation.x *= 0.85;
-    r.kneeR.rotation.x *= 0.85;
+    const settle = Math.exp(-dt * 11);
+    r.legL.rotation.x *= settle;
+    r.legR.rotation.x *= settle;
+    r.kneeL.rotation.x *= settle;
+    r.kneeR.rotation.x *= settle;
     r.hips.position.y = 0.86 + br * 0.004;
-    r.hips.rotation.y *= 0.9;
-    r.body.rotation.x *= 0.9;
+    r.hips.rotation.y *= settle;
+    r.body.rotation.x *= settle;
+    r.body.rotation.z *= settle;
     if (!r.carry) {
       const t = r.talk > 0 ? Math.sin(ph * 3) * 0.35 : 0;
       r.armL.rotation.x = br * 0.03;
@@ -360,7 +378,7 @@ export function animatePerson(r: Person, dt: number, speed: number) {
       r.armL.rotation.z = -0.08;
       r.armR.rotation.z = 0.08;
     }
-    r.head.rotation.y = Math.sin(ph * 0.4) * 0.25;
+    r.head.rotation.y = Math.sin(ph * 0.4) * 0.18;
   }
   if (r.talk > 0) r.talk -= dt;
 }

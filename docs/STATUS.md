@@ -117,11 +117,11 @@ The brief's acceptance is about human players: disconnect recovery, privacy, ser
 
 ## Full rebuild pass (in progress)
 
-This pass keeps the existing server, save format and financial ledger intact while replacing the player-facing experience in playable slices.
+This is an end-to-end rebuild of the player-facing game: its live world, character movement, interface and everyday play loop. The existing action engine and save/ledger contract remain the persistence boundary so a rebuilt client does not erase players' homes, progress or balances.
 
 - ✅ New persistent in-world frame with location, clock, wallet, needs, mood, monthly cash flow, net worth, standing and urgent life alerts.
 - ✅ Daily goals open their relevant activity instead of sending every goal back to the same Today sheet; the Phone & apps hub keeps access to the full set of game systems.
-- ✅ Movement now accelerates and turns with easing; the motion-captured gait is synced to ground speed, and sideways drift from the recording room is removed. Walking adds quiet surface-aware footfalls.
+- ✅ Movement now accelerates and turns with easing; the motion-captured gait is synced to ground speed, sideways recording-room drift is removed, low-graphics characters use a smoother speed-coupled stride, and NPCs turn through corners. Walking adds quiet surface-aware footfalls.
 - ✅ High graphics adds adaptive, high-quality ambient occlusion; the pass turns off when measured frame time is poor and disposes cleanly when graphics quality changes.
 - ⏳ The 3D world, character animation and core day-to-day play loop still need a full art and interaction pass. TypeScript and the offline demo build pass for this slice; no cross-device save or mobile performance claim is made here.
 

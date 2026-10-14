@@ -23,7 +23,7 @@ function parkedKind(style: string, r: number): VehicleKind {
   return r < 0.35 ? "compact" : r < 0.6 ? "sedan" : r < 0.75 ? "taxi" : r < 0.88 ? "suv" : "accordo";
 }
 export type { VehicleRig };
-import { animatePerson, buildPerson, randomLook, type Person } from "./people.ts";
+import { animatePerson, buildPerson, randomLook, turnPersonToward, type Person } from "./people.ts";
 import { CROSS_HALF, EXTENT_X, ROAD_HALF, WALK_IN, WALK_OUT, type DistrictScene } from "./district.ts";
 import { DISTRICTS, PLACE_BY_ID, isRushHour } from "../../shared/world.ts";
 import { CROWD_SHOUTS, NPCS, npcLocation, type Npc } from "../../shared/people.ts";
@@ -410,7 +410,7 @@ export class CityLife {
           p.x += dx * k;
           p.z += dz * k;
           p.y = 0.16;
-          n.rig.root.rotation.y = Math.atan2(dx, dz);
+          turnPersonToward(n.rig, Math.atan2(dx, dz), dt);
         }
         animatePerson(n.rig, dt, 1.3);
         continue;
@@ -418,7 +418,7 @@ export class CityLife {
       // At home: chat with each other, turn to greet you when you pass.
       const dx = player.x - p.x, dz = player.z - p.z;
       const yaw = Math.hypot(dx, dz) < 5 ? Math.atan2(dx, dz) : n.idx % 2 ? Math.PI / 2 : -Math.PI / 2;
-      n.rig.root.rotation.y += (((yaw - n.rig.root.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 3);
+      turnPersonToward(n.rig, yaw, dt, 4);
       animatePerson(n.rig, dt, 0);
     }
   }
@@ -543,7 +543,7 @@ export class CityLife {
           } else {
             w.x += (dx / dist) * w.speed * dt;
             w.z += (dz / dist) * w.speed * dt;
-            w.rig.root.rotation.y = Math.atan2(dx, dz);
+            turnPersonToward(w.rig, Math.atan2(dx, dz), dt);
             moving = w.speed;
           }
         }
@@ -553,9 +553,9 @@ export class CityLife {
         else {
           w.x += w.dir * w.speed * dt;
           if (w.x > w.range[1] || w.x < w.range[0]) { w.dir *= -1; w.pause = 1 + Math.random() * 3; }
-          w.rig.root.rotation.y = w.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+          turnPersonToward(w.rig, w.dir > 0 ? Math.PI / 2 : -Math.PI / 2, dt);
           moving = w.speed;
-          if (Math.random() < dt * 0.05) { w.pause = 2 + Math.random() * 4; w.rig.root.rotation.y = Math.random() < 0.5 ? 0 : Math.PI; }
+          if (Math.random() < dt * 0.05) { w.pause = 2 + Math.random() * 4; turnPersonToward(w.rig, Math.random() < 0.5 ? 0 : Math.PI, dt, 4); }
         }
       } else if (w.dir !== 0) {
         if (w.pause > 0) w.pause -= dt;
@@ -569,7 +569,7 @@ export class CityLife {
           w.z = THREE.MathUtils.clamp(w.z, sw.z - halfW, sw.z + halfW);
           if (w.x > EXTENT_X - 3) w.x = -EXTENT_X + 4;
           if (w.x < -EXTENT_X + 3) w.x = EXTENT_X - 4;
-          w.rig.root.rotation.y = w.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+          turnPersonToward(w.rig, w.dir > 0 ? Math.PI / 2 : -Math.PI / 2, dt);
           moving = w.speed;
           if (Math.random() < dt * 0.02) w.pause = 2 + Math.random() * 6;
         }
@@ -620,7 +620,7 @@ export class CityLife {
           p.x += dx * k;
           p.z += dz * k;
           p.y = 0.16;
-          a.rig.root.rotation.y = Math.atan2(dx, dz);
+          turnPersonToward(a.rig, Math.atan2(dx, dz), dt);
         }
         animatePerson(a.rig, dt, sp);
         a.label.position.set(p.x, a.npc.look.height + 0.71, p.z);
@@ -630,7 +630,7 @@ export class CityLife {
       const dx = player.x - a.home.x, dz = player.z - a.home.z;
       const dist = Math.hypot(dx, dz);
       const targetYaw = dist < 6 ? Math.atan2(dx, dz) : a.home.z > 0 ? Math.PI : 0;
-      a.rig.root.rotation.y += (((targetYaw - a.rig.root.rotation.y + Math.PI * 3) % (Math.PI * 2)) - Math.PI) * Math.min(1, dt * 4);
+      turnPersonToward(a.rig, targetYaw, dt, 5);
       animatePerson(a.rig, dt, 0);
       a.label.visible = dist < 30;
     }

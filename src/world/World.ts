@@ -14,7 +14,7 @@ import { ShaderPass } from "three/examples/jsm/postprocessing/ShaderPass.js";
 import { Atmosphere } from "./atmosphere.ts";
 import { buildDistrict, ROAD_HALF, WALK_IN, WALK_OUT, CROSS_HALF, EXTENT_X, EXTENT_Z, type DistrictScene, type Interactable } from "./district.ts";
 import { CityLife } from "./life.ts";
-import { animatePerson, setAnimFocus, buildPerson, randomLook, setHumanMode, type Person, type PersonLook } from "./people.ts";
+import { animatePerson, setAnimFocus, buildPerson, randomLook, setHumanMode, turnPersonToward, type Person, type PersonLook } from "./people.ts";
 import { buildSite } from "./construction.ts";
 import { buildHomeInterior, buildPieceGroup, type Interior, type InteriorSpot, type SpotUse } from "./interiors.ts";
 import { activityFx, applyPose, clearPose, findPath, fxFor, type Fx } from "./homelife.ts";
@@ -725,9 +725,7 @@ export class World {
       const p = h.rig.root.position;
       const dx = this.pos.x - p.x, dz = this.pos.z - p.z;
       if (dx * dx + dz * dz < 64) {
-        let dy = Math.atan2(dx, dz) - h.rig.root.rotation.y;
-        dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        h.rig.root.rotation.y += dy * Math.min(1, dt * 3);
+        turnPersonToward(h.rig, Math.atan2(dx, dz), dt, 4);
       }
     }
   }
@@ -751,10 +749,7 @@ export class World {
       // Turn to greet you when you come close.
       const dx = this.pos.x - f.pos.x, dz = this.pos.z - f.pos.z;
       if (dx * dx + dz * dz < 64) {
-        const want = Math.atan2(dx, dz);
-        let dy = want - f.rig.root.rotation.y;
-        dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-        f.rig.root.rotation.y += dy * Math.min(1, dt * 3);
+        turnPersonToward(f.rig, Math.atan2(dx, dz), dt, 4);
       }
     }
   }
