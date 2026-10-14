@@ -53,7 +53,9 @@ const KIND_MODELS: Record<string, string[]> = {
   // "@proc" means the sculpted procedural body: newer cars mixed in with the old imports.
   sedan: ["saloon_car", "century", "@proc", "@proc", "@proc"],
   compact: ["saloon_car", "@proc", "@proc"],
-  // SUVs, the V8 and pickups use the sculpted modern bodies; the classic FJ40 still turns up as an old suv now and then.
+  // The occasional classic FJ40 adds a distinctly Ghanaian older SUV to the modern procedural traffic.
+  suv: ["landcruiser", "@proc", "@proc", "@proc"],
+  // The V8 and pickups use the sculpted modern bodies.
   supercar: ["countach", "corvette", "porsche"],
 };
 
