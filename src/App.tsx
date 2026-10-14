@@ -1,11 +1,11 @@
-import { BUILD_VERSION } from "./version.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GameProvider, useGame } from "./store.tsx";
 import { getToken, pickBackend, setToken, type Backend } from "./net/backend.ts";
 import { CharacterCreate } from "./ui/CharacterCreate.tsx";
 import { MapSheet } from "./ui/map.tsx";
 import { ArrangePanel } from "./ui/furnish.tsx";
-import { ActionBar, Hud, Joystick, Minimap, Rail, Toasts } from "./ui/hud.tsx";
+import { ActionBar, Joystick, Toasts } from "./ui/hud.tsx";
+import { GameFrame } from "./ui/GameFrame.tsx";
 import { EventModal, HomeSheet, PlaceSheet, TalkSheet, TravelSheet } from "./ui/sheets.tsx";
 import { Phone, readMix } from "./ui/phone.tsx";
 import { TodaySheet } from "./ui/today.tsx";
@@ -122,8 +122,6 @@ function Game() {
   const [district, setDistrict] = useState<DistrictId>(state!.player.district);
   const [muted, setMuted] = useState(() => { try { return localStorage.getItem("sika.muted") === "1"; } catch { return false; } });
   const [quality, setQualityState] = useState<Quality>(() => { try { return (localStorage.getItem("sika.quality") as Quality) || (matchMedia("(pointer: coarse)").matches ? "medium" : "high"); } catch { return "high"; } });
-  const [news, setNews] = useState(() => { try { return localStorage.getItem("sika.seen") !== BUILD_VERSION; } catch { return true; } });
-  const closeNews = () => { setNews(false); try { localStorage.setItem("sika.seen", BUILD_VERSION); } catch { /* ignore */ } };
   const [intro, setIntro] = useState(() => { try { return localStorage.getItem("sika.intro") === "1"; } catch { return false; } });
   const lastEvent = useRef<number | null>(null);
   const posRef = useRef({ x: 0, z: 0 });
@@ -213,7 +211,7 @@ function Game() {
   // Each new game day starts with the morning card (once a day, not over other panels).
   const day = state?.player.daily.day;
   useEffect(() => {
-    if (day === undefined || !state || news || intro) return;
+    if (day === undefined || !state || intro) return;
     const k = `sika.brief.${state.player.id}`;
     let seen = "";
     try { seen = localStorage.getItem(k) ?? ""; } catch { /* private mode */ }
@@ -221,7 +219,7 @@ function Game() {
     try { localStorage.setItem(k, String(day)); } catch { /* ignore */ }
     setPanel((p) => p ?? { kind: "today" });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [day, news, intro]);
+  }, [day, intro]);
 
   // Pop up new life events once.
   useEffect(() => {
@@ -309,14 +307,10 @@ function Game() {
     return setPanel({ kind: "phone", app: what });
   };
 
-  const pendingDates = (state?.dates as { status: string }[] | undefined)?.filter((d) => d.status === "pending").length ?? 0;
-
   return (
     <>
       <canvas ref={canvas} className="world" tabIndex={0} />
-      <Hud world={world} onOpen={open} />
-      <Minimap world={world} road={road} district={district} onOpen={() => setPanel({ kind: "map" })} />
-      <Rail onOpen={open} badges={{ phone: (state?.event ? 1 : 0) + (state?.businesses.filter((b) => b.till > 0).length ? 1 : 0), people: pendingDates }} world={world} muted={muted} setMuted={setMuted} />
+      <GameFrame world={world} district={district} road={road} onOpen={open} muted={muted} setMuted={setMuted} />
       {!panel && !ride && !doing && <ActionBar nearby={nearby} onUse={use} />}
       {!panel && !ride && <Joystick world={world} />}
       {doing && (
@@ -379,92 +373,18 @@ function Game() {
       {panel?.kind === "today" && <TodaySheet onClose={() => setPanel(null)} />}
       {panel?.kind === "family" && <Sheet title="🏡 Home" sub="Your family is happy to see you. Sit with them, catch up, or help with something." onClose={() => setPanel(null)}><div style={{ marginTop: 10 }}><FamilyApp onTravel={() => setPanel({ kind: "travel", ctx: "phone", scope: "ghana" })} /></div></Sheet>}
       {panel?.kind === "bed" && <HomeSheet world={world} focus={panel.focus} onClose={() => setPanel(null)} onArrange={() => setPanel({ kind: "arrange" })} />}
-      {news && !intro && (
-        <div className="modal-wrap" onClick={closeNews}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="pill gold">🆕 Update · {BUILD_VERSION}</div>
-            <h2 style={{ margin: "10px 0 4px" }}>Live it, don't just click it 🏠🚗</h2>
-            <p className="muted small" style={{ marginTop: 0 }}>Your home is now a place you live in, and rides actually drive you there.</p>
-            <div className="col small">
-              <div>🚘 <b>Better-looking cars and streets:</b> rounded modern bodies with proper grilles, headlamps, fog lamps, taillights and Ghana number plates front and back; a real Hiace-style trotro; black-and-white kerbs; window sills, ledges and AC units on the buildings; green-and-gold place labels.</div>
-              <div>🎨 <b>Better picture on phones:</b> the colour grade that made desktop look rich was switched off on phones; it's on now, with stronger sunlight and less flat grey fill, and the harmattan haze no longer bleaches the street you're standing in. The camera looks over bus shelters and stalls instead of getting stuck under them, and you arrive on the pavement facing the shops.</div>
-              <div>🧺 <b>Head-tray hawkers:</b> a real aluminium basin of oranges, bread or sachet water on a cloth head pad, one hand up on the rim (it used to go through her head). Heels now show the foot instead of floating under it.</div>
-              <div>⚽ <b>A proper football kit:</b> the jersey now has a contrast collar, cuffs and side panels, a club crest, and a big number on the back; shorts in the trim colour with side stripes and a waistband; knee socks with a band at the top. Hems on every top and pair of shorts are clean and straight (no more torn edges), and cotton no longer looks like sacking.</div>
-              <div>🖥️ <b>Sharper picture:</b> the game used to drop to a very low resolution whenever the frame rate dipped (blurry on phones). It now stays sharp and only eases off when it's really struggling.</div>
-              <div>🚶🏾 <b>Real walking and running:</b> everyone now moves with motion-captured walk and run cycles (real people, recorded), retargeted to our characters: upright posture, natural arm swing, feet that stay planted, a proper running stride. Walking is a brisk 2.2 m/s and running 5.6 m/s.</div>
-              <div>🧣 <b>Kente that moves:</b> the cloth now follows your legs as you walk and run (no more stiff cone), and it's worn the traditional way, over the left shoulder with the right shoulder bare. Skirts, kaba and the smock flare move with the legs too.</div>
-              <div>🛣️ <b>No more jumping or open gutters:</b> the jump is gone, and pavements run straight to the kerb.</div>
-              <div>🌳 <b>Shrines:</b> traditional shrines (La Kpa, Sakumo, Ho-Bankoe) are now walled yards with a great tree wrapped in white cloth, a small whitewashed shrine house, clay pots and white flags, seen from outside with a "please ask before entering" sign. The Okomfo Anokye Sword Site in Kumasi shows the hilt in its stone setting under a canopy, behind a rail.</div>
-              <div>⛪ <b>Churches and palaces:</b> every church is now a real church (gabled nave, bell tower with a cross, tall arched windows, steps up to the doors). Bonwire's chief's palace has ochre-and-white walls with relief panels, an audience pavilion and the chief's great umbrella. Elmina has St George's Castle on its street.</div>
-              <div>🗺️ <b>Landmarks around Ghana:</b> the red-and-white Jamestown Lighthouse and James Fort, Takoradi's round Market Circle, Koforidua's Jackson Park with its bandstand, the Sunyani cenotaph, and the Nima astro pitch. In seaside towns, buildings no longer sit on top of the lorry station.</div>
-              <div>🏙️ <b>Kumasi looks like Kumasi:</b> the modern Kejetia Market with its terracotta bands and sunshade fins, Manhyia Palace behind its railings and gold-topped gate, more shade trees (the Garden City), and a real lorry park at Kejetia with sheds, a station master's booth and trotros waiting to fill. Big lorry stations in other towns get yards too where there's room.</div>
-              <div>🧑🏾 <b>People:</b> fuller afros with curly texture that sit behind the hairline, caps that fit with a proper brim, no more gaps or white flaps in clothes (the inside of a garment is in shadow), and a crowd whose skin tones fit an Accra street.</div>
-              <div>🧭 <b>Directions when you drive:</b> tap "Where to?" (or the map) and pick a place. Turn-by-turn directions, <b>Auto</b> to let the car drive itself in the right-hand lane (it waits behind traffic and people), <b>Skip</b> to arrive. Big <b>GAS</b> and <b>BRAKE</b> pedals for touch screens.</div>
-              <div>🏠 <b>Dollhouse view at home:</b> walls drop so you can see in. Tap anywhere to walk, tap the bed, TV, shower, coal pot or kitchen to use it, and watch your character lie down, sit, cook or bath.</div>
-              <div>🚕 <b>Real rides:</b> the taxi, ride or trotro pulls up, you get in and ride down the road to where you're going (Skip if you're in a hurry).</div>
-              <div>😊 <b>Six needs and mood:</b> hunger, energy, bladder, hygiene, fun and social. Tap the face to see why you feel the way you do. A good mood helps at work.</div>
-              <div>👔 <b>What you wear:</b> real outfits now, each with its own cut: T-shirt & jeans, shirt & trousers, suit & tie (lapels, white shirt, tie), kaba & slit, dress, smock (batakari), kente cloth, jersey & shorts. Shoes are modelled on the feet: sneakers, leather shoes, sandals (charlie wote), heels, boots, or barefoot. Pick at the start, change at home (Home → Get dressed). People in town dress for their work and the day: suits and kente at weddings, black and red at funerals, smocks in the north.</div>
-              <div>🏘️ <b>Villages:</b> Bonwire (kente looms, near Kumasi), Nyankpala (farms, near Tamale), Elmina (canoes and the castle, near Cape Coast), Paga (crocodiles and the border, near Bolga) and Wli (the falls, near Ho). Take a trotro out from the town; each has its own work (weaving apprentice, farmhand, fishing crew, guides) and cheap rooms.</div>
-              <div>🟤 <b>Oware:</b> play at chop bars, markets and lorry stations, against a regular or a named character who's there. The game checks every move and plays your opponent fairly; they get better as you win.</div>
-              <div>🎉 <b>Parties and clean-up:</b> host a party at home for people you know (Family → Your household). The first Saturday of each month is communal clean-up, 7 to 10 (Today card).</div>
-              <div>📊 <b>Your life so far:</b> a life score that isn't just money (wealth, work, friends, family, standing, wellbeing, learning, Ghana seen) and your milestones, in Phone → Dream. ⬇️ <b>Backups:</b> Settings → Save can download your whole save and restore it, here or on another device.</div>
-              <div>🛣️ <b>Trade roads:</b> regional produce is bought where it's made and worth more the further you carry it: yam from Kintampo and Techiman, shea butter from the north, smoked fish from Cape Coast and Takoradi, kente from Kumasi and Ho, baskets from Bolga, beads from Koforidua. Near double in Accra; buses charge luggage per unit, and fish goes off on the road.</div>
-              <div>🧭 <b>Around Ghana stories:</b> six regional arcs in Phone → Story (Kumasi, Tamale, Cape Coast, Volta, Kintampo, the Upper regions): the people, the food, the places, and the produce. 📞 Call friends in other towns from People. 💼 Jobs are local now: a week without a shift and the job goes to someone else (with a warning).</div>
-              <div>👶 <b>Children (optional):</b> married couples can try for a baby; anyone with a home with room can adopt through Social Welfare. Name a baby at the outdooring from the eighth day (day names suggested where that's the custom). Children grow a year each game month, go to public (free) or private school from 4, and grow closer when you play or help with homework. Costs come monthly; a spouse pays half. Phone → Family.</div>
-              <div>🏠 <b>Your household at home:</b> your spouse sits by the TV (or on the compound bench) and the children play nearby when they're not at school; in the evenings they wait by your door.</div>
-              <div>💍 <b>Marriage:</b> once you're a couple and very close, propose in person. Your family then goes to knock at your partner's family house in their hometown (Kumasi, Ho, Tamale, Cape Coast…), and a few days later the families meet for the customary marriage, or the nikah. A church wedding or walima feast is optional. Your spouse moves in, pays half the rent and bills, and waits at home in the evenings. People → your partner.</div>
-              <div>📖 <b>Story:</b> eight longer arcs in Phone → Story (New in the city, Home ties, Wheels, From hustle to business, Roots, Across Ghana, Part of the community, Someone special). Steps tick off as you actually do them, in any order; each arc pays once. Your next step shows on the Today card.</div>
-              <div>🧑‍🔧 <b>Staff:</b> hire attendants (more trade) and a manager (no slipping when you're away) at your businesses. Wages come out of the till daily; letting someone go costs three days' pay.</div>
-              <div>🔧 <b>Vehicles need looking after:</b> driving wears them down, worn-out ones break down on the road. Service at the fitters by any lorry station; renew insurance yearly, because police check stickers at barriers. The dealer covers your first year.</div>
-              <div>🗣️ <b>Languages and what matters to you:</b> pick the languages you speak (Twi, Fante, Ga, Ewe, Dagbani, Hausa, Gonja, Dagaare, Gurene, Nzema) and up to two priorities (family, faith, getting ahead, friends, health, enjoying life). People warm to you faster in their own language; good moments in what you care about lift your mood more, and one daily goal leans that way. Change them any time in Phone → Settings.</div>
-              <div>👪 <b>Family keep their own week:</b> the young one is at school on weekday mornings, parents work until 4, everyone goes to church or the mosque. At the family house you can fetch water, sweep the compound, help cook (pound fufu, stir TZ, turn akple or banku) or help with homework.</div>
-              <div>🥁 <b>Festivals on your Today card:</b> what's on where you are and back home, and what's coming next month. 🏘️ <b>Neighbours:</b> people who live on your street head to the station in the morning and come home in the evening; the elder stays in.</div>
-              <div>🇬🇭 <b>Not just Accra:</b> every town now has a church and a mosque, everyday jobs (market loader, trotro mate, chop bar cook, nursing aide, night security, evening tutor), driving and riding lessons, and three named townspeople (a trader, a driver, a nurse) you can befriend. Their favours do real things: cheaper stock, half-price clinic visits, standing at the station. Bigger cities have ride-app and delivery work.</div>
-              <div>🥁 <b>Funerals and weddings follow the region:</b> the gyil plays at Upper West funeral rites, smocks and drums in the Upper East, funeral prayers and mosque weddings where most people are Muslim, black and red with brass bands in the south.</div>
-              <div>⚫💍 <b>Saturdays:</b> funerals and weddings in town. Canopies go up, guests come in black and red or kente. Go along with a donation or gift (Today card, or the venue). Social, fun, food, and a little standing if you give well.</div>
-              <div>⛪ <b>Weekly rhythm:</b> Sunday service at every church (Friday Jumu'ah at the mosque), with a Fellowship mood. Each market has two market days: stock 8% cheaper, twice the buyers.</div>
-              <div>⚡ <b>Prepaid light:</b> electricity is now prepaid units (SikaBank → Power). Units drop each day with what you plug in; when they run out the house goes dark until you top up. Water stays on the monthly bill.</div>
-              <div>🚶 <b>People commute:</b> named people now walk to work from the trotro stop in the morning, cross to their next place, and walk off home in the evening.</div>
-              <div>🚗 <b>Drive for the app:</b> ride-app and delivery shifts are real now. Tap "Start driving", follow the green beacon to pick up, the yellow one to drop off. Pay per trip, fuel comes off, tips sometimes.</div>
-              <div>🤒 <b>Feeling ill:</b> malaria in the rains (sleep under a net), flu in the Harmattan, a running stomach if hygiene slips. The clinic treats malaria; the pharmacy handles the rest.</div>
-              <div>🚦 <b>Dumsor at the junction:</b> when the power goes, the traffic lights die and a warden in a reflective vest waves traffic through.</div>
-              <div>🕯️ <b>Dumsor:</b> some weeks each area loses power for a morning or evening on a published timetable (see the morning card). Street lights and windows go dark, home lights drop to candlelight, and the TV won't come on unless you have a generator (fuel extra).</div>
-              <div>📋 <b>Real road test:</b> after your driving or riding lessons, drive the examiner yourself: through the checkpoints in your lane, under 50 km/h, stop at red, park in the box. 3 faults or fewer passes.</div>
-              <div>💼 <b>New jobs:</b> chop bar cook, barbering and tailoring apprentices, clinic night security, nursing aide, evening class tutor, fitting-shop mechanic, and gig work as a food delivery rider (licence A + motorbike) or ride-app driver (licence B + car).</div>
-              <div>✅ <b>Know before you commit:</b> buying land, vehicles, businesses, furniture, renting, loans, T-bills, jobs and sales now show the time, the cost, what changes and whether you can undo it before you confirm.</div>
-              <div>🏡 <b>Go home to see them:</b> in your hometown your family waits outside the family house: walk up to greet them. 👮 <b>On the road:</b> traffic gives your car room, you stop for people, and police checkpoints check your licence. 💬 Sound captions in Settings.</div>
-              <div>👪 <b>Family:</b> pick a hometown when you create a character. Your parents, grandmother and siblings live there with their own lives: call them, send MoMo when they ask for help (only if you can), or travel home to visit. Phone → Family.</div>
-              <div>🧺 <b>Market hustle:</b> buy sachet water, oranges, bread, tomatoes or second-hand clothes at a market, carry them and sell at lorry stations and markets. Rush hours pay more, buyers run out, fruit goes off.</div>
-              <div>📱 <b>MoMo wallet:</b> separate from cash and bank. Cash-in is free, cash-out costs a small agent fee. Plus bigger text and reduced motion in Settings.</div>
-              <div>☀️ <b>Your day:</b> each game day opens with a morning card: weather, your shift, money, how you feel, and <b>Today's hustle</b>, three small goals that fit your life (swap one, skip any). Tap 🎯 Today any time. Needs can be slowed or paused in Phone → Settings.</div>
-              <div>🚗 <b>Drive your own car:</b> walk up to it and press Drive. W/S or the stick to drive, A/D to steer, Shift to speed up. Park anywhere. Drive to the end of the road to pick where to go next.</div>
-              <div>🏡 <b>Homes feel lived in:</b> tube lights, wall clocks, radios, fufu mortars, basins, chickens in the compound; pendant lamps, art and a piano in bigger homes. Softer shadows on High quality.</div>
-              <div>🚻 Pay toilets at lorry stations, markets and malls. The green 🏠 button takes you home from anywhere.</div>
-            </div>
-            <div className="row" style={{ marginTop: 14, flexWrap: "wrap", gap: 8 }}>
-              <button className="btn primary" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "travel", ctx: "phone", scope: "ghana" }); }}>🗺️ Ghana map</button>
-              <button className="btn" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "phone", app: "ghana" }); }}>🇬🇭 Regions</button>
-              <button className="btn" style={{ flex: "1 1 45%" }} onClick={() => { closeNews(); setPanel({ kind: "phone", app: "vibes" }); }}>📸 Vibes</button>
-              <button className="btn ghost" style={{ flex: "1 1 45%" }} onClick={closeNews}>Later</button>
-            </div>
-          </div>
-        </div>
-      )}
       {intro && (
         <div className="modal-wrap" onClick={() => { setIntro(false); try { localStorage.removeItem("sika.intro"); } catch { /* ignore */ } }}>
-          <div className="modal">
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
             <div className="brand" style={{ marginBottom: 10 }}><div className="coin" style={{ width: 40, height: 40, fontSize: 20 }}>₵</div><div className="wordmark" style={{ fontSize: 26 }}>Ghana: <span>Your Story</span></div></div>
-            <p style={{ marginTop: 0 }}>Akwaaba, <b>{state?.player.name}</b>. You've just stepped off a trotro at Kaneshie with a rented room at Tetteh House and not much else.</p>
+            <p style={{ marginTop: 0 }}>Akwaaba, <b>{state?.player.name}</b>. Your story begins in Kaneshie. Find your feet, meet the people around you, and decide what you want to build.</p>
             <div className="col small">
-              <div>🕹️ <b>Move</b> with WASD / arrow keys (hold Shift to run) or the joystick. Drag to turn the camera, scroll to zoom.</div>
-              <div>🟡 Walk into <b>yellow rings</b> to enter places, then press <b>E</b>. Walk up to people to talk.</div>
-              <div>🏠 The green <b>Home</b> button (or <b>H</b>) takes you home from anywhere: sleep, bath, cook, watch TV.</div>
-              <div>💼 First money: <b>Kaneshie Market</b> or the <b>trotro station</b> hire anyone. Eat, sleep, repeat — then build.</div>
-              <div>📱 Your <b>phone</b> (P) has your bank, jobs, businesses, property, people, farms, Vibes and football.</div>
-              <div>🇬🇭 Lorry stations and the phone's <b>Map</b> take you <b>Across Ghana</b>: Kumasi, Tamale, Kintampo, Wa, Cape Coast…</div>
-              <div>⏱️ A game day lasts 24 real minutes. The server keeps your money and your progress.</div>
+              <div>🕹️ <b>Move:</b> WASD or arrow keys. Hold Shift to run. Drag to look around; scroll to zoom.</div>
+              <div>🟡 <b>Explore:</b> approach a marked place or person, then press E to interact.</div>
+              <div>📖 <b>Choose your day:</b> use Today for goals and the navigation buttons for work, home, people, money, and travel.</div>
+              <div>🇬🇭 <b>Make Ghana yours:</b> begin here, then travel between regions as your life grows.</div>
             </div>
-            <button className="btn primary block" style={{ marginTop: 14 }}>Let's go</button>
+            <button className="btn primary block" style={{ marginTop: 14 }} onClick={() => { setIntro(false); try { localStorage.removeItem("sika.intro"); } catch { /* ignore */ } }}>Let's go</button>
           </div>
         </div>
       )}

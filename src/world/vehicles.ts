@@ -3,7 +3,7 @@
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { toCreasedNormals } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { plate, signboard, trotroLivery } from "./textures.ts";
+import { plate, signboard, surfaceDetail, trotroLivery } from "./textures.ts";
 import { mulberry32 } from "../../shared/rng.ts";
 import { realCar } from "./carmodels.ts";
 
@@ -30,16 +30,74 @@ export interface VehicleRig {
 }
 
 const paints = new Map<string, THREE.MeshPhysicalMaterial>();
+let paintClearcoatNormal: THREE.Texture | null = null;
+let tireTreadNormal: THREE.Texture | null = null;
+
+/** Fine orange-peel variation keeps clear-coat highlights from looking like plastic. */
+function clearcoatNormal() {
+  if (paintClearcoatNormal) return paintClearcoatNormal;
+  const size = 96;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  const image = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const value = 128 + Math.sin(x * 0.43 + Math.sin(y * 0.19) * 1.8) * 8 + Math.cos(y * 0.37 + Math.sin(x * 0.23)) * 6;
+    const i = (y * size + x) * 4;
+    image.data[i] = image.data[i + 1] = image.data[i + 2] = value;
+    image.data[i + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+  const source = new THREE.CanvasTexture(c);
+  source.wrapS = source.wrapT = THREE.RepeatWrapping;
+  source.repeat.set(12, 12);
+  paintClearcoatNormal = surfaceDetail(source, 4).normalMap;
+  return paintClearcoatNormal;
+}
+
+/** Shallow diagonal tread blocks give the tire crown detail at close range. */
+function tireNormal() {
+  if (tireTreadNormal) return tireTreadNormal;
+  const size = 128;
+  const c = document.createElement("canvas");
+  c.width = c.height = size;
+  const ctx = c.getContext("2d")!;
+  const image = ctx.createImageData(size, size);
+  for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+    const row = Math.floor(y / 16);
+    const groove = ((x + (row % 2) * 8 + y * 0.38) % 24 + 24) % 24;
+    const shoulder = Math.min(x, size - x, y, size - y);
+    const value = shoulder < 5 ? 105 : groove < 2.4 ? 64 : groove > 11 && groove < 13 ? 92 : 142;
+    const i = (y * size + x) * 4;
+    image.data[i] = image.data[i + 1] = image.data[i + 2] = value;
+    image.data[i + 3] = 255;
+  }
+  ctx.putImageData(image, 0, 0);
+  const source = new THREE.CanvasTexture(c);
+  source.wrapS = source.wrapT = THREE.RepeatWrapping;
+  source.repeat.set(2, 2);
+  tireTreadNormal = surfaceDetail(source, 2.5).normalMap;
+  return tireTreadNormal;
+}
+
 function paint(color: string) {
   let m = paints.get(color);
   if (!m) {
-    m = new THREE.MeshPhysicalMaterial({ color, metalness: 0.45, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.08 });
+    m = new THREE.MeshPhysicalMaterial({
+      color,
+      metalness: 0.38,
+      roughness: 0.32,
+      clearcoat: 1,
+      clearcoatRoughness: 0.14,
+      clearcoatNormalMap: clearcoatNormal(),
+      clearcoatNormalScale: new THREE.Vector2(0.28, 0.28),
+    });
     paints.set(color, m);
   }
   return m;
 }
-const glass = new THREE.MeshPhysicalMaterial({ color: "#1d2830", metalness: 0.2, roughness: 0.04, clearcoat: 1, envMapIntensity: 1.6 });
-const rubber = new THREE.MeshStandardMaterial({ color: "#151515", roughness: 0.92 });
+const glass = new THREE.MeshPhysicalMaterial({ color: "#18232a", metalness: 0.08, roughness: 0.12, clearcoat: 0.65, clearcoatRoughness: 0.12, envMapIntensity: 1.6 });
+const rubber = new THREE.MeshStandardMaterial({ color: "#151515", roughness: 0.96, normalScale: new THREE.Vector2(0.22, 0.22) });
 const chrome = new THREE.MeshStandardMaterial({ color: "#d8dde2", metalness: 1, roughness: 0.18 });
 const alloy = new THREE.MeshStandardMaterial({ color: "#9aa1a8", metalness: 0.9, roughness: 0.3 });
 const black = new THREE.MeshStandardMaterial({ color: "#0e0e10", roughness: 0.55 });
@@ -56,9 +114,9 @@ function rbox(w: number, h: number, l: number, r: number) {
   }
   return g;
 }
-const tireGeo = new THREE.CylinderGeometry(1, 1, 1, 22);
+const tireGeo = new THREE.CylinderGeometry(1, 1, 1, 40);
 tireGeo.rotateZ(Math.PI / 2);
-const rimGeo = new THREE.CylinderGeometry(1, 1, 1, 10);
+const rimGeo = new THREE.CylinderGeometry(1, 1, 1, 24);
 rimGeo.rotateZ(Math.PI / 2);
 const spokeGeo = new THREE.BoxGeometry(1, 1, 1);
 
@@ -78,10 +136,10 @@ function wheel(r: number, w: number) {
   const rim = mesh(rimGeo, alloy);
   rim.scale.set(w * 1.04, r * 0.62, r * 0.62);
   g.add(rim);
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 10; i++) {
     const spoke = mesh(spokeGeo, chrome);
     spoke.scale.set(w * 1.08, r * 0.1, r * 1.15);
-    spoke.rotation.x = (i / 5) * Math.PI;
+    spoke.rotation.x = (i / 10) * Math.PI;
     g.add(spoke);
   }
   return g;
@@ -518,6 +576,7 @@ const SLOGANS = ["EYE ADOM", "NYAME BEKYERE", "STILL I RISE", "NO CONDITION IS P
 const ROUTES = ["CIRCLE", "KANESHIE", "LA", "MADINA", "TEMA STN", "ACHIMOTA", "OSU", "SPINTEX", "LAPAZ", "37"];
 
 export function buildVehicle(kind: VehicleKind, seed: number): VehicleRig {
+  rubber.normalMap ??= tireNormal();
   const rnd = mulberry32(seed);
   const group = new THREE.Group();
   const wheels: THREE.Object3D[] = [];

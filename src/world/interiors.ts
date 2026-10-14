@@ -137,7 +137,7 @@ const skyline = (c: CanvasRenderingContext2D) => {
 type M = THREE.Material;
 const matCache = new Map<string, M>();
 const mat = (key: string, make: () => M) => matCache.get(key) ?? (matCache.set(key, make()), matCache.get(key)!);
-const std = (key: string, p: THREE.MeshStandardMaterialParameters) => mat(key, () => new THREE.MeshStandardMaterial({ roughness: 0.8, ...p }));
+const std = (key: string, p: THREE.MeshStandardMaterialParameters) => mat(key, () => new THREE.MeshStandardMaterial({ roughness: 0.8, ...(p.map ? T.surfaceDetail(p.map, 0.85) : {}), ...p }));
 
 const MAT = {
   concreteFloor: () => std("cfloor", { map: T.concrete("#9c9488", 91), roughness: 0.95 }),

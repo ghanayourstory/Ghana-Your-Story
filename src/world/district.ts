@@ -114,12 +114,18 @@ const HUT_ROOF = new THREE.ConeGeometry(1, 1, 18, 1, true);
 const HIP = new THREE.ConeGeometry(1, 1, 4);
 /** Baobab trunk: fat, barely tapering. */
 const BAOBAB_TRUNK = new THREE.CylinderGeometry(0.62, 1, 1, 12);
+const TREE_CANOPY = new THREE.SphereGeometry(1, 24, 16);
 
 // ---------------------------------------------------------------------------
 // Materials
 
 function std(params: THREE.MeshStandardMaterialParameters) {
   return new THREE.MeshStandardMaterial({ roughness: 0.85, metalness: 0, ...params });
+}
+
+/** Give painted procedural surfaces fine height and reflectance variation. */
+function textured(map: THREE.Texture, params: THREE.MeshStandardMaterialParameters = {}, relief = 1.6) {
+  return std({ map, ...T.surfaceDetail(map, relief), ...params });
 }
 
 /** A drooping palm frond: a strip with leaflets that curves down along its length. */
@@ -163,49 +169,49 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
 
   // Shared materials for this district.
   const M = {
-    asphalt: std({ map: T.asphalt(savanna), roughness: 0.92 }),
-    earth: std({ map: upscale ? T.grass(d.style === "luxury") : savanna ? T.laterite("ochre") : town ? T.laterite("forest") : T.laterite(), roughness: 1 }),
-    pavers: std({ map: T.pavers(), roughness: 0.9 }),
+    asphalt: textured(T.asphalt(savanna), { roughness: 0.92 }, 2.2),
+    earth: textured(upscale ? T.grass(d.style === "luxury") : savanna ? T.laterite("ochre") : town ? T.laterite("forest") : T.laterite(), { roughness: 1 }, 2.4),
+    pavers: textured(T.pavers(), { roughness: 0.9 }, 1.6),
     // Pavements: savanna and middle-belt towns walk on packed earth, not pavers.
-    walk: savanna ? std({ map: T.laterite("path"), color: "#e8d2b0", roughness: 1 }) : town ? std({ map: T.laterite("path"), color: "#d9a58a", roughness: 1 }) : std({ map: T.pavers(), roughness: 0.9 }),
-    dust: std({ map: T.laterite(savanna ? "ochre" : "forest"), color: savanna ? "#f0dcc0" : "#e0b8a0", roughness: 1 }),
+    walk: savanna ? textured(T.laterite("path"), { color: "#e8d2b0", roughness: 1 }, 2) : town ? textured(T.laterite("path"), { color: "#d9a58a", roughness: 1 }, 2) : textured(T.pavers(), { roughness: 0.9 }, 1.6),
+    dust: textured(T.laterite(savanna ? "ochre" : "forest"), { color: savanna ? "#f0dcc0" : "#e0b8a0", roughness: 1 }, 2.4),
     paint: std({ color: savanna ? "#cfc5ad" : "#f3f1ea", roughness: 0.8 }),
-    thatch: std({ map: T.thatch(), roughness: 1, side: THREE.DoubleSide }),
+    thatch: textured(T.thatch(), { roughness: 1, side: THREE.DoubleSide }, 1.4),
     mat: std({ map: T.mat(), roughness: 1, side: THREE.DoubleSide }),
-    blocks: std({ map: T.blocks(), roughness: 1 }),
+    blocks: textured(T.blocks(), { roughness: 1 }, 2.2),
     rebar: std({ color: "#5a3a2a", roughness: 0.7, metalness: 0.5 }),
     toron: std({ color: "#4a3423", roughness: 1 }),
     dryGrass: std({ color: "#c9ae6a", roughness: 1 }),
     calabash: std({ color: "#c9a24a", roughness: 0.6 }),
-    baobab: std({ map: T.concrete("#8f8273", 161), roughness: 1 }),
-    darkLeaf: std({ color: "#3f7d2b", roughness: 0.9, flatShading: true }),
+    baobab: textured(T.concrete("#8f8273", 161), { roughness: 1 }, 1.4),
+    darkLeaf: std({ color: "#3f7d2b", roughness: 0.86 }),
     savLeaf: std({ color: "#5f7a35", roughness: 0.9 }),
     plantainLeaf: std({ color: "#6f9e3c", roughness: 0.8, side: THREE.DoubleSide }),
-    curb: std({ map: T.concrete("#d9d4c8", 3), roughness: 0.8 }),
-    curbWhite: std({ map: T.concrete("#f1efe9", 5), roughness: 0.75 }),
+    curb: textured(T.concrete("#d9d4c8", 3), { roughness: 0.8 }, 1.2),
+    curbWhite: textured(T.concrete("#f1efe9", 5), { roughness: 0.75 }, 1.2),
     curbPaint: std({ color: "#17181a", roughness: 0.7 }),
     signalYellow: std({ color: "#f2c200", roughness: 0.6 }),
-    concrete: std({ map: T.concrete("#b5aea3", 41) }),
+    concrete: textured(T.concrete("#b5aea3", 41), {}, 1.4),
     white: std({ color: "#f3f1ea", roughness: 0.6 }),
     yellowLine: std({ color: "#e8b923", roughness: 0.6 }),
-    roofRust: std({ map: T.corrugated(true), roughness: 0.7, metalness: 0.4 }),
-    roofClean: std({ map: T.corrugated(false), roughness: 0.45, metalness: 0.6 }),
+    roofRust: textured(T.corrugated(true), { roughness: 0.7, metalness: 0.4 }, 1.5),
+    roofClean: textured(T.corrugated(false), { roughness: 0.45, metalness: 0.6 }, 1.5),
     tank: std({ color: "#1c1c1e", roughness: 0.55 }),
-    pole: std({ map: T.concrete("#9c968c", 7), roughness: 0.9 }),
+    pole: textured(T.concrete("#9c968c", 7), { roughness: 0.9 }, 1.3),
     metal: std({ color: "#55595e", roughness: 0.5, metalness: 0.7 }),
     darkMetal: std({ color: "#2b2d30", roughness: 0.6, metalness: 0.5 }),
-    shutter: std({ map: T.shutter(), roughness: 0.6, metalness: 0.5 }),
+    shutter: textured(T.shutter(), { roughness: 0.6, metalness: 0.5 }, 1.1),
     trunk: std({ color: "#5b4636", roughness: 1 }),
     palmTrunk: std({ color: "#7b6a55", roughness: 1 }),
-    leaf: std({ color: "#55a133", roughness: 0.9, side: THREE.DoubleSide, flatShading: true }),
-    leaf2: std({ color: "#78bb3e", roughness: 0.9, side: THREE.DoubleSide, flatShading: true }),
-    palmLeaf: std({ color: "#62a334", roughness: 0.85, side: THREE.DoubleSide, flatShading: true }),
+    leaf: new THREE.MeshPhysicalMaterial({ color: "#4d752f", roughness: 0.82, sheen: 0.12, sheenRoughness: 0.84, side: THREE.DoubleSide }),
+    leaf2: new THREE.MeshPhysicalMaterial({ color: "#668c3c", roughness: 0.8, sheen: 0.14, sheenRoughness: 0.82, side: THREE.DoubleSide }),
+    palmLeaf: new THREE.MeshPhysicalMaterial({ color: "#547d32", roughness: 0.78, sheen: 0.16, sheenRoughness: 0.82, side: THREE.DoubleSide }),
     wood: std({ color: "#8a5a3b", roughness: 0.9 }),
-    plaster: std({ map: T.plaster(), color: "#efe9dc" }),
-    glass: new THREE.MeshPhysicalMaterial({ color: "#2c3c48", roughness: 0.05, metalness: 0.3, clearcoat: 1 }),
-    sand: std({ map: T.sand(), roughness: 1 }),
-    wetSand: std({ map: T.sand(), color: "#b8a27a", roughness: 0.5 }),
-    lush: std({ map: T.grass(true), roughness: 1 }),
+    plaster: textured(T.plaster(), { color: "#efe9dc", roughness: 0.93 }, 1.1),
+    glass: new THREE.MeshPhysicalMaterial({ color: "#40535c", roughness: 0.2, metalness: 0.12, clearcoat: 0.7, clearcoatRoughness: 0.2, envMapIntensity: 1 }),
+    sand: textured(T.sand(), { roughness: 1 }, 2),
+    wetSand: textured(T.sand(), { color: "#b8a27a", roughness: 0.5 }, 2),
+    lush: textured(T.grass(true), { roughness: 1 }, 1.4),
     chairRed: std({ color: "#c8352c", roughness: 0.5 }),
     chairBlue: std({ color: "#2e6fae", roughness: 0.5 }),
     black: std({ color: "#121214", roughness: 0.7 }),
@@ -215,6 +221,9 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   night.push({ mat: lampMat, on: savanna ? 1.9 : 3, off: 0 });
   /** Night-glow multiplier: the north is darker after sunset, fewer lit windows and signs. */
   const glow = savanna ? 0.55 : town ? 0.8 : 1;
+  const windowGlass = new THREE.MeshPhysicalMaterial({ color: "#293c46", roughness: 0.18, metalness: 0.16, clearcoat: 0.8, clearcoatRoughness: 0.16, envMapIntensity: 1.1 });
+  const windowLit = new THREE.MeshPhysicalMaterial({ color: "#76593a", roughness: 0.24, metalness: 0.08, emissive: "#ffbf69", emissiveIntensity: 0, clearcoat: 0.45, clearcoatRoughness: 0.2 });
+  night.push({ mat: windowLit, on: (savanna ? 0.42 : 0.72) * glow, off: 0 });
 
   const facadeMats = new Map<string, THREE.MeshStandardMaterial>();
   const facadeMat = (color: string, kind: "louvre" | "glass" | "modern" | "small") => {
@@ -222,7 +231,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     let m = facadeMats.get(k);
     if (!m) {
       const f = T.facade(kind);
-      m = std({ color: kind === "glass" ? "#ffffff" : color, map: f.map, emissiveMap: f.emissive, emissive: "#ffffff", emissiveIntensity: 0, roughness: kind === "glass" ? 0.25 : 0.85, metalness: kind === "glass" ? 0.4 : 0 });
+      m = std({ color: kind === "glass" ? "#ffffff" : color, map: f.map, ...T.surfaceDetail(f.map, kind === "glass" ? 0.35 : 0.8), emissiveMap: f.emissive, emissive: "#ffffff", emissiveIntensity: 0, roughness: kind === "glass" ? 0.25 : 0.85, metalness: kind === "glass" ? 0.4 : 0 });
       facadeMats.set(k, m);
       night.push({ mat: m, on: (kind === "glass" ? 1.1 : 0.9) * glow, off: 0 });
     }
@@ -256,7 +265,8 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   const mudMat = (c: string) => {
     let m = mudMats.get(c);
     if (!m) {
-      m = std({ map: T.render(), color: c, roughness: 0.95 });
+      const map = T.render();
+      m = textured(map, { color: c, roughness: 0.95 }, 1.2);
       mudMats.set(c, m);
     }
     return m;
@@ -610,6 +620,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     const m = glassy ? facadeMat("#ffffff", "glass") : facadeMat(p.color, upscale ? "modern" : savanna ? "small" : "louvre");
     batch.add(facadeBox(w, h, depth), m, [cx, h / 2, cz]);
     if (!glassy && !savanna) relief(upscale ? "modern" : "louvre", cx, cz, w, h, depth, faceDir);
+    else if (glassy) curtainWall(cx, cz, w, h, depth, faceDir);
     // Parapet / roof.
     if (savanna && !glassy) {
       mudParapet(cx, cz, w, depth, h, p.color);
@@ -981,16 +992,37 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
    */
   function relief(kind: "louvre" | "modern", cx: number, cz: number, w: number, h: number, depth: number, faceDir: number) {
     const front = cz + faceDir * (depth / 2);
-    const [ww, bot, top] = kind === "modern" ? [1.76, 0.75, 2.27] : [1.22, 0.96, 2.27];
+    const [ww, bot, top] = kind === "modern" ? [1.76, 0.75, 2.27] : [1.22, 0.73, 2.04];
     const bays = Math.floor(w / 3);
     const ledge = M.concrete;
     for (let fy = 3; fy + 2.4 <= h; fy += 3) {
       box(ledge, cx, fy, front + faceDir * 0.05, w + 0.08, 0.14, 0.1);
       for (let k = 0; k < bays; k++) {
         const x = faceDir > 0 ? cx - w / 2 + (k + 0.5) * 3 : cx + w / 2 - (k + 0.5) * 3;
-        box(ledge, x, fy + bot - 0.06, front + faceDir * 0.09, ww + 0.28, 0.07, 0.18);
-        box(ledge, x, fy + top + 0.07, front + faceDir * 0.04, ww + 0.2, 0.1, 0.08);
-        for (const sx of [-1, 1]) box(M.white, x + sx * (ww / 2 + 0.03), fy + (bot + top) / 2, front + faceDir * 0.03, 0.06, top - bot, 0.06);
+        const windowH = top - bot;
+        const face = front + faceDir * 0.12;
+        const pane = rnd() < (kind === "modern" ? 0.36 : 0.22) ? windowLit : windowGlass;
+        // Set the glazing into a shadowed reveal, then build the frame, sill
+        // and louvre/security hardware in real geometry over the repeating map.
+        box(ledge, x, fy + (bot + top) / 2, front + faceDir * 0.035, ww + 0.2, windowH + 0.16, 0.08);
+        box(pane, x, fy + (bot + top) / 2, face, ww - 0.14, windowH - 0.12, 0.045);
+        box(ledge, x, fy + bot - 0.06, face + faceDir * 0.04, ww + 0.34, 0.1, 0.2);
+        box(ledge, x, fy + top + 0.04, face + faceDir * 0.005, ww + 0.2, 0.09, 0.1);
+        for (const sx of [-1, 1]) box(ledge, x + sx * (ww / 2 + 0.025), fy + (bot + top) / 2, face, 0.08, windowH + 0.14, 0.09);
+        const frame = kind === "modern" ? M.darkMetal : ledge;
+        box(frame, x, fy + bot + 0.025, face + faceDir * 0.035, ww + 0.08, 0.055, 0.06);
+        box(frame, x, fy + top - 0.025, face + faceDir * 0.035, ww + 0.08, 0.055, 0.06);
+        for (const sx of [-1, 1]) box(frame, x + sx * (ww / 2 - 0.015), fy + (bot + top) / 2, face + faceDir * 0.035, 0.055, windowH, 0.06);
+        if (kind === "modern") {
+          box(M.darkMetal, x, fy + (bot + top) / 2, face + faceDir * 0.04, 0.035, windowH - 0.08, 0.06);
+        } else {
+          for (let slat = 1; slat < 7; slat++) {
+            const sy = fy + bot + (windowH * slat) / 7;
+            box(M.metal, x, sy, face + faceDir * 0.045, ww - 0.12, 0.035, 0.075);
+          }
+          for (const sx of [-1, 0, 1]) box(M.darkMetal, x + sx * ww * 0.28, fy + (bot + top) / 2, face + faceDir * 0.055, 0.025, windowH - 0.08, 0.055);
+          box(M.darkMetal, x, fy + (bot + top) / 2, face + faceDir * 0.058, ww - 0.08, 0.025, 0.055);
+        }
         if (rnd() < 0.22) {
           // A split-AC condenser on brackets below the window, with its fan grille.
           const ax = x + (rnd() - 0.5) * 0.4, ay = fy + bot - 0.45, az = front + faceDir * 0.2;
@@ -1004,6 +1036,25 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       const px = cx + (faceDir > 0 ? 1 : -1) * (w / 2 - 0.2);
       batch.add(G.cyl8, M.darkMetal, [px, h / 2, front + faceDir * 0.08], [0, 0, 0], [0.05, h, 0.05]);
     }
+  }
+  /** Physical curtain-wall panels for offices and malls. */
+  function curtainWall(cx: number, cz: number, w: number, h: number, depth: number, faceDir: number) {
+    const front = cz + faceDir * (depth / 2);
+    const bays = Math.max(1, Math.floor(w / 3));
+    const panelW = w / bays;
+    const floors = Math.max(1, Math.ceil(h / 3));
+    for (let floor = 0; floor < floors; floor++) {
+      const y0 = floor * 3, panelH = Math.min(3, h - y0);
+      if (panelH <= 0.25) continue;
+      for (let bay = 0; bay < bays; bay++) {
+        const x = cx - w / 2 + panelW * (bay + 0.5);
+        const margin = Math.min(0.18, panelW * 0.06);
+        box(rnd() < 0.28 ? windowLit : windowGlass, x, y0 + panelH / 2, front + faceDir * 0.065, panelW - margin * 2, panelH - 0.22, 0.04);
+        box(M.darkMetal, cx - w / 2 + bay * panelW, y0 + panelH / 2, front + faceDir * 0.09, 0.055, panelH, 0.09);
+      }
+      box(M.darkMetal, cx, y0, front + faceDir * 0.09, w, 0.055, 0.09);
+    }
+    box(M.darkMetal, cx + (faceDir > 0 ? -1 : 1) * w / 2, h / 2, front + faceDir * 0.09, 0.055, h, 0.09);
   }
   function parapet(cx: number, cz: number, w: number, depth: number, h: number) {
     box(M.concrete, cx, h + 0.3, cz - depth / 2 + 0.1, w, 0.6, 0.2);
@@ -1077,10 +1128,18 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   }
   function neem(x: number, z: number, scale = 1) {
     batch.add(G.cyl8, M.trunk, [x, 1.6 * scale, z], [0, 0, (rnd() - 0.5) * 0.15], [0.18 * scale, 3.2 * scale, 0.18 * scale]);
-    for (let i = 0; i < 5; i++) {
-      const a = rnd() * Math.PI * 2, r = rnd() * 1.4 * scale;
-      batch.add(G.ico, rnd() < 0.5 ? M.leaf : M.leaf2, [x + Math.cos(a) * r, (3.6 + rnd() * 1.4) * scale, z + Math.sin(a) * r], [rnd(), rnd(), rnd()], [1.5 * scale, 1.2 * scale, 1.5 * scale]);
+    // Layer smooth, irregular crowns so street trees read as leafy canopies
+    // instead of five hard-edged low-poly balls.
+    for (let i = 0; i < 11; i++) {
+      const a = (i / 11) * Math.PI * 2 + rnd() * 0.5;
+      const r = (0.35 + rnd() * 1.15) * scale;
+      const y = (3.45 + rnd() * 1.6) * scale;
+      const size = (0.85 + rnd() * 0.55) * scale;
+      batch.add(TREE_CANOPY, rnd() < 0.5 ? M.leaf : M.leaf2,
+        [x + Math.cos(a) * r, y, z + Math.sin(a) * r], [0, rnd() * Math.PI, 0],
+        [size * (1.0 + rnd() * 0.25), size * (0.72 + rnd() * 0.24), size * (1.0 + rnd() * 0.25)]);
     }
+    batch.add(TREE_CANOPY, M.leaf, [x, 4.05 * scale, z], [0, 0, 0], [1.15 * scale, 0.95 * scale, 1.15 * scale]);
     collide(x, z, 0.4, 0.4);
   }
   function palm(x: number, z: number, h = 7 + rnd() * 3) {
@@ -1127,6 +1186,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
   function villa(cx: number, cz: number, w: number, depth: number, storeys: number, color: string, side: number) {
     const h = storeys * 3.2;
     batch.add(facadeBox(w, h, depth), facadeMat(color, "modern"), [cx, h / 2, cz]);
+    relief("modern", cx, cz, w, h, depth, -side);
     // Hipped roof as a squashed pyramid.
     batch.add(new THREE.ConeGeometry(1, 1, 4), colorMat(d.palette.roofs[Math.floor(rnd() * d.palette.roofs.length)], 0.6), [cx, h + 1.1, cz], [0, Math.PI / 4, 0], [w * 0.78, 2.2, depth * 0.78]);
     box(M.white, cx, 3.2, cz - side * (depth / 2 + 1.2), w * 0.5, 0.2, 2.4); // balcony
@@ -1320,6 +1380,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     const H = Math.max(8, h);
     const wing = Math.min(4, w * 0.18);
     batch.add(facadeBox(w - 2 * wing, H, depth), facadeMat("#ffffff", "glass"), [cx, H / 2, cz]);
+    curtainWall(cx, cz, w - 2 * wing, H, depth, faceDir);
     const clad = std({ map: T.concrete(p.color, 171), roughness: 0.5 });
     for (const sx of [-1, 1]) {
       batch.add(facadeBox(wing, H + 1, depth + 0.4), clad, [cx + sx * (w / 2 - wing / 2), (H + 1) / 2, cz]);
@@ -1900,6 +1961,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
     }
     batch.add(facadeBox(w - 0.6, h, depth), facadeMat(color, glassy ? "glass" : style === "corporate" ? "modern" : "louvre"), [x, h / 2, cz]);
     if (!glassy) relief(style === "corporate" ? "modern" : "louvre", x, cz, w - 0.6, h, depth, -side);
+    else curtainWall(x, cz, w - 0.6, h, depth, -side);
     if (!glassy && (style === "coastal" || (storeys <= 2 && rnd() < 0.45))) roofPitched(x, cz, w - 0.6, depth, h, rnd() < 0.7);
     else {
       parapet(x, cz, w - 0.6, depth, h);
@@ -1985,7 +2047,10 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
       const h = upscale ? 6 + rnd() * 4 : 3 * (1 + Math.floor(rnd() * (d.style === "corporate" ? 5 : 3)));
       const w = 9 + rnd() * 6, dd = 9 + rnd() * 5;
       const z = side * (34 + rnd() * 10);
-      batch.add(facadeBox(w, h, dd), facadeMat(d.palette.walls[Math.floor(rnd() * d.palette.walls.length)], d.style === "corporate" && h > 9 ? "glass" : upscale ? "modern" : "louvre"), [bx, h / 2, z]);
+      const glassy = d.style === "corporate" && h > 9;
+      batch.add(facadeBox(w, h, dd), facadeMat(d.palette.walls[Math.floor(rnd() * d.palette.walls.length)], glassy ? "glass" : upscale ? "modern" : "louvre"), [bx, h / 2, z]);
+      if (glassy) curtainWall(bx, z, w, h, dd, -side);
+      else if (h > 6) relief(upscale ? "modern" : "louvre", bx, z, w, h, dd, -side);
       if (h <= 6 && !upscale) roofPitched(bx, z, w, dd, h, true);
       else parapet(bx, z, w, dd, h);
       collide(bx, z, w, dd, h);
@@ -2029,6 +2094,7 @@ export function buildDistrict(id: DistrictId, homeTier?: HomeTier): DistrictScen
         // Apartment block: three or four storeys, balconies, a gate.
         const storeys = homeTier === "apartment" ? 4 : 3, h = storeys * 3, z = hs * (BUILD_LINE + 6.5);
         batch.add(facadeBox(13, h, 10), facadeMat(homeTier === "apartment" ? "#EFE6D6" : "#E8D5B5", "louvre"), [hx, h / 2, z]);
+        relief("louvre", hx, z, 13, h, 10, -hs);
         for (let f = 1; f < storeys; f++) {
           box(colorMat("#d8d0c2", 0.7), hx, f * 3, z - hs * 5.6, 12, 0.15, 1.2);
           box(colorMat("#2b2b2b", 0.4, 0.6), hx, f * 3 + 0.55, z - hs * 6.15, 12, 1.0, 0.04);

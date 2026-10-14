@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { mulberry32 } from "../../shared/rng.ts";
 
 const cache = new Map<string, THREE.Texture>();
+const surfaceCache = new WeakMap<THREE.Texture, Map<number, { normalMap: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture }>>();
 let maxAniso = 4;
 export function setMaxAnisotropy(n: number) {
   maxAniso = Math.min(8, n);
@@ -31,6 +32,74 @@ function memo(key: string, make: () => THREE.Texture) {
     cache.set(key, t);
   }
   return t;
+}
+
+/**
+ * Make subtle PBR detail from an existing painted surface. The color texture
+ * already carries the material's grain, stains and seams, so using its local
+ * luminance for the normal map gives that detail a little real light response
+ * without adding geometry or another authored texture per material.
+ */
+export function surfaceDetail(texture: THREE.Texture, strength = 1) {
+  let byStrength = surfaceCache.get(texture);
+  if (!byStrength) surfaceCache.set(texture, (byStrength = new Map()));
+  const key = Math.round(strength * 100) / 100;
+  const existing = byStrength.get(key);
+  if (existing) return existing;
+
+  const source = texture.image as HTMLCanvasElement | undefined;
+  if (!source?.getContext || source.width < 2 || source.height < 2) {
+    const flat = canvas(2, 2);
+    flat[1].fillStyle = "#8080ff";
+    flat[1].fillRect(0, 0, 2, 2);
+    const rough = canvas(2, 2);
+    rough[1].fillStyle = "#eeeeee";
+    rough[1].fillRect(0, 0, 2, 2);
+    return { normalMap: toTexture(flat[0], { srgb: false }), roughnessMap: toTexture(rough[0], { srgb: false }) };
+  }
+
+  const sw = source.width, sh = source.height;
+  const sourceCtx = source.getContext("2d", { willReadFrequently: true });
+  if (!sourceCtx) throw new Error("Could not read procedural surface texture");
+  const pixels = sourceCtx.getImageData(0, 0, sw, sh).data;
+  const heightAt = (x: number, y: number) => {
+    const i = ((y + sh) % sh * sw + (x + sw) % sw) * 4;
+    // Keep this as display-space luminance: we're measuring painted contrast,
+    // rather than interpreting the albedo as physical height in metres.
+    return (pixels[i] * 0.2126 + pixels[i + 1] * 0.7152 + pixels[i + 2] * 0.0722) / 255;
+  };
+  const [normalCanvas, normalCtx] = canvas(sw, sh);
+  const [roughCanvas, roughCtx] = canvas(sw, sh);
+  const normal = normalCtx.createImageData(sw, sh);
+  const roughness = roughCtx.createImageData(sw, sh);
+  for (let y = 0; y < sh; y++) for (let x = 0; x < sw; x++) {
+    const dx = (heightAt(x + 1, y) - heightAt(x - 1, y)) * strength;
+    const dy = (heightAt(x, y + 1) - heightAt(x, y - 1)) * strength;
+    const inv = 1 / Math.hypot(dx, dy, 1);
+    const i = (y * sw + x) * 4;
+    normal.data[i] = Math.round(((-dx * inv) * 0.5 + 0.5) * 255);
+    // Canvas rows run downward while texture V runs upward.
+    normal.data[i + 1] = Math.round(((dy * inv) * 0.5 + 0.5) * 255);
+    normal.data[i + 2] = Math.round((inv * 0.5 + 0.5) * 255);
+    normal.data[i + 3] = 255;
+    // Most scene surfaces are matte; let the fine paint grain vary reflectance
+    // gently while retaining that broad material response from roughness.
+    const luma = heightAt(x, y);
+    const r = Math.round(242 + (0.5 - luma) * 14);
+    roughness.data[i] = roughness.data[i + 1] = roughness.data[i + 2] = r;
+    roughness.data[i + 3] = 255;
+  }
+  normalCtx.putImageData(normal, 0, 0);
+  roughCtx.putImageData(roughness, 0, 0);
+  const result = { normalMap: toTexture(normalCanvas, { srgb: false }), roughnessMap: toTexture(roughCanvas, { srgb: false }) };
+  result.normalMap.wrapS = texture.wrapS;
+  result.normalMap.wrapT = texture.wrapT;
+  result.roughnessMap.wrapS = texture.wrapS;
+  result.roughnessMap.wrapT = texture.wrapT;
+  result.normalMap.repeat.copy(texture.repeat);
+  result.roughnessMap.repeat.copy(texture.repeat);
+  byStrength.set(key, result);
+  return result;
 }
 
 /** Multi-octave grain painted over an existing canvas. */

@@ -66,19 +66,20 @@ export class Atmosphere {
     this.stars = new THREE.Points(new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(sp, 3)), new THREE.PointsMaterial({ color: "#ffffff", size: 2.2, sizeAttenuation: false, transparent: true, opacity: 0, fog: false, depthWrite: false }));
     scene.add(this.stars);
 
-    // Low-poly cumulus: clusters of faceted white balls in a ring round the sky.
-    const geo = new THREE.IcosahedronGeometry(1, 1);
+    // Soft, rounded cumulus silhouettes around the horizon. The old faceted
+    // icosahedra made the sky look like a low-poly game even at high quality.
+    const geo = new THREE.SphereGeometry(1, 20, 14);
     const shade = [new THREE.MeshBasicMaterial({ color: "#ffffff", fog: false, transparent: true }), new THREE.MeshBasicMaterial({ color: "#e4ecf5", fog: false, transparent: true })];
     this.puffMats = shade;
     let seed = 7;
     const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-    for (let c = 0; c < 26; c++) {
-      const a = (c / 26) * Math.PI * 2 + rnd() * 0.2, d = 520 + rnd() * 380, y = 90 + rnd() * 140;
+    for (let c = 0; c < 22; c++) {
+      const a = (c / 22) * Math.PI * 2 + rnd() * 0.2, d = 520 + rnd() * 380, y = 90 + rnd() * 140;
       const cx = Math.cos(a) * d, cz = Math.sin(a) * d, s = 22 + rnd() * 26;
-      for (let k = 0; k < 6; k++) {
+      for (let k = 0; k < 5; k++) {
         const m = new THREE.Mesh(geo, shade[k < 4 ? 0 : 1]);
         const sc = s * (0.6 + rnd() * 0.6);
-        m.scale.set(sc * 1.3, sc * 0.8, sc);
+        m.scale.set(sc * (1.25 + rnd() * 0.35), sc * (0.48 + rnd() * 0.2), sc * (0.85 + rnd() * 0.35));
         m.position.set(cx + (rnd() - 0.5) * s * 2.6, y + (k < 4 ? rnd() * s * 0.5 : -s * 0.25), cz + (rnd() - 0.5) * s * 1.2);
         m.lookAt(0, m.position.y, 0);
         this.puffs.add(m);

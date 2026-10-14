@@ -762,7 +762,13 @@ function sampleRoot(c: GaitClip, t: number): [number, number] {
   const n = c.root.length / 2;
   const f = (((t % 1) + 1) % 1) * n;
   const i0 = Math.floor(f) % n, i1 = (i0 + 1) % n, u = f - Math.floor(f);
-  return [c.root[i0 * 2] * (1 - u) + c.root[i1 * 2] * u, c.root[i0 * 2 + 1] * (1 - u) + c.root[i1 * 2 + 1] * u];
+  const bob = c.root[i0 * 2 + 1] * (1 - u) + c.root[i1 * 2 + 1] * u;
+  // The source performer wandered sideways while the mocap was recorded. That
+  // path was baked into the clip as pelvis translation (about 60 cm either
+  // way), which made every person zigzag inside their actual travel direction.
+  // Keep only the captured vertical weight bounce and add a restrained,
+  // repeatable hip shift of our own: the character controller owns the path.
+  return [Math.sin(t * Math.PI * 4) * 0.016, bob];
 }
 
 /** Bone-driven walk/run/idle. speed in m/s. */

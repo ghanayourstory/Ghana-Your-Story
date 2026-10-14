@@ -173,7 +173,16 @@ export function Minimap({ world, road, district, onOpen }: { world: World | null
   }, [world, district]);
   return (
     <div className="minimap">
-      <canvas ref={ref} onClick={onOpen} title="Open the map (M)" style={{ cursor: "pointer" }} />
+      <canvas
+        ref={ref}
+        onClick={onOpen}
+        onKeyDown={(e) => { if ((e.key === "Enter" || e.key === " ") && onOpen) { e.preventDefault(); onOpen(); } }}
+        title="Open the map (M)"
+        aria-label="Open the map"
+        role={onOpen ? "button" : undefined}
+        tabIndex={onOpen ? 0 : undefined}
+        style={{ cursor: onOpen ? "pointer" : "default" }}
+      />
       <div className="where">
         <small>{DISTRICTS[district].name}</small>
         <b>{road}</b>

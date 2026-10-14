@@ -1,6 +1,6 @@
 // Articulated people built from primitives, with a procedural walk cycle.
 import * as THREE from "three";
-import { fabric } from "./textures.ts";
+import { fabric, surfaceDetail } from "./textures.ts";
 import { mulberry32 } from "../../shared/rng.ts";
 import { animateHuman, buildHuman, humansReady, type HumanRig } from "./humans.ts";
 import type { OutfitId, ShoeId } from "../../shared/clothing.ts";
@@ -42,8 +42,10 @@ function mat(key: string, make: () => THREE.Material) {
   return m;
 }
 const skinMat = (c: string) => mat(`skin:${c}`, () => new THREE.MeshStandardMaterial({ color: c, roughness: 0.62, metalness: 0 }));
-const clothMat = (c: string, p: Pattern = "plain") =>
-  mat(`cloth:${c}:${p}`, () => new THREE.MeshStandardMaterial({ color: p === "plain" ? c : "#ffffff", map: p === "plain" ? fabric("plain", "#ffffff") : fabric(p, c), roughness: 0.92 }));
+const clothMat = (c: string, p: Pattern = "plain") => mat(`cloth:${c}:${p}`, () => {
+  const map = p === "plain" ? fabric("plain", "#ffffff") : fabric(p, c);
+  return new THREE.MeshStandardMaterial({ color: p === "plain" ? c : "#ffffff", map, ...surfaceDetail(map, 0.55), roughness: 0.92 });
+});
 const plainMat = (c: string, rough = 0.8, metal = 0) => mat(`plain:${c}:${rough}:${metal}`, () => new THREE.MeshStandardMaterial({ color: c, roughness: rough, metalness: metal }));
 
 const geo = {

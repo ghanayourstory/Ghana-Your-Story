@@ -121,15 +121,30 @@ export function loadCarModels(): Promise<boolean> {
         m.castShadow = true;
         m.receiveShadow = true;
         m.geometry = smooth(m.geometry);
-        const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((x) => x.clone()) as THREE.MeshStandardMaterial[];
+        const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((x) => {
+          let clone = x.clone() as THREE.MeshStandardMaterial;
+          // Imported GLBs often use a basic metallic-roughness material for
+          // paint. Upgrade only the body finish so it gains a real clear coat.
+          if (def.paint.test(clone.name) && !(clone as THREE.MeshPhysicalMaterial).isMeshPhysicalMaterial) {
+            const physical = new THREE.MeshPhysicalMaterial();
+            physical.copy(clone as THREE.MeshPhysicalMaterial);
+            physical.name = clone.name;
+            clone.dispose();
+            clone = physical;
+          }
+          return clone;
+        }) as THREE.MeshStandardMaterial[];
         for (const mat of mats) {
           mat.flatShading = false;
           if (def.hide?.test(mat.name)) hidden.push(m);
           if (/glass|window/i.test(mat.name)) { mat.transparent = true; mat.opacity = Math.min(mat.opacity, 0.55); mat.roughness = 0.05; }
           if (def.paint.test(mat.name)) {
             mat.side = THREE.DoubleSide;
-            mat.roughness = Math.min(mat.roughness, 0.32);
-            mat.metalness = Math.max(mat.metalness, 0.3);
+            mat.roughness = THREE.MathUtils.clamp(mat.roughness, 0.2, 0.42);
+            mat.metalness = THREE.MathUtils.clamp(mat.metalness, 0.05, 0.38);
+            const physical = mat as THREE.MeshPhysicalMaterial;
+            physical.clearcoat = 0.72;
+            physical.clearcoatRoughness = 0.14;
             if (def.stripMap) { mat.map = null; mat.color.set("#ffffff"); }
             if (def.ghanaTaxi) ghanaTaxiShader(mat, m.geometry);
             mat.needsUpdate = true;

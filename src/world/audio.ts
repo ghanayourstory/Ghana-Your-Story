@@ -24,6 +24,8 @@ export interface MixSettings {
   traffic: boolean;
 }
 
+export type FootstepSurface = "pavement" | "earth" | "sand" | "wood";
+
 interface Voice {
   spot: SoundSpot;
   out: GainNode;
@@ -47,6 +49,7 @@ export class CityAudio {
   private noise!: AudioBuffer;
   private spots: SoundSpot[] = [];
   private voices = new Map<string, Voice>();
+  private stepPhase = 0;
   muted = false;
   settings: MixSettings = { master: 0.8, market: true, music: true, traffic: true };
 
@@ -123,7 +126,7 @@ export class CityAudio {
   }
 
   /** Called every frame with where the player is and how loud the ambient beds should be. */
-  update(dt: number, listener: { x: number; z: number; yaw: number }, beds: { traffic: number; waves: number; rain: number; crowd: number; hour: number }, time: number) {
+  update(dt: number, listener: { x: number; z: number; yaw: number }, beds: { traffic: number; waves: number; rain: number; crowd: number; hour: number }, time: number, footsteps?: { speed: number; surface: FootstepSurface }) {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
@@ -142,6 +145,7 @@ export class CityAudio {
     this.traffic.gain.setTargetAtTime(beds.traffic * 0.45, t, 0.5);
     this.waves.gain.setTargetAtTime(beds.waves * (0.35 + 0.3 * Math.sin(time * 0.6)), t, 0.3);
     this.rain.gain.setTargetAtTime(beds.rain * 0.16, t, 0.5);
+    this.updateFootsteps(dt, footsteps?.speed ?? 0, footsteps?.surface ?? "pavement");
 
     // Keep the nearest few sound sources alive; fade out the rest.
     const near = this.spots
@@ -163,6 +167,42 @@ export class CityAudio {
       else this.scheduleMarket(v, beds.crowd);
     }
     void dt;
+  }
+
+  private updateFootsteps(dt: number, speed: number, surface: FootstepSurface) {
+    const ctx = this.ctx;
+    if (!ctx || this.muted || this.settings.master <= 0 || speed < 0.38) {
+      this.stepPhase = 0;
+      return;
+    }
+    // A natural walking cadence of about two footfalls a second, rising to
+    // three while running. Playback follows the same eased speed as the rig.
+    this.stepPhase += dt * (1.38 + Math.min(speed, 5) * 0.37);
+    while (this.stepPhase >= 1) {
+      this.stepPhase -= 1;
+      this.playFootstep(surface, speed);
+    }
+  }
+
+  private playFootstep(surface: FootstepSurface, speed: number) {
+    const ctx = this.ctx;
+    if (!ctx || !this.noise) return;
+    const now = ctx.currentTime;
+    const filterHz: Record<FootstepSurface, number> = { pavement: 1250, earth: 780, sand: 430, wood: 1650 };
+    const source = ctx.createBufferSource();
+    source.buffer = this.noise;
+    source.playbackRate.value = 0.75 + Math.random() * 0.25;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = filterHz[surface];
+    const envelope = ctx.createGain();
+    const gain = Math.min(0.075, 0.027 + speed * 0.009);
+    envelope.gain.setValueAtTime(0.0001, now);
+    envelope.gain.exponentialRampToValueAtTime(gain, now + 0.006);
+    envelope.gain.exponentialRampToValueAtTime(0.0001, now + 0.075);
+    source.connect(filter).connect(envelope).connect(this.master);
+    source.start(now);
+    source.stop(now + 0.09);
   }
 
   /** Told when a nearby sound source starts (for captions). */

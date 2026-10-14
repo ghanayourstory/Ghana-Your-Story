@@ -100,7 +100,7 @@ function bake(file, asset) {
   const out = { duration: +duration.toFixed(4), stride: +stride.toFixed(4), bones: {}, root: [] };
   const names = MAP.map((m) => m[0]);
   for (const n of names) out.bones[n] = [];
-  const hy = [], hx = [];
+  const hy = [];
   const H = N / 2;
   for (let k = 0; k < H; k++) {
     const ft = a + ((b - a) * k) / H;
@@ -130,7 +130,6 @@ function bake(file, asset) {
     }
     const hp = fwd(F("Hips").p);
     hy.push(hp.y * scale);
-    hx.push(hp.x * scale);
   }
   // Second half: mirror the first (swap sides, reflect across the body's midline).
   const swap = (n) => (n.endsWith(".L") ? n.slice(0, -2) + ".R" : n.endsWith(".R") ? n.slice(0, -2) + ".L" : n);
@@ -142,10 +141,11 @@ function bake(file, asset) {
       out.bones[n].push(x, -y, -z, w);
     }
   }
-  for (let k = 0; k < H; k++) { hx.push(-hx[k]); hy.push(hy[k]); }
+  for (let k = 0; k < H; k++) hy.push(hy[k]);
   const my = hy.reduce((s, v) => s + v, 0) / N;
-  const mx = hx.reduce((s, v) => s + v, 0) / N;
-  for (let k = 0; k < N; k++) out.root.push(+(hx[k] - mx).toFixed(4), +(hy[k] - my).toFixed(4));
+  // Root X is intentionally zero: lateral drift in a raw mocap take records
+  // where the performer walked in the room, not a useful gait animation.
+  for (let k = 0; k < N; k++) out.root.push(0, +(hy[k] - my).toFixed(4));
   return out;
 }
 

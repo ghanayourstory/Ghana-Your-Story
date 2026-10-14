@@ -60,7 +60,11 @@ export const G = {
   plane: new THREE.PlaneGeometry(1, 1),
 };
 
-/** A box whose UVs are in metres / tile, so a 3 m facade tile repeats per storey. */
+/**
+ * A box with facade UVs scaled in metres. Facade images are a 2×2 atlas of
+ * 3 m bays, so a 6 m UV tile maps the whole atlas once and each 3 m bay samples
+ * one 256 px quadrant. Pass 3 for single-tile materials such as corrugated tin.
+ */
 export function facadeBox(w: number, h: number, d: number, tile = 6): THREE.BufferGeometry {
   const g = new THREE.BoxGeometry(w, h, d);
   const uv = g.attributes.uv as THREE.BufferAttribute;

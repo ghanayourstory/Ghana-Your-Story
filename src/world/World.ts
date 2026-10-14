@@ -204,6 +204,11 @@ export class World {
   pos = new THREE.Vector3();
   vel = new THREE.Vector3();
   yaw = 0;
+  private moveForward = new THREE.Vector3();
+  private moveRight = new THREE.Vector3();
+  private moveDirection = new THREE.Vector3();
+  private wantedVelocity = new THREE.Vector3();
+  private beforePos = new THREE.Vector3();
   camYaw = Math.PI;
   camPitch = 0.55;
   camDist = 13;
@@ -262,7 +267,7 @@ export class World {
   private raycaster = new THREE.Raycaster();
   private outsideCam: { yaw: number; pitch: number; dist: number } | null = null;
   /** High quality: ambient occlusion (contact shadows in corners and under things) and a soft bloom on lights. */
-  private fx: { composer: EffectComposer; render: RenderPass; ao: GTAOPass; bloom: UnrealBloomPass } | null = null;
+  private fx: { composer: EffectComposer; render: RenderPass; ao: GTAOPass | null; bloom: UnrealBloomPass } | null = null;
   private rideApplying = false;
   private leaving: { rig: VehicleRig; dir: number; speed: number }[] = [];
   private fadeEl: HTMLDivElement;
@@ -308,25 +313,41 @@ export class World {
   }
 
   private setupFx() {
-    this.fx?.composer.dispose();
-    this.fx = null;
+    this.disposeFx();
     if (this.quality === "low") return;
     const composer = new EffectComposer(this.renderer);
     const render = new RenderPass(this.scene, this.camera);
-    // Ambient occlusion cost more frame time than it was worth: off. (Kept the pass type for the fields.)
-    const ao = null as unknown as GTAOPass;
+    // High quality earns real contact shading in corners, beneath eaves and
+    // around street furniture. The adaptive frame scaler disables this pass
+    // on slower machines; medium and low stay lightweight.
+    const ao = this.quality === "high"
+      ? new GTAOPass(this.scene, this.camera, Math.max(1, this.canvas.clientWidth), Math.max(1, this.canvas.clientHeight))
+      : null;
+    if (ao) {
+      ao.blendIntensity = 0.72;
+      ao.updateGtaoMaterial({ radius: 0.32, distanceExponent: 1.1, thickness: 0.65, scale: 0.82, samples: 8 });
+      ao.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2 });
+    }
     const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.35, 0.5, 0.92);
     composer.addPass(render);
+    if (ao) composer.addPass(ao);
     if (this.quality === "high") composer.addPass(bloom);
     // Colour grade (high and medium): richer colour and a gentle S-curve so the picture
     // has depth instead of looking washed out. One cheap full-screen pass.
     composer.addPass(new ShaderPass({
-      uniforms: { tDiffuse: { value: null }, sat: { value: 1.22 }, con: { value: 1.1 } },
+      uniforms: { tDiffuse: { value: null }, sat: { value: 1.05 }, con: { value: 1.025 } },
       vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
       fragmentShader: "uniform sampler2D tDiffuse; uniform float sat; uniform float con; varying vec2 vUv; void main(){ vec4 c = texture2D(tDiffuse, vUv); float l = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722)); vec3 g = max(vec3(0.0), mix(vec3(l), c.rgb, sat)); g = clamp((g - 0.42) * con + 0.42, 0.0, 1.0); gl_FragColor = vec4(g, c.a); }",
     }));
     composer.addPass(new OutputPass());
     this.fx = { composer, render, ao, bloom };
+  }
+
+  private disposeFx() {
+    if (!this.fx) return;
+    for (const pass of this.fx.composer.passes) pass.dispose?.();
+    this.fx.composer.dispose();
+    this.fx = null;
   }
 
   setQuality(q: Quality) {
@@ -2291,6 +2312,10 @@ export class World {
     if (this.prTimer < 1.5) return;
     this.prTimer = 0;
     const pr = this.renderer.getPixelRatio();
+    if (this.fx?.ao) {
+      if (this.frameAvg > 36) this.fx.ao.enabled = false;
+      else if (this.frameAvg < 25) this.fx.ao.enabled = true;
+    }
     let next = pr;
     // Only give up sharpness when the game is genuinely struggling (under ~28 fps), never below 0.9×,
     // and win it back as soon as there's headroom: a blurry picture is worse than a few lost frames.
@@ -2352,23 +2377,29 @@ export class World {
     const mag = autoDir ? 1 : Math.min(1, Math.hypot(ix, iz));
     const running = this.run || this.keys.has("shift") || mag > 0.95 && (this.joy.x !== 0 || this.joy.y !== 0) && Math.hypot(this.joy.x, this.joy.y) > 0.98;
     const energy = this.state?.player.stats.energy ?? 50;
-    // Game pace on a full-size city: a brisk walk and a proper run (people around you still stroll).
-    const maxSpeed = (running ? 5.6 : 2.2) * (energy < 10 ? 0.7 : 1) * (this.inside ? 0.75 : 1);
+    // A full city block should feel walkable: a brisk 1.8 m/s walk and a
+    // sustainable 4.6 m/s run, with tiredness reducing both rather than
+    // abruptly switching the character into a slower animation.
+    const maxSpeed = (running ? 4.6 : 1.8) * (energy < 10 ? 0.72 : 1) * (this.inside ? 0.75 : 1);
+    let desiredDir: THREE.Vector3 | null = null;
     if (mag > 0.05) {
-      const fwd = new THREE.Vector3(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw));
-      const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-      const dir = autoDir ?? fwd.multiplyScalar(iz).add(right.multiplyScalar(ix)).normalize();
-      // Snappy: reach full speed in about a fifth of a second; less grip in the air.
-      const grip = 14;
-      this.vel.lerp(dir.multiplyScalar(maxSpeed * mag), Math.min(1, dt * grip));
-      const targetYaw = Math.atan2(dir.x, dir.z);
-      let dy = targetYaw - this.yaw;
-      dy = ((dy + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
-      this.yaw += dy * Math.min(1, dt * 18);
-    } else {
-      this.vel.multiplyScalar(Math.max(0, 1 - dt * 16));
+      const fwd = this.moveForward.set(-Math.sin(this.camYaw), 0, -Math.cos(this.camYaw));
+      const right = this.moveRight.set(-fwd.z, 0, fwd.x);
+      desiredDir = autoDir ?? this.moveDirection.copy(fwd).multiplyScalar(iz).addScaledVector(right, ix).normalize();
+      const targetYaw = Math.atan2(desiredDir.x, desiredDir.z);
+      let angle = targetYaw - this.yaw;
+      angle = ((angle + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
+      const maxTurn = running ? 6.2 : 4.8;
+      const turnStep = THREE.MathUtils.clamp(angle * (1 - Math.exp(-7 * dt)), -maxTurn * dt, maxTurn * dt);
+      this.yaw += turnStep;
     }
-    const before = this.pos.clone();
+    const wantedVelocity = desiredDir ? this.wantedVelocity.copy(desiredDir).multiplyScalar(maxSpeed * mag) : this.wantedVelocity.set(0, 0, 0);
+    // Separate acceleration from braking. This gives the rig time to transfer
+    // its weight and lets the motion-captured gait ease in and out cleanly.
+    const accelerating = desiredDir !== null;
+    const response = accelerating ? (running ? 8.5 : 7.2) : 10.5;
+    this.vel.lerp(wantedVelocity, 1 - Math.exp(-response * dt));
+    const before = this.beforePos.copy(this.pos);
     this.pos.addScaledVector(this.vel, dt);
     this.resolve(this.pos, 0.32);
     this.climb(before);
@@ -2461,13 +2492,15 @@ export class World {
       // Audio: the listener is the camera-facing player; beds follow the place and the hour.
       const dist = DISTRICTS[this.district.id];
       const busy = hour >= 6 && hour < 20 ? 1 : hour >= 20 && hour < 23 ? 0.5 : 0.15;
+      const footSurface = this.inside ? "wood" : dist.style === "savanna" || dist.style === "town" ? "earth" : dist.style === "coastal" && this.pos.z > ROAD_HALF + 4 ? "sand" : "pavement";
+      const footSpeed = this.drive || this.ride || this.doing || this.frozen ? 0 : this.vel.length();
       this.audio.update(dt, { x: this.pos.x, z: this.pos.z, yaw: this.camYaw + Math.PI }, {
         traffic: dist.traffic * (night > 0.6 ? 0.4 : 1) * (1 - THREE.MathUtils.clamp((Math.abs(this.pos.z) - 12) / 40, 0, 0.8)),
         waves: this.district.shoreZ ? THREE.MathUtils.clamp(1 - (this.district.shoreZ - this.pos.z) / 50, 0.15, 1) : 0,
         rain: this.weather === "rain" ? 0.7 : this.weather === "storm" ? 1 : 0,
         crowd: dist.crowd * busy,
         hour,
-      }, t);
+      }, t, { speed: footSpeed, surface: footSurface });
     }
 
     // Nearby interactions.
@@ -2490,8 +2523,9 @@ export class World {
     const scene = this.inside ? this.interiorScene : this.scene;
     if (this.fx) {
       this.fx.render.scene = scene;
+      if (this.fx.ao) this.fx.ao.scene = scene;
       // Lights bloom more at night.
-      this.fx.bloom.strength = this.inside ? 0.25 : 0.2 + this.atmo.night * 0.5;
+      this.fx.bloom.strength = this.inside ? 0.14 : 0.08 + this.atmo.night * 0.24;
       this.fx.composer.render();
     } else this.renderer.render(scene, this.camera);
   };
@@ -2554,6 +2588,7 @@ export class World {
   dispose() {
     cancelAnimationFrame(this.raf);
     window.removeEventListener("resize", this.resize);
+    this.disposeFx();
     this.district?.dispose();
     this.renderer.dispose();
   }
